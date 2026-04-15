@@ -53,10 +53,14 @@ class TestRailClient:
 
     # ------------------------------------------------------------------ low level
     def _url(self, endpoint: str) -> str:
+        # Accepts any of: "get_cases/1&suite_id=2", "api/v2/get_cases/...",
+        # "/api/v2/get_cases/...", or a full "index.php?/api/v2/..." path.
         endpoint = endpoint.lstrip("/")
-        if not endpoint.startswith("index.php"):
-            endpoint = f"index.php?/api/v2/{endpoint}"
-        return urljoin(self.creds.base_url + "/", endpoint)
+        if endpoint.startswith("index.php"):
+            return urljoin(self.creds.base_url + "/", endpoint)
+        if endpoint.startswith("api/v2/"):
+            endpoint = endpoint[len("api/v2/"):]
+        return urljoin(self.creds.base_url + "/", f"index.php?/api/v2/{endpoint}")
 
     @retry(
         reraise=True,
