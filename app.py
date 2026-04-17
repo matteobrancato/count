@@ -29,7 +29,7 @@ def _header() -> None:
         )
     with right:
         st.write("")
-        if st.button("🔄 Refresh", use_container_width=True,
+        if st.button("🔄 Refresh Numbers", use_container_width=True,
                      help="Clear all caches and re-fetch from TestRail."):
             tr.clear_all_caches()
             try:

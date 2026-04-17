@@ -74,7 +74,7 @@ def _get_multi_countries(case: dict, reg: FieldRegistry, project_id: int | None 
 
 def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
     """Deprecated is a Checkbox field → bool value in the API."""
-    meta = reg.field(_DEPRECATED_LABEL)
+    meta = reg.field(_DEPRECATED_LABEL) or reg.field("custom_deprecated")
     if not meta:
         return False
     raw = case.get(meta.system_name)
@@ -91,8 +91,12 @@ def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
 
 
 def _get_prod_sanity(case: dict, reg: FieldRegistry) -> bool:
-    """Prod Sanity is a Checkbox field → bool value in the API."""
-    meta = reg.field(_PROD_SANITY_LABEL)
+    """Prod Sanity is a Checkbox field → bool value in the API.
+
+    Try the human label first; fall back to the known system name so a label
+    mismatch in TestRail doesn't silently zero-out all prod-sanity counts.
+    """
+    meta = reg.field(_PROD_SANITY_LABEL) or reg.field("custom_case_prod_sanity")
     if not meta:
         return False
     raw = case.get(meta.system_name)
@@ -109,7 +113,7 @@ def _get_prod_sanity(case: dict, reg: FieldRegistry) -> bool:
 
 def _get_automation_tool(case: dict, reg: FieldRegistry) -> str | None:
     """Automation MAPP Tool dropdown → string label."""
-    meta = reg.field(_AUTOMATION_TOOL_LABEL)
+    meta = reg.field(_AUTOMATION_TOOL_LABEL) or reg.field("custom_case_automation_mapp_tool")
     if not meta:
         return None
     raw = case.get(meta.system_name)
