@@ -13,10 +13,10 @@ BU_ORDER = [
 ]
 
 FRAMEWORK_LABELS = {
-    "java":           "Legacy Java",
-    "testim_desktop": "TestIM Desktop",
-    "testim_mobile":  "TestIM Mobile",
-    "mobile_app":     "Mobile App",
+    "java":           "Java Testing Framework",
+    "testim_desktop": "TestIM - Desktop View",
+    "testim_mobile":  "TestIM - Mobile View",
+    "mobile_app":     "Mobile Application",
 }
 
 # ISO country code → full name

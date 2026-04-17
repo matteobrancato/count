@@ -1,36 +1,3 @@
-"""Declarative BU → filter-rule mapping.
-
-Source of truth: EPAM "Smoke and Regression Tests Coverage: Filter" PDF (April 2026)
-cross-referenced with the TestRail Customizations screenshots (April 2026).
-
-All `status_field_label` values MUST match the exact Label shown in the
-TestRail Customizations UI (case-insensitive match handled by FieldRegistry).
-
-Confirmed system names from screenshots:
-  Automation Status             → custom_automation_status        (generic, Dropdown)
-  Automation Status ICI         → custom_automation_status_ici    (IPXL Java)
-  Automation Status KV SPR      → custom_automation_status_kv_spr
-  Automation Status TP          → custom_automation_status_tp     (TKP Java)
-  Automation Status TP SPR      → custom_automation_status_tp_spr
-  Automation Status MFR         → custom_automation_status_mfr
-  Automation Status MRN         → custom_automation_status_mrn      (MRN Java, other countries)
-  Automation Status MRN SPR     → custom_automation_status_mrn_spr
-  Automation Status SD          → custom_automation_status_sd
-  Automation Status TPS         → custom_automation_status_tps
-  Automation Status TPS SPR     → custom_automation_status_tps_spr
-  Automation Status SD SPR      → custom_automation_status_sd_spr
-  Automation status WTR SPR     → custom_automation_status_wtr_spr
-  Automation Status DRG         → custom_automation_status_wlctr_spr  (weird legacy name)
-  Automation Status Testim Desktop   → custom_case_automation_status_testim
-  Automation Status Testim Mobile View → custom_case_automation_status_mobile_view
-  Device                        → custom_device                   (Dropdown)
-  Deprecated                    → custom_deprecated               (Checkbox → bool)
-  Prod Sanity                   → custom_case_prod_sanity         (Checkbox → bool)
-  multi_countries               → custom_multi_countries          (Multi-select)
-
-NOTE: "Automation status WTR" (automation_status_wtctr) is INACTIVE — not used.
-      "Automation status MRN" IS used for Java on non-France MRN countries.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
