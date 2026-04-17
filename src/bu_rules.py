@@ -85,11 +85,7 @@ def _testim_pair(
     scope: Scope = "website",
     type_filter: list[str] | None = None,
 ) -> list[Rule]:
-    """Return (TestIM Desktop, TestIM Mobile View) rule pair.
 
-    *type_filter* defaults to ["Regression"].  Pass [] to skip the type check
-    entirely (safer for BUs where cases may not be consistently typed in TestRail).
-    """
     if type_filter is None:
         type_filter = ["Regression"]
     shared = dict(

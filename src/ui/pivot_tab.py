@@ -19,12 +19,27 @@ FRAMEWORK_LABELS = {
     "mobile_app":     "Mobile App",
 }
 
+# Human-readable labels for every internal column name that surfaces in the UI
+COL_LABELS: dict[str, str] = {
+    "device":         "Device",
+    "priority_label": "Priority",
+    "framework":      "Framework",
+    "country_label":  "Country",
+    "is_prod_sanity": "Prod Sanity",
+    "rule_name":      "Rule",
+    "status_value":   "Status",
+    "case_id":        "ID",
+    "title":          "Title",
+    "section_path":   "Section",
+    "url":            "URL",
+}
+
 
 # ------------------------------------------------------------------ helpers
 def _rules_for_choice(choice: str):
-    if choice == "Next Gen":
+    if choice == "Microservices":
         return [r for r in ALL_RULES if r.scope == "next_gen"]
-    if choice == "Mobile App (combined)":
+    if choice == "Mobile Appplication":
         return [r for r in ALL_RULES if r.scope == "mobile_app"]
     return [r for r in ALL_RULES if r.bu == choice and r.scope == "website"]
 
@@ -34,6 +49,14 @@ def _dedup_auto(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     return df.drop_duplicates(subset=["case_id", "country_label", "device"])
+
+
+def _apply_display_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with human-readable values in known columns."""
+    df = df.copy()
+    if "framework" in df.columns:
+        df["framework"] = df["framework"].map(FRAMEWORK_LABELS).fillna(df["framework"])
+    return df
 
 
 # ------------------------------------------------------------------ KPI row
@@ -49,24 +72,24 @@ def _kpi_row(raw: pd.DataFrame, auto_dedup: pd.DataFrame) -> None:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
         "Total cases", f"{total:,}",
-        help="Tutti i casi non-deprecated nel/nei suite di questa BU.",
+        help="All non-deprecated cases in this BU's suite(s).",
     )
     c2.metric(
         "Coverage", f"{pct:.1f}%",
-        help="Automated cases / Total cases (non-dep).",
+        help="Automated cases / Total cases (non-deprecated).",
     )
     c3.metric(
         "Desktop", f"{desktop:,}",
         help=(
-            "Righe device=Desktop nel DataFrame espanso (country × device). "
-            "Un caso con device=Both in 3 countries vale 3 qui."
+            "Expanded Desktop rows (country × device). "
+            "A case with Device=Both across 3 countries contributes 3 here."
         ),
     )
     c4.metric(
         "Mobile", f"{mobile:,}",
         help=(
-            "Righe device=Mobile nel DataFrame espanso (country × device). "
-            "Un caso con device=Both in 3 countries vale 3 qui."
+            "Expanded Mobile rows (country × device). "
+            "A case with Device=Both across 3 countries contributes 3 here."
         ),
     )
 
@@ -89,7 +112,7 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         frameworks = sorted(df["framework"].dropna().unique())
         fw_labels  = [FRAMEWORK_LABELS.get(f, f) for f in frameworks]
         sel_fw_lbl = c3.multiselect("Framework", fw_labels, key=f"{key_prefix}_fw")
-        sel_fw     = [frameworks[i] for i, l in enumerate(fw_labels) if l in sel_fw_lbl]
+        sel_fw     = [frameworks[i] for i, lbl in enumerate(fw_labels) if lbl in sel_fw_lbl]
 
         c4, c5 = st.columns(2)
 
@@ -108,7 +131,7 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         })
         sel_sect = c5.multiselect("Section (top-level)", sections, key=f"{key_prefix}_sect")
 
-        prod_only = st.checkbox("Prod Sanity only", key=f"{key_prefix}_prod")
+        prod_only  = st.checkbox("Prod Sanity only", key=f"{key_prefix}_prod")
         smoke_only = st.checkbox("Smoke (Highest) only", key=f"{key_prefix}_smoke")
 
     out = df
@@ -141,31 +164,50 @@ def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
         st.info("No automated cases match the current filters.")
         return
 
-    pivot_cols = [c for c in [
+    # Internal columns available for pivoting (rule_name excluded — internal construct)
+    internal_cols = [c for c in [
         "device", "priority_label", "framework", "country_label",
-        "is_prod_sanity", "rule_name", "status_value",
+        "is_prod_sanity", "status_value",
     ] if c in df.columns]
 
-    c1, c2 = st.columns(2)
-    row_sel = c1.multiselect("Rows", pivot_cols, default=["device"],
-                             key=f"{key_prefix}_pv_rows")
-    col_sel = c2.multiselect("Columns", [c for c in pivot_cols if c not in row_sel],
-                             key=f"{key_prefix}_pv_cols")
+    # Display labels for the selectors
+    display_cols = [COL_LABELS.get(c, c) for c in internal_cols]
+    lbl_to_internal = {COL_LABELS.get(c, c): c for c in internal_cols}
 
-    if not row_sel and not col_sel:
+    c1, c2 = st.columns(2)
+    row_sel_lbl = c1.multiselect("Rows", display_cols, default=["Device"],
+                                 key=f"{key_prefix}_pv_rows")
+    col_sel_lbl = c2.multiselect(
+        "Columns",
+        [l for l in display_cols if l not in row_sel_lbl],
+        key=f"{key_prefix}_pv_cols",
+    )
+
+    if not row_sel_lbl and not col_sel_lbl:
         st.caption("Select at least one row or column field.")
         return
 
+    row_sel = [lbl_to_internal[l] for l in row_sel_lbl]
+    col_sel = [lbl_to_internal[l] for l in col_sel_lbl]
+
+    # Build a display copy with readable values (framework codes → labels)
+    disp_df = _apply_display_values(df)
+    # Rename columns so pivot headers are clean
+    disp_df = disp_df.rename(columns=COL_LABELS)
+
+    row_disp = row_sel_lbl or None
+    col_disp = col_sel_lbl or None
+
     try:
         pv = pd.pivot_table(
-            df,
-            values="case_id",
-            index=row_sel   or None,
-            columns=col_sel or None,
+            disp_df,
+            values="ID",
+            index=row_disp,
+            columns=col_disp,
             aggfunc="count",
             fill_value=0,
             margins=True,
-            margins_name="Grand Total",
+            margins_name="Total",
         )
         st.dataframe(pv, use_container_width=True)
     except Exception as exc:
@@ -174,12 +216,7 @@ def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
 
 # ------------------------------------------------------------------ test list
 def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
-    """Show automated test cases: one row per (case_id × country_label).
-
-    Source is `auto_df` (the expanded + filtered DataFrame) so the table is
-    consistent with the pivot above.  Device expansion is collapsed: a case
-    with device=Both appears once per country (not twice for Desktop+Mobile).
-    """
+    """Show automated test cases: one row per (case_id × country_label)."""
     st.markdown("#### 🗂 Test list")
     if auto_df.empty:
         st.info("No automated cases.")
@@ -188,18 +225,17 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     # One row per (case_id, country_label) — collapse device expansion
     detail = auto_df.drop_duplicates(subset=["case_id", "country_label"]).copy()
 
-    # Build display columns from auto_df (which already has title, url, section_path)
     show = []
     col_renames = {}
     for col, lbl in [
-        ("case_id",       "ID"),
-        ("title",         "Title"),
-        ("priority_label","Priority"),
-        ("country_label", "Country"),
-        ("framework",     "Framework"),
-        ("section_path",  "Section"),
-        ("is_prod_sanity","Prod Sanity"),
-        ("url",           "URL"),
+        ("case_id",        "ID"),
+        ("title",          "Title"),
+        ("priority_label", "Priority"),
+        ("country_label",  "Country"),
+        ("framework",      "Framework"),
+        ("section_path",   "Section"),
+        ("is_prod_sanity", "Prod Sanity"),
+        ("url",            "URL"),
     ]:
         if col in detail.columns:
             show.append(col)
@@ -207,7 +243,6 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
 
     disp = detail[show].rename(columns=col_renames) if show else detail
 
-    # Map framework codes to readable labels
     if "Framework" in disp.columns:
         disp = disp.copy()
         disp["Framework"] = disp["Framework"].map(FRAMEWORK_LABELS).fillna(disp["Framework"])
@@ -217,9 +252,9 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "URL":        st.column_config.LinkColumn("Link", display_text="Open ↗"),
-            "ID":         st.column_config.NumberColumn(width="small"),
-            "Title":      st.column_config.TextColumn(width="large"),
+            "URL":         st.column_config.LinkColumn("Link", display_text="Open ↗"),
+            "ID":          st.column_config.NumberColumn(width="small"),
+            "Title":       st.column_config.TextColumn(width="large"),
             "Prod Sanity": st.column_config.CheckboxColumn(width="small"),
         },
     )
@@ -228,16 +263,14 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     if n_rows == n_cases:
         st.caption(f"{n_cases:,} automated test cases")
     else:
-        st.caption(
-            f"{n_rows:,} Row, {n_cases:,} Unique Tests"
-        )
+        st.caption(f"{n_rows:,} rows — {n_cases:,} unique test cases × country")
 
 
 # ------------------------------------------------------------------ render
 def render() -> None:
     st.subheader("📊 Business Units")
 
-    options = BU_ORDER + ["─────────────", "Next Gen", "Mobile App (combined)"]
+    options = BU_ORDER + ["─────────────", "Microservices", "Mobile Appplication"]
     choice  = st.selectbox("Business Unit", options, index=0, key="tab1_bu")
     if choice.startswith("─"):
         st.stop()
