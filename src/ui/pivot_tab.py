@@ -243,6 +243,27 @@ def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
         st.error(f"Pivot error: {exc}")
 
 
+# ------------------------------------------------------------------ test list helpers
+def _status_col_label(col: str) -> str:
+    """Convert internal status column name to a short display label.
+
+    "status_Automation Status MFR"          → "MFR"
+    "status_Automation Status MRN SPR"      → "MRN SPR"
+    "status_Automation Status Testim Desktop" → "TestIM Desktop"
+    "status_Automation Status Testim Mobile View" → "TestIM Mobile"
+    "status_Automation Status"              → "Status"
+    """
+    name = col[len("status_"):] if col.startswith("status_") else col
+    prefix = "Automation Status "
+    if name.startswith(prefix):
+        name = name[len(prefix):]
+    if not name:
+        name = "Status"
+    name = name.replace("Testim Desktop", "TestIM Desktop")
+    name = name.replace("Testim Mobile View", "TestIM Mobile")
+    return name
+
+
 # ------------------------------------------------------------------ test list
 def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     """Show automated test cases: one row per (case_id × country_label)."""
@@ -254,8 +275,26 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     # One row per (case_id, country_label) — collapse device expansion
     detail = auto_df.drop_duplicates(subset=["case_id", "country_label"]).copy()
 
-    show = []
-    col_renames = {}
+    # ---- Merge automation-status columns from raw_df ----
+    # raw_df has columns like "status_Automation Status MFR", etc.
+    # We only include columns that have at least one non-null value for the
+    # cases visible in this view — so the table adapts automatically per BU.
+    status_raw_cols: list[str] = []
+    if not raw_df.empty:
+        all_status = [c for c in raw_df.columns if c.startswith("status_")]
+        if all_status:
+            case_ids = set(detail["case_id"].unique())
+            raw_sub  = raw_df[raw_df["case_id"].isin(case_ids)].drop_duplicates("case_id")
+            active   = [c for c in all_status if raw_sub[c].notna().any()]
+            if active:
+                detail = detail.merge(
+                    raw_sub[["case_id"] + active], on="case_id", how="left"
+                )
+                status_raw_cols = active
+
+    # ---- Build display table ----
+    base_cols = []
+    col_renames: dict[str, str] = {}
     for col, lbl in [
         ("case_id",        "ID"),
         ("title",          "Title"),
@@ -264,29 +303,44 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
         ("framework",      "Framework"),
         ("section_path",   "Section"),
         ("is_prod_sanity", "Prod Sanity"),
-        ("url",            "URL"),
     ]:
         if col in detail.columns:
-            show.append(col)
+            base_cols.append(col)
             col_renames[col] = lbl
 
-    disp = detail[show].rename(columns=col_renames) if show else detail
+    # Status columns — renamed to short labels
+    status_display: dict[str, str] = {c: _status_col_label(c) for c in status_raw_cols}
+    col_renames.update(status_display)
+
+    # URL last
+    if "url" in detail.columns:
+        base_cols.append("url")
+        col_renames["url"] = "URL"
+
+    show = [c for c in base_cols + status_raw_cols if c in detail.columns]
+    disp = detail[show].rename(columns=col_renames)
 
     if "Framework" in disp.columns:
         disp = disp.copy()
         disp["Framework"] = disp["Framework"].map(FRAMEWORK_LABELS).fillna(disp["Framework"])
 
-    st.dataframe(
-        disp,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "URL":         st.column_config.LinkColumn("Link", display_text="Open ↗"),
-            "ID":          st.column_config.NumberColumn(width="small"),
-            "Title":       st.column_config.TextColumn(width="large"),
-            "Prod Sanity": st.column_config.CheckboxColumn(width="small"),
-        },
-    )
+    # Country full names
+    if "Country" in disp.columns:
+        disp = disp.copy()
+        disp["Country"] = disp["Country"].map(lambda c: COUNTRY_NAMES.get(c, c))
+
+    col_cfg: dict = {
+        "URL":         st.column_config.LinkColumn("Link", display_text="Open ↗"),
+        "ID":          st.column_config.NumberColumn(width="small"),
+        "Title":       st.column_config.TextColumn(width="large"),
+        "Prod Sanity": st.column_config.CheckboxColumn(width="small"),
+    }
+    # Status columns as plain text (values are already string labels)
+    for raw_col, disp_lbl in status_display.items():
+        col_cfg[disp_lbl] = st.column_config.TextColumn(disp_lbl, width="small")
+
+    st.dataframe(disp, use_container_width=True, hide_index=True, column_config=col_cfg)
+
     n_cases = detail["case_id"].nunique()
     n_rows  = len(detail)
     if n_rows == n_cases:
