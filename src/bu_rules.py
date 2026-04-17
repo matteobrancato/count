@@ -244,12 +244,11 @@ def build_rules() -> list[Rule]:
     DRG_SUITE     = 16093
     DRG_TOKENS    = ["LV", "LT"]
     DRG_LABELS    = {"LV": "LV", "LT": "LT"}
-    DRG_AUTOMATED = ["Automated", "Automated Dev only", "Automated UAT only"]
     rules.append(Rule(
         name="DRG ALL", bu="Drogas", scope="website", framework="java",
         suite_id=DRG_SUITE,
-        status_field_label="Automation Status DRG",
-        automated_values=DRG_AUTOMATED,
+        status_field_label="Automation Status",   # generic field — DRG cases use the standard status
+        automated_values=list(AUTOMATED_JAVA),
         countries_filter=DRG_TOKENS,
         country_labels=DRG_LABELS,
     ))
