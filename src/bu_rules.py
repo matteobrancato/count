@@ -87,8 +87,8 @@ def _testim_pair(
 ) -> list[Rule]:
     """Return (TestIM Desktop, TestIM Mobile View) rule pair.
 
-    *type_filter* defaults to ["Regression"].  Pass ["Functional"] for BUs whose
-    cases are classified as Functional in TestRail (e.g. IPXL, MRN).
+    *type_filter* defaults to ["Regression"].  Pass [] to skip the type check
+    entirely (safer for BUs where cases may not be consistently typed in TestRail).
     """
     if type_filter is None:
         type_filter = ["Regression"]
@@ -149,7 +149,8 @@ def build_rules() -> list[Rule]:
                           implicit_country="NL")
 
     # ==================================================================== IPXL
-    # *Functional test / Single configuration* (slide footnote) → type_filter=Functional.
+    # Uses the generic "Automation Status" field (not "Automation Status ICI").
+    # No type_filter — ICI cases are not consistently typed as Regression/Functional.
     IPXL_SUITE   = 30122
     # Global config (28-value): 6=IPXL NL, 7=IPXL BE, 8=IPXL LU  (with spaces!)
     IPXL_TOKENS  = ["IPXL NL", "IPXL BE", "IPXL LU"]
@@ -158,18 +159,19 @@ def build_rules() -> list[Rule]:
     rules.append(Rule(
         name="IPXL JAVA", bu="ICI Paris XL", scope="website", framework="java",
         suite_id=IPXL_SUITE,
-        status_field_label="Automation Status ICI",
+        status_field_label="Automation Status",   # generic field — ICI cases don't use "Automation Status ICI"
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=IPXL_TOKENS,
         country_labels=IPXL_LABELS,
-        type_filter=["Functional"],
+        type_filter=[],   # no type restriction — cases are not typed as Regression in TestRail
     ))
     rules += _testim_pair("ICI Paris XL", "IPXL", IPXL_SUITE, IPXL_TOKENS,
                           country_labels=IPXL_LABELS,
-                          type_filter=["Functional"])
+                          type_filter=[])
 
     # ==================================================================== Marionnaud
-    # *Functional test / Single configuration* → type_filter=Functional for all MRN rules.
+    # BU-specific status fields per country group. No type_filter (cases may not be
+    # typed Regression/Functional in TestRail — safer to match on status field alone).
     MRN_SUITE = 30784
 
     # France: "Automation Status MFR" + multi_countries=MFR
@@ -180,11 +182,11 @@ def build_rules() -> list[Rule]:
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=["MFR"],
         country_labels={"MFR": "FR"},
-        type_filter=["Functional"],
+        type_filter=[],
     ))
     rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, ["MFR"],
                           country_labels={"MFR": "FR"},
-                          type_filter=["Functional"])
+                          type_filter=[])
 
     # Other 7 MRN countries (ISO codes on slide: CH, AT, RO, IT, CZ, SK, HU).
     # Java: "Automation Status MRN" + non-SPR tokens in multi_countries.
@@ -208,11 +210,11 @@ def build_rules() -> list[Rule]:
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=MRN_JAVA_TOKENS,
         country_labels=MRN_JAVA_LABELS,
-        type_filter=["Functional"],
+        type_filter=[],
     ))
     rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_SPR_TOKENS,
                           country_labels=MRN_SPR_LABELS,
-                          type_filter=["Functional"])
+                          type_filter=[])
 
     # ==================================================================== Superdrug
     # Slide label: "GB"
