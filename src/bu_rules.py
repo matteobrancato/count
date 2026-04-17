@@ -154,10 +154,13 @@ def build_rules() -> list[Rule]:
                           type_filter=[])
 
     # Other 7 MRN countries (ISO codes on slide: CH, AT, RO, IT, CZ, SK, HU).
-    # Java: "Automation Status MRN" + bare tokens (MCH, MAT, …) in multi_countries.
-    # TestIM: TestIM Desktop/Mobile + _SPR tokens (MCH_SPR, MAT_SPR, …) in multi_countries.
+    # Java:  "Automation Status MRN SPR" + BOTH bare tokens (MCH, MAT, …) AND
+    #        _SPR tokens (MCH_SPR, MAT_SPR, …).  Spartacus cases carry _SPR tokens and also
+    #        have MRN SPR = Automated, so the Java rule must cover them too.
+    # TestIM: TestIM Desktop/Mobile + _SPR tokens only (framework determines device, not
+    #         the Device field — see rules_engine._expand_rows).
     # Both token sets map to the same ISO label → dedup on (case_id, country_label, device)
-    # collapses Java+TestIM correctly.
+    # collapses Java + TestIM correctly.
     MRN_JAVA_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU"]
     MRN_JAVA_LABELS = {
         "MCH": "CH", "MAT": "AT", "MRO": "RO",
@@ -168,13 +171,16 @@ def build_rules() -> list[Rule]:
         "MCH_SPR": "CH", "MAT_SPR": "AT", "MRO_SPR": "RO",
         "MIT_SPR": "IT", "MCZ_SPR": "CZ", "MSK_SPR": "SK", "MHU_SPR": "HU",
     }
+    # Java: bare + SPR tokens combined (both map to the same ISO label)
+    MRN_JAVA_ALL_TOKENS = MRN_JAVA_TOKENS + MRN_SPR_TOKENS
+    MRN_JAVA_ALL_LABELS = {**MRN_JAVA_LABELS, **MRN_SPR_LABELS}
     rules.append(Rule(
         name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
         status_field_label="Automation Status MRN SPR",   # confirmed from CSV export
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=MRN_JAVA_TOKENS,
-        country_labels=MRN_JAVA_LABELS,
+        countries_filter=MRN_JAVA_ALL_TOKENS,
+        country_labels=MRN_JAVA_ALL_LABELS,
         type_filter=[],
     ))
     rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_SPR_TOKENS,

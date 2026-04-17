@@ -221,9 +221,19 @@ def _expand_rows(
     matched_countries: list[str], base_url: str,
     project_id: int | None = None,
 ) -> list[dict]:
-    devices          = _devices_for(case, reg)
-    # Track the original Device field value before expansion
-    device_original  = "Both" if len(devices) == 2 else devices[0]
+    # TestIM Desktop/Mobile framework → device is determined by the framework, not the
+    # Device field.  A TestIM Desktop test always runs on Desktop; Mobile always Mobile.
+    # Expanding "Both" for TestIM would double-count cases that happen to have Device=Both.
+    if rule.framework == "testim_desktop":
+        devices         = ["Desktop"]
+        device_original = "Desktop"
+    elif rule.framework == "testim_mobile":
+        devices         = ["Mobile"]
+        device_original = "Mobile"
+    else:
+        devices         = _devices_for(case, reg)
+        # Track the original Device field value before expansion
+        device_original = "Both" if len(devices) == 2 else devices[0]
     prod_sanity_yes  = _get_prod_sanity(case, reg)
     automation_tool  = _get_automation_tool(case, reg)
     priority_label   = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
