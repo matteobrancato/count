@@ -64,11 +64,36 @@ def _kpi_row(raw: pd.DataFrame, auto_dedup: pd.DataFrame) -> None:
     mobile  = int((auto_dedup["device"] == "Mobile").sum())  if not auto_dedup.empty else 0
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total cases (non-dep)", f"{total:,}")
-    c2.metric("Automated (unique)", f"{auto_n:,}")
-    c3.metric("Coverage", f"{pct:.1f}%")
-    c4.metric("Expanded Desktop", f"{desktop:,}", help="Both counts as Desktop")
-    c5.metric("Expanded Mobile", f"{mobile:,}", help="Both counts as Mobile")
+    c1.metric(
+        "Total cases (non-dep)", f"{total:,}",
+        help="Tutti i casi non-deprecated nel/nei suite di questa BU.",
+    )
+    c2.metric(
+        "Automated cases", f"{auto_n:,}",
+        help=(
+            "Casi unici (case_id distinti) che matchano almeno una regola di automazione. "
+            "Un caso che copre più countries conta 1 solo. "
+            "Il pivot mostra invece i conteggi espansi per country × device."
+        ),
+    )
+    c3.metric(
+        "Coverage", f"{pct:.1f}%",
+        help="Automated cases / Total cases (non-dep).",
+    )
+    c4.metric(
+        "Desktop rows", f"{desktop:,}",
+        help=(
+            "Righe device=Desktop nel DataFrame espanso (country × device). "
+            "Un caso con device=Both in 3 countries vale 3 qui."
+        ),
+    )
+    c5.metric(
+        "Mobile rows", f"{mobile:,}",
+        help=(
+            "Righe device=Mobile nel DataFrame espanso (country × device). "
+            "Un caso con device=Both in 3 countries vale 3 qui."
+        ),
+    )
 
 
 # ------------------------------------------------------------------ filters
@@ -174,43 +199,42 @@ def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
 
 # ------------------------------------------------------------------ test list
 def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
-    """Show unique automated test cases (one row per case_id)."""
+    """Show automated test cases: one row per (case_id × country_label).
+
+    Source is `auto_df` (the expanded + filtered DataFrame) so the table is
+    consistent with the pivot above.  Device expansion is collapsed: a case
+    with device=Both appears once per country (not twice for Desktop+Mobile).
+    """
     st.markdown("#### 🗂 Test list (automated cases)")
     if auto_df.empty:
         st.info("No automated cases.")
         return
 
-    # Unique cases — keep the first occurrence per case_id
-    unique_ids = auto_df.drop_duplicates("case_id")["case_id"]
-    detail = raw_df[raw_df["case_id"].isin(unique_ids)].copy() if not raw_df.empty else pd.DataFrame()
+    # One row per (case_id, country_label) — collapse device expansion
+    detail = auto_df.drop_duplicates(subset=["case_id", "country_label"]).copy()
 
-    if detail.empty:
-        detail = auto_df.drop_duplicates("case_id")
-
-    # Build display columns — pick what exists
+    # Build display columns from auto_df (which already has title, url, section_path)
     show = []
     col_renames = {}
     for col, lbl in [
-        ("case_id",      "ID"),
-        ("title",        "Title"),
+        ("case_id",       "ID"),
+        ("title",         "Title"),
         ("priority_label","Priority"),
-        ("device",       "Device"),
-        ("country_label","Country"),
-        ("framework",    "Framework"),
-        ("section_path", "Section"),
-        ("prod_sanity",  "Prod Sanity"),
-        ("url",          "URL"),
+        ("country_label", "Country"),
+        ("framework",     "Framework"),
+        ("section_path",  "Section"),
+        ("is_prod_sanity","Prod Sanity"),
+        ("url",           "URL"),
     ]:
         if col in detail.columns:
             show.append(col)
             col_renames[col] = lbl
-        elif col in auto_df.columns:
-            pass  # skip
 
     disp = detail[show].rename(columns=col_renames) if show else detail
 
     # Map framework codes to readable labels
     if "Framework" in disp.columns:
+        disp = disp.copy()
         disp["Framework"] = disp["Framework"].map(FRAMEWORK_LABELS).fillna(disp["Framework"])
 
     st.dataframe(
@@ -218,12 +242,21 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "URL":   st.column_config.LinkColumn("Link", display_text="Open ↗"),
-            "ID":    st.column_config.NumberColumn(width="small"),
-            "Title": st.column_config.TextColumn(width="large"),
+            "URL":        st.column_config.LinkColumn("Link", display_text="Open ↗"),
+            "ID":         st.column_config.NumberColumn(width="small"),
+            "Title":      st.column_config.TextColumn(width="large"),
+            "Prod Sanity": st.column_config.CheckboxColumn(width="small"),
         },
     )
-    st.caption(f"{len(disp):,} unique automated test cases")
+    n_cases = detail["case_id"].nunique()
+    n_rows  = len(detail)
+    if n_rows == n_cases:
+        st.caption(f"{n_cases:,} automated test cases")
+    else:
+        st.caption(
+            f"{n_rows:,} righe — {n_cases:,} casi unici × country "
+            f"(un caso che copre N paesi appare N volte)"
+        )
 
 
 # ------------------------------------------------------------------ render
