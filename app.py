@@ -73,13 +73,18 @@ def main() -> None:
     if not _creds_ok():
         st.stop()
 
-    tab_explore, tab_overview = st.tabs(["📊 BU Explorer", "🧭 Overview & Coverage"])
+    tab_explore, tab_overview, tab_debug = st.tabs(
+        ["📊 BU Explorer", "🧭 Overview & Coverage", "🔧 Debug"]
+    )
 
     try:
         with tab_explore:
             pivot_tab.render()
         with tab_overview:
             overview_tab.render()
+        with tab_debug:
+            from src.ui import debug_tab
+            debug_tab.render()
     except Exception as exc:  # global safety net — never crash the whole app
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
