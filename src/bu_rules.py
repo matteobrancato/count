@@ -272,8 +272,9 @@ def build_rules() -> list[Rule]:
                           implicit_country="TR")
 
     # ==================================================================== Drogas
-    # "Automation Status DRG" → custom_automation_status_wtctr_spr
-    # DEV/UAT labels differ from other BUs: 8=Automated Dev only, 9=Automated UAT only
+    # Java: "Automation Status DRG" → custom_automation_status_wtctr_spr
+    #   DEV/UAT labels differ from other BUs: 8=Automated Dev only, 9=Automated UAT only
+    # TestIM: standard TestIM Desktop + Mobile fields + LV/LT in multi_countries
     # Slide labels: "LT", "LV"
     DRG_SUITE     = 16093
     DRG_TOKENS    = ["LV", "LT"]
@@ -287,6 +288,8 @@ def build_rules() -> list[Rule]:
         countries_filter=DRG_TOKENS,
         country_labels=DRG_LABELS,
     ))
+    rules += _testim_pair("Drogas", "DRG", DRG_SUITE, DRG_TOKENS,
+                          country_labels=DRG_LABELS)
 
     # ==================================================================== Next Gen
     NEXTGEN_SUITE = 9570
