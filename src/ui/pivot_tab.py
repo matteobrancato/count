@@ -19,6 +19,27 @@ FRAMEWORK_LABELS = {
     "mobile_app":     "Mobile App",
 }
 
+# ISO country code → full name
+COUNTRY_NAMES: dict[str, str] = {
+    "AT": "Austria",
+    "BE": "Belgium",
+    "CH": "Switzerland",
+    "CZ": "Czech Republic",
+    "FR": "France",
+    "GB": "United Kingdom",
+    "HU": "Hungary",
+    "IE": "Ireland",
+    "IT": "Italy",
+    "LT": "Lithuania",
+    "LU": "Luxembourg",
+    "LV": "Latvia",
+    "NL": "Netherlands",
+    "RO": "Romania",
+    "SK": "Slovakia",
+    "TR": "Turkey",
+    "UK": "United Kingdom",
+}
+
 # Human-readable labels for every internal column name that surfaces in the UI
 COL_LABELS: dict[str, str] = {
     "device":         "Device",
@@ -106,8 +127,11 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         priorities = sorted(df["priority_label"].dropna().unique())
         sel_prio = c1.multiselect("Priority", priorities, key=f"{key_prefix}_prio")
 
-        devices = sorted(df["device"].dropna().unique())
-        sel_dev = c2.multiselect("Device", devices, key=f"{key_prefix}_dev")
+        # Device filter uses device_original so "Both" is selectable
+        dev_col = "device_original" if "device_original" in df.columns else "device"
+        devices_orig = sorted(df[dev_col].dropna().unique(),
+                              key=lambda d: {"Desktop": 0, "Mobile": 1, "Both": 2}.get(d, 3))
+        sel_dev_orig = c2.multiselect("Device", devices_orig, key=f"{key_prefix}_dev")
 
         frameworks = sorted(df["framework"].dropna().unique())
         fw_labels  = [FRAMEWORK_LABELS.get(f, f) for f in frameworks]
@@ -117,9 +141,13 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         c4, c5 = st.columns(2)
 
         if "country_label" in df.columns:
-            countries = sorted(df["country_label"].dropna().unique())
-            if len(countries) > 1:
-                sel_ctry = c4.multiselect("Country", countries, key=f"{key_prefix}_ctry")
+            countries_iso = sorted(df["country_label"].dropna().unique())
+            # Show full country names; map back to ISO for filtering
+            country_display = [COUNTRY_NAMES.get(c, c) for c in countries_iso]
+            display_to_iso  = {COUNTRY_NAMES.get(c, c): c for c in countries_iso}
+            if len(countries_iso) > 1:
+                sel_ctry_disp = c4.multiselect("Country", country_display, key=f"{key_prefix}_ctry")
+                sel_ctry = [display_to_iso[d] for d in sel_ctry_disp]
             else:
                 sel_ctry = []
         else:
@@ -137,8 +165,9 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
     out = df
     if sel_prio:
         out = out[out["priority_label"].isin(sel_prio)]
-    if sel_dev:
-        out = out[out["device"].isin(sel_dev)]
+    if sel_dev_orig:
+        dev_col = "device_original" if "device_original" in out.columns else "device"
+        out = out[out[dev_col].isin(sel_dev_orig)]
     if sel_fw:
         out = out[out["framework"].isin(sel_fw)]
     if sel_ctry:

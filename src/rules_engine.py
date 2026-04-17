@@ -222,6 +222,8 @@ def _expand_rows(
     project_id: int | None = None,
 ) -> list[dict]:
     devices          = _devices_for(case, reg)
+    # Track the original Device field value before expansion
+    device_original  = "Both" if len(devices) == 2 else devices[0]
     prod_sanity_yes  = _get_prod_sanity(case, reg)
     automation_tool  = _get_automation_tool(case, reg)
     priority_label   = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
@@ -244,27 +246,28 @@ def _expand_rows(
     for tok, label in country_pairs:
         for dev in devices:
             rows.append({
-                "case_id":       int(case["id"]),
-                "title":         case.get("title"),
-                "url":           _case_url(base_url, int(case["id"])),
-                "section_id":    case.get("section_id"),
-                "type_id":       case.get("type_id"),
-                "priority_id":   case.get("priority_id"),
+                "case_id":        int(case["id"]),
+                "title":          case.get("title"),
+                "url":            _case_url(base_url, int(case["id"])),
+                "section_id":     case.get("section_id"),
+                "type_id":        case.get("type_id"),
+                "priority_id":    case.get("priority_id"),
                 "priority_label": priority_label,
-                "deprecated":    False,  # already filtered above
-                "suite_id":      rule.suite_id,
-                "bu":            rule.bu,
-                "scope":         rule.scope,
-                "framework":     rule.framework,
-                "rule_name":     rule.name,
-                "country_token": tok,
-                "country_label": label,
-                "device":        dev,
+                "deprecated":     False,  # already filtered above
+                "suite_id":       rule.suite_id,
+                "bu":             rule.bu,
+                "scope":          rule.scope,
+                "framework":      rule.framework,
+                "rule_name":      rule.name,
+                "country_token":  tok,
+                "country_label":  label,
+                "device":         dev,
+                "device_original": device_original,
                 "automation_tool": automation_tool,
-                "is_automated":  True,
-                "is_regression": True,
+                "is_automated":   True,
+                "is_regression":  True,
                 "is_prod_sanity": prod_sanity_yes,
-                "status_value":  status_label,
+                "status_value":   status_label,
             })
     return rows
 
