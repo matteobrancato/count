@@ -180,7 +180,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     consistent with the pivot above.  Device expansion is collapsed: a case
     with device=Both appears once per country (not twice for Desktop+Mobile).
     """
-    st.markdown("#### 🗂 Test list (automated cases)")
+    st.markdown("#### 🗂 Test list")
     if auto_df.empty:
         st.info("No automated cases.")
         return
@@ -229,8 +229,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
         st.caption(f"{n_cases:,} automated test cases")
     else:
         st.caption(
-            f"{n_rows:,} righe — {n_cases:,} casi unici × country "
-            f"(un caso che copre N paesi appare N volte)"
+            f"{n_rows:,} Row, {n_cases:,} Unique Tests"
         )
 
 

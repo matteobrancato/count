@@ -9,7 +9,7 @@ from src.ui import overview_tab, pivot_tab
 
 
 st.set_page_config(
-    page_title="Automation Coverage Dashboard",
+    page_title="Automation Coverage",
     page_icon="🧪",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -23,13 +23,13 @@ def _header() -> None:
         st.markdown(
             "<h1 style='margin:0'>🧪 Automation Coverage</h1>"
             "<div style='color:#5e6677;font-size:14px'>"
-            "Live view of TestRail automation coverage across Business Units."
+            "Live view of TestRail's automation coverage across Business Units."
             "</div>",
             unsafe_allow_html=True,
         )
     with right:
         st.write("")
-        if st.button("🔄 Refresh data", use_container_width=True,
+        if st.button("🔄 Refresh", use_container_width=True,
                      help="Clear all caches and re-fetch from TestRail."):
             tr.clear_all_caches()
             try:
@@ -64,7 +64,7 @@ def main() -> None:
         st.stop()
 
     tab_explore, tab_overview, tab_debug = st.tabs(
-        ["📊 BU Explorer", "🧭 Overview & Coverage", "🔧 Debug"]
+        ["📊 Explorer", "🧭 Overview", "Debug"]
     )
 
     try:

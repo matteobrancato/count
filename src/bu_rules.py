@@ -189,8 +189,8 @@ def build_rules() -> list[Rule]:
                           type_filter=[])
 
     # Other 7 MRN countries (ISO codes on slide: CH, AT, RO, IT, CZ, SK, HU).
-    # Java: "Automation Status MRN" + non-SPR tokens in multi_countries.
-    # TestIM: TestIM Desktop/Mobile + _SPR tokens in multi_countries.
+    # Java: "Automation Status MRN" + bare tokens (MCH, MAT, …) in multi_countries.
+    # TestIM: TestIM Desktop/Mobile + _SPR tokens (MCH_SPR, MAT_SPR, …) in multi_countries.
     # Both token sets map to the same ISO label → dedup on (case_id, country_label, device)
     # collapses Java+TestIM correctly.
     MRN_JAVA_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU"]
@@ -206,7 +206,7 @@ def build_rules() -> list[Rule]:
     rules.append(Rule(
         name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
-        status_field_label="Automation Status MRN",
+        status_field_label="Automation Status MRN SPR",   # confirmed from CSV export
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=MRN_JAVA_TOKENS,
         country_labels=MRN_JAVA_LABELS,
