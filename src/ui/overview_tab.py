@@ -1,14 +1,3 @@
-"""Tab 2 — global overview: Smoke / No-Regression / Prod Sanity + coverage.
-
-Layout:
-    - Left sidebar-style column: BU tree (with nested country checkboxes)
-    - Main column:
-        * 3 big cards: Smoke, No-Regression, Production Sanity
-          each with total and BU / country / device breakdowns
-        * Coverage section split into 3 sub-tabs:
-            Website · Mobile App · Next Gen
-          each showing a section-path table with coverage %
-"""
 from __future__ import annotations
 
 import pandas as pd
@@ -110,12 +99,15 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str) -> None:
 
 
 # --------------------------------------------------------------------- sub-views
-def _coverage_view(scope: str, label: str) -> None:
+def _coverage_view(scope: str, label: str, result=None) -> None:
+    """Render coverage for *scope*.  Pass *result* to reuse an already-computed
+    ExpansionResult (avoids a redundant evaluate_rules call for website scope)."""
     rules = [r for r in ALL_RULES if r.scope == scope]
     if not rules:
         st.info(f"No rules defined for scope {label!r}.")
         return
-    result = evaluate_rules(tuple(r.name for r in rules))
+    if result is None:
+        result = evaluate_rules(tuple(r.name for r in rules))
     raw = result.raw_cases
     automated = result.automated
 
@@ -210,7 +202,8 @@ def render() -> None:
     st.markdown("### Coverage by section")
     tw, tm, tn = st.tabs(["🌐 Website", "📱 Mobile App", "🧩 Next Gen"])
     with tw:
-        _coverage_view("website", "Website")
+        # Reuse the already-computed website result — no extra API calls
+        _coverage_view("website", "Website", result=result)
     with tm:
         _coverage_view("mobile_app", "Mobile App")
     with tn:

@@ -18,6 +18,7 @@ Output DataFrame columns:
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import pandas as pd
@@ -342,20 +343,38 @@ class ExpansionResult:
     raw_cases: pd.DataFrame   # every case in the suites (for Tab 1 pivot)
 
 
-@st.cache_data(show_spinner="Fetching and expanding cases…", ttl=600)
+def _fetch_suite_data(sid: int, pid: int) -> tuple[int, list[dict], dict[int, str]]:
+    """Fetch cases + section map for one suite — runs inside a thread pool."""
+    cases    = tr.fetch_cases(pid, sid)
+    sections = _section_path_lookup(tr.fetch_sections(pid, sid))
+    return sid, cases, sections
+
+
+@st.cache_data(show_spinner="Fetching and expanding cases…", ttl=3600)
 def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
     reg      = get_registry()
     rules    = [r for r in ALL_RULES if r.name in rule_names]
     base_url = tr.TestRailCredentials.from_secrets().base_url
 
-    suites           = sorted({r.suite_id for r in rules})
-    suite_to_project = {sid: tr.resolve_project_id(sid) for sid in suites}
-    suite_cases:    dict[int, list[dict]]  = {}
+    suites = sorted({r.suite_id for r in rules})
+
+    # Resolve project IDs in parallel (each is a cached API call)
+    with ThreadPoolExecutor(max_workers=min(len(suites), 8)) as pool:
+        pid_futures = {sid: pool.submit(tr.resolve_project_id, sid) for sid in suites}
+    suite_to_project = {sid: f.result() for sid, f in pid_futures.items()}
+
+    # Fetch cases + sections for every suite in parallel
+    suite_cases:    dict[int, list[dict]]     = {}
     suite_sections: dict[int, dict[int, str]] = {}
-    for sid in suites:
-        pid = suite_to_project[sid]
-        suite_cases[sid]    = tr.fetch_cases(pid, sid)
-        suite_sections[sid] = _section_path_lookup(tr.fetch_sections(pid, sid))
+    with ThreadPoolExecutor(max_workers=min(len(suites), 8)) as pool:
+        futures = {
+            pool.submit(_fetch_suite_data, sid, suite_to_project[sid]): sid
+            for sid in suites
+        }
+        for future in as_completed(futures):
+            sid, cases, sections = future.result()
+            suite_cases[sid]    = cases
+            suite_sections[sid] = sections
 
     automated_rows: list[dict] = []
     raw_rows:       list[dict] = []

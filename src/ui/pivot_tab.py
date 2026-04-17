@@ -1,20 +1,3 @@
-"""Tab 1 — BU Explorer.
-
-Layout:
-  ┌─────────────────────────────────────────────────────┐
-  │  [BU selector]  [framework chips]                   │
-  │  KPI row: Total (non-dep) | Automated | Coverage %  │
-  ├─────────────────────────────────────────────────────┤
-  │  Filters (priority, device, country, section, ...)  │
-  │  PIVOT on automated cases (like Excel screenshot)   │
-  ├─────────────────────────────────────────────────────┤
-  │  Test list — unique automated cases + URL links     │
-  └─────────────────────────────────────────────────────┘
-
-The pivot works on the EXPANDED automated DataFrame (one row per case × device,
-after Both→Desktop+Mobile expansion). This matches the Excel pivots in the
-screenshots exactly: Device rows, Count of ID, Grand Total.
-"""
 from __future__ import annotations
 
 import pandas as pd
@@ -63,32 +46,24 @@ def _kpi_row(raw: pd.DataFrame, auto_dedup: pd.DataFrame) -> None:
     desktop = int((auto_dedup["device"] == "Desktop").sum()) if not auto_dedup.empty else 0
     mobile  = int((auto_dedup["device"] == "Mobile").sum())  if not auto_dedup.empty else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric(
-        "Total cases (non-dep)", f"{total:,}",
+        "Total cases", f"{total:,}",
         help="Tutti i casi non-deprecated nel/nei suite di questa BU.",
     )
     c2.metric(
-        "Automated cases", f"{auto_n:,}",
-        help=(
-            "Casi unici (case_id distinti) che matchano almeno una regola di automazione. "
-            "Un caso che copre più countries conta 1 solo. "
-            "Il pivot mostra invece i conteggi espansi per country × device."
-        ),
-    )
-    c3.metric(
         "Coverage", f"{pct:.1f}%",
         help="Automated cases / Total cases (non-dep).",
     )
-    c4.metric(
-        "Desktop rows", f"{desktop:,}",
+    c3.metric(
+        "Desktop", f"{desktop:,}",
         help=(
             "Righe device=Desktop nel DataFrame espanso (country × device). "
             "Un caso con device=Both in 3 countries vale 3 qui."
         ),
     )
-    c5.metric(
-        "Mobile rows", f"{mobile:,}",
+    c4.metric(
+        "Mobile", f"{mobile:,}",
         help=(
             "Righe device=Mobile nel DataFrame espanso (country × device). "
             "Un caso con device=Both in 3 countries vale 3 qui."
@@ -261,7 +236,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
 
 # ------------------------------------------------------------------ render
 def render() -> None:
-    st.subheader("📊 BU Explorer")
+    st.subheader("📊 Business Units")
 
     options = BU_ORDER + ["─────────────", "Next Gen", "Mobile App (combined)"]
     choice  = st.selectbox("Business Unit", options, index=0, key="tab1_bu")

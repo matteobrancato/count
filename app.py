@@ -1,13 +1,3 @@
-"""Streamlit entry point for the Automation Coverage dashboard.
-
-Run locally:
-    streamlit run app.py
-
-On Streamlit Cloud, set these secrets:
-    TESTRAIL_URL = "https://elabaswatson.testrail.io"
-    TESTRAIL_USER = "your.email@example.com"
-    TESTRAIL_API_KEY = "your_api_key"
-"""
 from __future__ import annotations
 
 import traceback

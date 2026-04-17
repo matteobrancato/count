@@ -134,32 +134,32 @@ def _get_client() -> TestRailClient:
     return _SESSION_CACHE[key]
 
 
-@st.cache_data(show_spinner=False, ttl=900)
+@st.cache_data(show_spinner=False, ttl=3600)
 def fetch_case_fields() -> list[dict]:
     return _get_client().get_case_fields()
 
 
-@st.cache_data(show_spinner=False, ttl=900)
+@st.cache_data(show_spinner=False, ttl=3600)
 def fetch_case_types() -> list[dict]:
     return _get_client().get_case_types()
 
 
-@st.cache_data(show_spinner=False, ttl=900)
+@st.cache_data(show_spinner=False, ttl=3600)
 def fetch_priorities() -> list[dict]:
     return _get_client().get_priorities()
 
 
-@st.cache_data(show_spinner=False, ttl=900)
+@st.cache_data(show_spinner=False, ttl=3600)
 def fetch_suite(suite_id: int) -> dict:
     return _get_client().get_suite(suite_id)
 
 
-@st.cache_data(show_spinner="Downloading sections from TestRail…", ttl=900)
+@st.cache_data(show_spinner=False, ttl=3600)
 def fetch_sections(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_sections(project_id, suite_id)
 
 
-@st.cache_data(show_spinner="Downloading test cases from TestRail…", ttl=900)
+@st.cache_data(show_spinner=False, ttl=3600)
 def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_cases(project_id, suite_id)
 
