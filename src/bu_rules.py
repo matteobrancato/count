@@ -83,14 +83,22 @@ def _testim_pair(
     country_labels: dict[str, str] | None = None,
     implicit_country: str | None = None,
     scope: Scope = "website",
+    type_filter: list[str] | None = None,
 ) -> list[Rule]:
-    """Return (TestIM Desktop, TestIM Mobile View) rule pair."""
+    """Return (TestIM Desktop, TestIM Mobile View) rule pair.
+
+    *type_filter* defaults to ["Regression"].  Pass ["Functional"] for BUs whose
+    cases are classified as Functional in TestRail (e.g. IPXL, MRN).
+    """
+    if type_filter is None:
+        type_filter = ["Regression"]
     shared = dict(
         bu=bu, scope=scope, suite_id=suite_id,
         automated_values=list(AUTOMATED_TESTIM),
         countries_filter=list(countries),
         country_labels=dict(country_labels or {}),
         implicit_country=implicit_country,
+        type_filter=list(type_filter),
     )
     return [
         Rule(name=f"{name_base} TESTIM DESKTOP", framework="testim_desktop",
@@ -106,12 +114,12 @@ def build_rules() -> list[Rule]:
 
     # ==================================================================== KV + TKP
     # Shared baseline suite 722.
-    KV_SUITE = 722
-
-    # KV Java — "Automation Status KV SPR" field.
-    # KV suite (722) project config: 1=KVBE, 2=KVN, 3=TP  (project-specific IDs)
+    # KV suite project config (project-specific): 1=KVBE, 2=KVN, 3=TP
+    # type=Regression (standard).  Labels: ISO country codes to match reporting slide.
+    KV_SUITE   = 722
     KV_TOKENS  = ["KVBE", "KVN"]
-    KV_LABELS  = {"KVBE": "Belgium", "KVN": "Netherlands"}
+    KV_LABELS  = {"KVBE": "BE", "KVN": "NL"}
+
     rules.append(Rule(
         name="KV JAVA", bu="Kruidvat", scope="website", framework="java",
         suite_id=KV_SUITE,
@@ -123,10 +131,10 @@ def build_rules() -> list[Rule]:
     rules += _testim_pair("Kruidvat", "KV", KV_SUITE, KV_TOKENS,
                           country_labels=KV_LABELS)
 
-    # TKP Java — "Automation Status TP" field identifies TKP-specific cases.
-    # TKP cases in suite 722 carry country token "TP" (ID=3 in the KV project config).
+    # TKP cases carry token "TP" (ID=3 in the KV project config).
     TKP_TOKENS = ["TP"]
-    TKP_LABELS = {"TP": "Trekpleister"}
+    TKP_LABELS = {"TP": "NL"}
+
     rules.append(Rule(
         name="TKP JAVA", bu="Trekpleister", scope="website", framework="java",
         suite_id=KV_SUITE,
@@ -134,20 +142,19 @@ def build_rules() -> list[Rule]:
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=TKP_TOKENS,
         country_labels=TKP_LABELS,
-        implicit_country="Trekpleister",
+        implicit_country="NL",
     ))
     rules += _testim_pair("Trekpleister", "TKP", KV_SUITE, TKP_TOKENS,
                           country_labels=TKP_LABELS,
-                          implicit_country="Trekpleister")
+                          implicit_country="NL")
 
     # ==================================================================== IPXL
+    # *Functional test / Single configuration* (slide footnote) → type_filter=Functional.
     IPXL_SUITE   = 30122
-    # Tokens MUST match the exact strings in the TestRail multi_countries global config.
     # Global config (28-value): 6=IPXL NL, 7=IPXL BE, 8=IPXL LU  (with spaces!)
     IPXL_TOKENS  = ["IPXL NL", "IPXL BE", "IPXL LU"]
-    IPXL_LABELS  = {"IPXL NL": "Netherlands", "IPXL BE": "Belgium", "IPXL LU": "Luxembourg"}
+    IPXL_LABELS  = {"IPXL NL": "NL", "IPXL BE": "BE", "IPXL LU": "LU"}
 
-    # IPXL Java — "Automation Status ICI" (ICI = ICI Paris XL code, confirmed screenshot)
     rules.append(Rule(
         name="IPXL JAVA", bu="ICI Paris XL", scope="website", framework="java",
         suite_id=IPXL_SUITE,
@@ -155,39 +162,44 @@ def build_rules() -> list[Rule]:
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=IPXL_TOKENS,
         country_labels=IPXL_LABELS,
+        type_filter=["Functional"],
     ))
     rules += _testim_pair("ICI Paris XL", "IPXL", IPXL_SUITE, IPXL_TOKENS,
-                          country_labels=IPXL_LABELS)
+                          country_labels=IPXL_LABELS,
+                          type_filter=["Functional"])
 
     # ==================================================================== Marionnaud
+    # *Functional test / Single configuration* → type_filter=Functional for all MRN rules.
     MRN_SUITE = 30784
 
-    # MFR (France) Java — "Automation Status MFR" + multi_countries=MFR
+    # France: "Automation Status MFR" + multi_countries=MFR
     rules.append(Rule(
         name="MFR JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
         status_field_label="Automation Status MFR",
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=["MFR"],
-        country_labels={"MFR": "France"},
+        country_labels={"MFR": "FR"},
+        type_filter=["Functional"],
     ))
     rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, ["MFR"],
-                          country_labels={"MFR": "France"})
+                          country_labels={"MFR": "FR"},
+                          type_filter=["Functional"])
 
-    # Other MRN countries (7): Switzerland, Austria, Romania, Italy, Czechia, Slovakia, Hungary
-    # Java rule: "Automation Status MRN" (custom_automation_status_mrn) + non-SPR tokens
-    # TestIM rule: TestIM Desktop/Mobile + _SPR tokens in multi_countries
-    # The two token sets map to the same display labels so dedup works correctly.
+    # Other 7 MRN countries (ISO codes on slide: CH, AT, RO, IT, CZ, SK, HU).
+    # Java: "Automation Status MRN" + non-SPR tokens in multi_countries.
+    # TestIM: TestIM Desktop/Mobile + _SPR tokens in multi_countries.
+    # Both token sets map to the same ISO label → dedup on (case_id, country_label, device)
+    # collapses Java+TestIM correctly.
     MRN_JAVA_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU"]
     MRN_JAVA_LABELS = {
-        "MCH": "Switzerland", "MAT": "Austria",  "MRO": "Romania",
-        "MIT": "Italy",       "MCZ": "Czechia",  "MSK": "Slovakia", "MHU": "Hungary",
+        "MCH": "CH", "MAT": "AT", "MRO": "RO",
+        "MIT": "IT", "MCZ": "CZ", "MSK": "SK", "MHU": "HU",
     }
     MRN_SPR_TOKENS = ["MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
     MRN_SPR_LABELS = {
-        "MCH_SPR": "Switzerland", "MAT_SPR": "Austria",  "MRO_SPR": "Romania",
-        "MIT_SPR": "Italy",       "MCZ_SPR": "Czechia",  "MSK_SPR": "Slovakia",
-        "MHU_SPR": "Hungary",
+        "MCH_SPR": "CH", "MAT_SPR": "AT", "MRO_SPR": "RO",
+        "MIT_SPR": "IT", "MCZ_SPR": "CZ", "MSK_SPR": "SK", "MHU_SPR": "HU",
     }
     rules.append(Rule(
         name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
@@ -196,29 +208,30 @@ def build_rules() -> list[Rule]:
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=MRN_JAVA_TOKENS,
         country_labels=MRN_JAVA_LABELS,
+        type_filter=["Functional"],
     ))
     rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_SPR_TOKENS,
-                          country_labels=MRN_SPR_LABELS)
+                          country_labels=MRN_SPR_LABELS,
+                          type_filter=["Functional"])
 
     # ==================================================================== Superdrug
+    # Slide label: "GB"
     SD_SUITE = 9422
-
-    # SD Java — "Automation Status SD" (confirmed screenshot)
     rules.append(Rule(
         name="SD JAVA", bu="Superdrug", scope="website", framework="java",
         suite_id=SD_SUITE,
         status_field_label="Automation Status SD",
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=["SD"],
-        country_labels={"SD": "Superdrug"},
-        implicit_country="Superdrug",
+        country_labels={"SD": "GB"},
+        implicit_country="GB",
     ))
     rules += _testim_pair("Superdrug", "SD", SD_SUITE, ["SD"],
-                          country_labels={"SD": "Superdrug"},
-                          implicit_country="Superdrug")
+                          country_labels={"SD": "GB"},
+                          implicit_country="GB")
 
     # ==================================================================== Savers
-    # No BU-specific automation status field visible in screenshots → generic field
+    # Slide label: "GB"
     SV_SUITE = 23967
     rules.append(Rule(
         name="SV JAVA", bu="Savers", scope="website", framework="java",
@@ -226,20 +239,19 @@ def build_rules() -> list[Rule]:
         status_field_label="Automation Status",
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=["SV"],
-        country_labels={"SV": "Savers"},
-        implicit_country="Savers",
+        country_labels={"SV": "GB"},
+        implicit_country="GB",
     ))
     rules += _testim_pair("Savers", "SV", SV_SUITE, ["SV"],
-                          country_labels={"SV": "Savers"},
-                          implicit_country="Savers")
+                          country_labels={"SV": "GB"},
+                          implicit_country="GB")
 
     # ==================================================================== The Perfume Shop
+    # Slide labels: UK, IE.  Token TPSUK does not exist → use TPSGB.
     TPS_SUITE  = 11833
-    # Global config: 18=TPSGB, 19=TPSIE  (NOT TPSUK — that token does not exist)
     TPS_TOKENS = ["TPSGB", "TPSIE"]
-    TPS_LABELS = {"TPSGB": "United Kingdom", "TPSIE": "Ireland"}
+    TPS_LABELS = {"TPSGB": "UK", "TPSIE": "IE"}
 
-    # TPS Java — "Automation Status TPS" (confirmed screenshot)
     rules.append(Rule(
         name="TPS JAVA", bu="The Perfume Shop", scope="website", framework="java",
         suite_id=TPS_SUITE,
@@ -252,21 +264,20 @@ def build_rules() -> list[Rule]:
                           country_labels=TPS_LABELS)
 
     # ==================================================================== Watsons
-    # WTR Java: None after SPR (per PDF). Only TestIM rules.
-    # Suite 7544 is WTR-dedicated → no multi_countries filter needed;
-    # implicit_country="Watsons" is used for reporting.
+    # TestIM only (no Java SPR).  Dedicated suite, no multi_countries filter.
+    # Slide label: "TR" (Turkey).
     WTR_SUITE = 7544
     rules += _testim_pair("Watsons", "WTR", WTR_SUITE, [],
                           country_labels={},
-                          implicit_country="Watsons")
+                          implicit_country="TR")
 
     # ==================================================================== Drogas
-    # "Automation Status DRG" label → system_name custom_automation_status_wlctr_spr
-    DRG_SUITE  = 16093
-    DRG_TOKENS = ["LV", "LT"]
-    DRG_LABELS = {"LV": "Latvia", "LT": "Lithuania"}
-    # DRG field (custom_automation_status_wtctr_spr) uses different labels for DEV/UAT:
-    #   8=Automated Dev only, 9=Automated UAT only   (NOT "Automated DEV" / "Automated UAT")
+    # "Automation Status DRG" → custom_automation_status_wtctr_spr
+    # DEV/UAT labels differ from other BUs: 8=Automated Dev only, 9=Automated UAT only
+    # Slide labels: "LT", "LV"
+    DRG_SUITE     = 16093
+    DRG_TOKENS    = ["LV", "LT"]
+    DRG_LABELS    = {"LV": "LV", "LT": "LT"}
     DRG_AUTOMATED = ["Automated", "Automated Dev only", "Automated UAT only"]
     rules.append(Rule(
         name="DRG ALL", bu="Drogas", scope="website", framework="java",
