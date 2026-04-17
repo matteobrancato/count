@@ -235,9 +235,11 @@ def build_rules() -> list[Rule]:
 
     # ==================================================================== Watsons
     # WTR Java: None after SPR (per PDF). Only TestIM rules.
+    # Suite 7544 is WTR-dedicated → no multi_countries filter needed;
+    # implicit_country="Watsons" is used for reporting.
     WTR_SUITE = 7544
-    rules += _testim_pair("Watsons", "WTR", WTR_SUITE, ["WTR"],
-                          country_labels={"WTR": "Watsons"},
+    rules += _testim_pair("Watsons", "WTR", WTR_SUITE, [],
+                          country_labels={},
                           implicit_country="Watsons")
 
     # ==================================================================== Drogas
