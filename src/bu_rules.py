@@ -1,23 +1,34 @@
 """Declarative BU → filter-rule mapping.
 
-Each Rule is a pure description of "how to count a test for this BU/variant".
-`rules_engine.py` consumes these rules and produces per-case expansion rows
-(country, device, framework) without any BU-specific code.
+Source of truth: EPAM "Smoke and Regression Tests Coverage: Filter" PDF (April 2026)
+cross-referenced with the TestRail Customizations screenshots (April 2026).
 
-Source of truth: the `EPAM-Smoke and Regression Tests Coverage: Filter` PDF
-(April 2026). The user flagged a few discrepancies with the PDF; where the PDF
-and the user disagreed we trust the PDF.
+All `status_field_label` values MUST match the exact Label shown in the
+TestRail Customizations UI (case-insensitive match handled by FieldRegistry).
 
-Framework taxonomy:
-    - java            : legacy Java + Selenide + Cucumber (status field is BU-specific)
-    - testim_desktop  : TestIM desktop automation
-    - testim_mobile   : TestIM mobile automation
-    - mobile_app      : native mobile app automation (separate suites)
+Confirmed system names from screenshots:
+  Automation Status             → custom_automation_status        (generic, Dropdown)
+  Automation Status ICI         → custom_automation_status_ici    (IPXL Java)
+  Automation Status KV SPR      → custom_automation_status_kv_spr
+  Automation Status TP          → custom_automation_status_tp     (TKP Java)
+  Automation Status TP SPR      → custom_automation_status_tp_spr
+  Automation Status MFR         → custom_automation_status_mfr
+  Automation Status MRN SPR     → custom_automation_status_mrn_spr
+  Automation Status SD          → custom_automation_status_sd
+  Automation Status TPS         → custom_automation_status_tps
+  Automation Status TPS SPR     → custom_automation_status_tps_spr
+  Automation Status SD SPR      → custom_automation_status_sd_spr
+  Automation status WTR SPR     → custom_automation_status_wtr_spr
+  Automation Status DRG         → custom_automation_status_wlctr_spr  (weird legacy name)
+  Automation Status Testim Desktop   → custom_automation_status_testim
+  Automation Status Testim Mobile View → custom_automation_status_mobile_view
+  Device                        → custom_device                   (Dropdown)
+  Deprecated                    → custom_deprecated               (Checkbox → bool)
+  Prod Sanity                   → custom_prod_sanity              (Checkbox → bool)
+  multi_countries               → custom_multi_countries          (Multi-select)
 
-Section taxonomy used for Tab 2 coverage:
-    - "website"     : Java / Testim rules on website suites
-    - "mobile_app"  : rules on dedicated mobile app suites
-    - "next_gen"    : rules on the Next Gen suite
+NOTE: "Automation status MRN" (automation_status_mrn) and
+      "Automation status WTR" (automation_status_wtctr) are INACTIVE — not used.
 """
 from __future__ import annotations
 
@@ -27,54 +38,53 @@ from typing import Literal
 Framework = Literal["java", "testim_desktop", "testim_mobile", "mobile_app"]
 Scope = Literal["website", "mobile_app", "next_gen"]
 
-
 # --------------------------------------------------------------------- constants
-AUTOMATED_JAVA = ["Automated", "Automated DEV", "Automated UAT"]
-AUTOMATED_TESTIM = ["Automated", "Automated DEV", "Automated UAT", "Automated Prod"]
-# Next Gen / Drogas use the generic Automation Status with Automated Prod included
-AUTOMATED_GENERIC_FULL = ["Automated", "Automated DEV", "Automated UAT", "Automated Prod"]
+AUTOMATED_JAVA       = ["Automated", "Automated DEV", "Automated UAT"]
+AUTOMATED_TESTIM     = ["Automated", "Automated DEV", "Automated UAT", "Automated Prod"]
+AUTOMATED_FULL       = ["Automated", "Automated DEV", "Automated UAT", "Automated Prod"]
+
+# Canonical field labels (copy-paste from TestRail Customizations screenshot)
+_TESTIM_DESKTOP_LABEL = "Automation Status Testim Desktop"
+_TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" suffix!
 
 
 @dataclass(frozen=True)
 class Rule:
     """A single declarative filter rule.
 
-    A case "matches" the rule when ALL of these hold:
-        - its type_id is in `types` (default: Regression)
-        - its deprecated flag equals `deprecated`
-        - its value for the custom status field is in `automated_values`
-        - (if `countries_filter` set) its multi_countries intersect it
-        - (if `priority_filter` set) its priority is in the list
+    A case matches when ALL hold:
+      - type_id is in type_filter (default: Regression)
+      - deprecated == False  (Checkbox field)
+      - status field value ∈ automated_values
+      - multi_countries intersects countries_filter  (empty = no filter)
+      - priority ∈ priority_filter  (empty = any)
     """
-    name: str                       # display/internal name, e.g. "KV JAVA"
-    bu: str                         # "Kruidvat"
-    scope: Scope                    # "website" | "mobile_app" | "next_gen"
+    name: str
+    bu: str
+    scope: Scope
     framework: Framework
     suite_id: int
-    status_field_label: str         # custom field label (resolved via FieldRegistry)
-    automated_values: list[str] = field(default_factory=lambda: list(AUTOMATED_TESTIM))
-    # multi_countries filter (case must contain ANY of these tokens); empty = no filter
-    countries_filter: list[str] = field(default_factory=list)
-    # Mapping multi_countries token → *reported* country label. If a token appears in
-    # countries_filter but not here, it's reported as itself (stripped of suffix).
-    # If a rule applies to a single-country BU (e.g. KV), use {"KV": "Kruidvat"}.
-    country_labels: dict[str, str] = field(default_factory=dict)
-    # If countries_filter is empty but the rule still "represents" one country, put it here:
-    implicit_country: str | None = None
-    priority_filter: list[str] = field(default_factory=list)  # empty = any priority
-    deprecated: str = "No"
-    type_filter: list[str] = field(default_factory=lambda: ["Regression"])
+    status_field_label: str
+    automated_values: list[str]     = field(default_factory=lambda: list(AUTOMATED_TESTIM))
+    countries_filter:  list[str]    = field(default_factory=list)
+    country_labels:    dict[str,str]= field(default_factory=dict)
+    implicit_country:  str | None   = None
+    priority_filter:   list[str]    = field(default_factory=list)
+    type_filter:       list[str]    = field(default_factory=lambda: ["Regression"])
 
 
 # --------------------------------------------------------------------- helpers
 def _testim_pair(
-    bu: str, name_base: str, suite_id: int, countries: list[str],
+    bu: str,
+    name_base: str,
+    suite_id: int,
+    countries: list[str],
     country_labels: dict[str, str] | None = None,
     implicit_country: str | None = None,
     scope: Scope = "website",
 ) -> list[Rule]:
-    """Return the (desktop, mobile) TestIM rule pair for a website BU."""
-    kwargs = dict(
+    """Return (TestIM Desktop, TestIM Mobile View) rule pair."""
+    shared = dict(
         bu=bu, scope=scope, suite_id=suite_id,
         automated_values=list(AUTOMATED_TESTIM),
         countries_filter=list(countries),
@@ -83,9 +93,9 @@ def _testim_pair(
     )
     return [
         Rule(name=f"{name_base} TESTIM DESKTOP", framework="testim_desktop",
-             status_field_label="Automation Status Testim Desktop", **kwargs),
+             status_field_label=_TESTIM_DESKTOP_LABEL, **shared),
         Rule(name=f"{name_base} TESTIM MOBILE", framework="testim_mobile",
-             status_field_label="Automation Status Testim Mobile", **kwargs),
+             status_field_label=_TESTIM_MOBILE_LABEL, **shared),
     ]
 
 
@@ -93,173 +103,195 @@ def _testim_pair(
 def build_rules() -> list[Rule]:
     rules: list[Rule] = []
 
-    # ---------------------------------------------------------------- Kruidvat
-    # Baseline 722 shared with Trekpleister. KV Java uses "Automation Status SPR".
+    # ==================================================================== KV + TKP
+    # Shared baseline suite 722.
     KV_SUITE = 722
+
+    # KV Java — uses "Automation Status KV SPR" field (confirmed screenshot)
     rules.append(Rule(
-        name="KV JAVA (SPR)", bu="Kruidvat", scope="website", framework="java",
-        suite_id=KV_SUITE, status_field_label="Automation Status SPR",
+        name="KV JAVA", bu="Kruidvat", scope="website", framework="java",
+        suite_id=KV_SUITE,
+        status_field_label="Automation Status KV SPR",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=["KV"], country_labels={"KV": "Kruidvat"},
+        countries_filter=["KV"],
+        country_labels={"KV": "Kruidvat"},
         implicit_country="Kruidvat",
     ))
     rules += _testim_pair("Kruidvat", "KV", KV_SUITE, ["KV"],
                           country_labels={"KV": "Kruidvat"},
                           implicit_country="Kruidvat")
 
-    # ------------------------------------------------------------ Trekpleister
-    # Same suite (722). TP Java has NO multi_countries filter per the PDF.
+    # TKP Java — "Automation Status TP" field; no multi_countries filter per PDF
     rules.append(Rule(
         name="TKP JAVA", bu="Trekpleister", scope="website", framework="java",
-        suite_id=KV_SUITE, status_field_label="Automation Status TP",
+        suite_id=KV_SUITE,
+        status_field_label="Automation Status TP",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=[],  # intentionally empty — PDF does NOT filter multi_countries for TP Java
+        countries_filter=[],          # PDF: no country filter for TKP Java
         implicit_country="Trekpleister",
     ))
-    # TestIM for TP: the user said to count Testim tests where multi_countries contains TP.
     rules += _testim_pair("Trekpleister", "TKP", KV_SUITE, ["TP"],
                           country_labels={"TP": "Trekpleister"},
                           implicit_country="Trekpleister")
 
-    # ------------------------------------------------------------- ICI Paris XL
-    IPXL_SUITE = 30122
-    IPXL_COUNTRIES = ["IPXLBE", "IPXLNL", "IPXLLU"]
-    IPXL_LABELS = {"IPXLBE": "Belgium", "IPXLNL": "Netherlands", "IPXLLU": "Luxembourg"}
+    # ==================================================================== IPXL
+    IPXL_SUITE   = 30122
+    IPXL_TOKENS  = ["IPXLBE", "IPXLNL", "IPXLLU"]
+    IPXL_LABELS  = {"IPXLBE": "Belgium", "IPXLNL": "Netherlands", "IPXLLU": "Luxembourg"}
+
+    # IPXL Java — "Automation Status ICI" (ICI = ICI Paris XL code, confirmed screenshot)
     rules.append(Rule(
         name="IPXL JAVA", bu="ICI Paris XL", scope="website", framework="java",
-        suite_id=IPXL_SUITE, status_field_label="Automation Status",
+        suite_id=IPXL_SUITE,
+        status_field_label="Automation Status ICI",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=IPXL_COUNTRIES, country_labels=IPXL_LABELS,
+        countries_filter=IPXL_TOKENS,
+        country_labels=IPXL_LABELS,
     ))
-    rules += _testim_pair("ICI Paris XL", "IPXL", IPXL_SUITE, IPXL_COUNTRIES,
+    rules += _testim_pair("ICI Paris XL", "IPXL", IPXL_SUITE, IPXL_TOKENS,
                           country_labels=IPXL_LABELS)
 
-    # ---------------------------------------------------------------- Marionnaud
+    # ==================================================================== Marionnaud
     MRN_SUITE = 30784
-    # MFR (France) Java + Testim — no priority filter (barrato nel PDF)
+
+    # MFR (France) Java — "Automation Status MFR"
     rules.append(Rule(
         name="MFR JAVA", bu="Marionnaud", scope="website", framework="java",
-        suite_id=MRN_SUITE, status_field_label="Automation Status MFR",
+        suite_id=MRN_SUITE,
+        status_field_label="Automation Status MFR",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=["MFR"], country_labels={"MFR": "France"},
+        countries_filter=["MFR"],
+        country_labels={"MFR": "France"},
     ))
     rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, ["MFR"],
                           country_labels={"MFR": "France"})
 
-    # Other MRN countries (SPR variants). Java uses "Automation Status SPR".
+    # Other MRN countries — Java uses "Automation Status MRN SPR" + _SPR tokens
     MRN_OTHER_TOKENS = ["MHU_SPR", "MCZ_SPR", "MAT_SPR", "MIT_SPR", "MRO_SPR", "MSK_SPR"]
     MRN_OTHER_LABELS = {
-        "MHU_SPR": "Hungary", "MCZ_SPR": "Czechia", "MAT_SPR": "Austria",
-        "MIT_SPR": "Italy",   "MRO_SPR": "Romania", "MSK_SPR": "Slovakia",
+        "MHU_SPR": "Hungary",  "MCZ_SPR": "Czechia", "MAT_SPR": "Austria",
+        "MIT_SPR": "Italy",    "MRO_SPR": "Romania",  "MSK_SPR": "Slovakia",
     }
     rules.append(Rule(
-        name="MRN OTHER JAVA (SPR)", bu="Marionnaud", scope="website", framework="java",
-        suite_id=MRN_SUITE, status_field_label="Automation Status SPR",
+        name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
+        suite_id=MRN_SUITE,
+        status_field_label="Automation Status MRN SPR",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=MRN_OTHER_TOKENS, country_labels=MRN_OTHER_LABELS,
+        countries_filter=MRN_OTHER_TOKENS,
+        country_labels=MRN_OTHER_LABELS,
     ))
     rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_OTHER_TOKENS,
                           country_labels=MRN_OTHER_LABELS)
 
-    # -------------------------------------------------------------- Superdrug
+    # ==================================================================== Superdrug
     SD_SUITE = 9422
+
+    # SD Java — "Automation Status SD" (confirmed screenshot)
     rules.append(Rule(
         name="SD JAVA", bu="Superdrug", scope="website", framework="java",
-        suite_id=SD_SUITE, status_field_label="Automation Status",
+        suite_id=SD_SUITE,
+        status_field_label="Automation Status SD",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=["SD"], country_labels={"SD": "Superdrug"},
+        countries_filter=["SD"],
+        country_labels={"SD": "Superdrug"},
         implicit_country="Superdrug",
     ))
     rules += _testim_pair("Superdrug", "SD", SD_SUITE, ["SD"],
                           country_labels={"SD": "Superdrug"},
                           implicit_country="Superdrug")
 
-    # ----------------------------------------------------------------- Savers
+    # ==================================================================== Savers
+    # No BU-specific automation status field visible in screenshots → generic field
     SV_SUITE = 23967
     rules.append(Rule(
         name="SV JAVA", bu="Savers", scope="website", framework="java",
-        suite_id=SV_SUITE, status_field_label="Automation Status",
+        suite_id=SV_SUITE,
+        status_field_label="Automation Status",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=["SV"], country_labels={"SV": "Savers"},
+        countries_filter=["SV"],
+        country_labels={"SV": "Savers"},
         implicit_country="Savers",
     ))
     rules += _testim_pair("Savers", "SV", SV_SUITE, ["SV"],
                           country_labels={"SV": "Savers"},
                           implicit_country="Savers")
 
-    # ------------------------------------------------------------ The Perfume Shop
-    TPS_SUITE = 11833
+    # ==================================================================== The Perfume Shop
+    TPS_SUITE  = 11833
     TPS_TOKENS = ["TPSUK", "TPSIE"]
     TPS_LABELS = {"TPSUK": "United Kingdom", "TPSIE": "Ireland"}
+
+    # TPS Java — "Automation Status TPS" (confirmed screenshot)
     rules.append(Rule(
         name="TPS JAVA", bu="The Perfume Shop", scope="website", framework="java",
-        suite_id=TPS_SUITE, status_field_label="Automation Status",
+        suite_id=TPS_SUITE,
+        status_field_label="Automation Status TPS",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=TPS_TOKENS, country_labels=TPS_LABELS,
+        countries_filter=TPS_TOKENS,
+        country_labels=TPS_LABELS,
     ))
     rules += _testim_pair("The Perfume Shop", "TPS", TPS_SUITE, TPS_TOKENS,
                           country_labels=TPS_LABELS)
 
-    # ---------------------------------------------------------------- Watsons
+    # ==================================================================== Watsons
+    # WTR Java: None after SPR (per PDF). Only TestIM rules.
     WTR_SUITE = 7544
     rules += _testim_pair("Watsons", "WTR", WTR_SUITE, ["WTR"],
                           country_labels={"WTR": "Watsons"},
                           implicit_country="Watsons")
 
-    # ----------------------------------------------------------------- Drogas
-    DRG_SUITE = 16093
+    # ==================================================================== Drogas
+    # "Automation Status DRG" label → system_name custom_automation_status_wlctr_spr
+    DRG_SUITE  = 16093
     DRG_TOKENS = ["LV", "LT"]
     DRG_LABELS = {"LV": "Latvia", "LT": "Lithuania"}
-    # Drogas: PDF only shows ONE rule (generic Automation Status, Automated Prod included).
-    # We treat it as a "java" framework rule — it's the only automation track for Drogas.
     rules.append(Rule(
         name="DRG ALL", bu="Drogas", scope="website", framework="java",
-        suite_id=DRG_SUITE, status_field_label="Automation Status",
-        automated_values=list(AUTOMATED_GENERIC_FULL),
-        countries_filter=DRG_TOKENS, country_labels=DRG_LABELS,
+        suite_id=DRG_SUITE,
+        status_field_label="Automation Status DRG",
+        automated_values=list(AUTOMATED_FULL),
+        countries_filter=DRG_TOKENS,
+        country_labels=DRG_LABELS,
     ))
 
-    # ---------------------------------------------------------------- Next Gen
+    # ==================================================================== Next Gen
     NEXTGEN_SUITE = 9570
-    # Next Gen per PDF has no multi_countries filter. We keep an empty filter
-    # (counted once per case) and expose "multi_countries" faceting at UI time
-    # so the user can break down by country. MRN special-case (expand base+SPR)
-    # is handled in rules_engine via `scope == 'next_gen'`.
     rules.append(Rule(
         name="NEXTGEN ALL", bu="Next Gen", scope="next_gen", framework="java",
-        suite_id=NEXTGEN_SUITE, status_field_label="Automation Status",
-        automated_values=list(AUTOMATED_GENERIC_FULL),
+        suite_id=NEXTGEN_SUITE,
+        status_field_label="Automation Status",
+        automated_values=list(AUTOMATED_FULL),
         countries_filter=[],
     ))
 
-    # ---------------------------------------------------------- Mobile Applications
-    # Separate suite per BU. Generic Automation Status, all Automated variants count.
-    # Distinction per automation tool is exposed via the "Automation Tool" custom field
-    # (resolved at runtime; gracefully skipped if the field doesn't exist).
-    mobile_app_suites = {
-        "Drogas": 19110,
-        "Watsons": 9416,
-        "ICI Paris XL": 1478,
-        "The Perfume Shop": 27553,
+    # ==================================================================== Mobile Apps
+    # One suite per BU; no country filter (each suite is already BU-specific).
+    # Automation tool breakdown done at UI layer via "Automation MAPP Tool" field.
+    mobile_app_suites: dict[str, int] = {
+        "Drogas":            19110,
+        "Watsons":           9416,
+        "ICI Paris XL":      1478,
+        "The Perfume Shop":  27553,
         "Superdrug / Savers": 10029,
-        "Marionnaud": 8470,
-        "Kruidvat": 20995,
+        "Marionnaud":        8470,
+        "Kruidvat":          20995,
     }
     for bu, suite_id in mobile_app_suites.items():
         rules.append(Rule(
             name=f"{bu} MOBILE APP", bu=bu, scope="mobile_app", framework="mobile_app",
-            suite_id=suite_id, status_field_label="Automation Status",
-            automated_values=list(AUTOMATED_GENERIC_FULL),
+            suite_id=suite_id,
+            status_field_label="Automation Status",
+            automated_values=list(AUTOMATED_FULL),
             countries_filter=[],
         ))
 
     return rules
 
 
-# --------------------------------------------------------------------- public lookup
+# --------------------------------------------------------------------- public
 ALL_RULES: list[Rule] = build_rules()
 
-WEBSITE_BUS: list[str] = sorted({r.bu for r in ALL_RULES if r.scope == "website"})
+WEBSITE_BUS:    list[str] = sorted({r.bu for r in ALL_RULES if r.scope == "website"})
 MOBILE_APP_BUS: list[str] = sorted({r.bu for r in ALL_RULES if r.scope == "mobile_app"})
 
 

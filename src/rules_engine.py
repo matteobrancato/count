@@ -1,20 +1,24 @@
 """Evaluate Rules against TestRail cases and produce normalised expansion rows.
 
-A single case can expand into multiple rows (one per matching country × device).
-This is the only layer that knows about the `Both` device rule and country
-expansion logic (see module docstring comments for edge cases).
+Field notes confirmed from TestRail Customizations screenshots (April 2026):
+  - Deprecated  : Checkbox → bool  (custom_deprecated)
+  - Prod Sanity : Checkbox → bool  (custom_prod_sanity)
+  - Device      : Dropdown, label "Device" → custom_device
+                  Values include "Both" (expands to Desktop + Mobile),
+                  "Desktop", "Mobile", "Desktop only", "Mobile only"
+  - multi_countries : Multi-select → list of int IDs (custom_multi_countries)
+  - Automation MAPP Tool : Dropdown (custom_automation_mapp_tool)
 
-Output DataFrame columns (stable contract used by metrics & UI):
-
-    case_id, title, url, section_id, section_path, type_id, priority_id,
-    priority_label, deprecated, suite_id, bu, scope, framework, rule_name,
-    country_token, country_label, device, automation_tool,
-    is_automated, is_regression, is_prod_sanity, status_value
+Output DataFrame columns:
+    case_id, title, url, section_id, section_path,
+    type_id, priority_id, priority_label,
+    deprecated, suite_id, bu, scope, framework, rule_name,
+    country_token, country_label, device,
+    automation_tool, is_automated, is_regression, is_prod_sanity, status_value
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 import pandas as pd
 import streamlit as st
@@ -24,28 +28,32 @@ from .bu_rules import Rule, ALL_RULES
 from .field_resolver import FieldRegistry, get_registry
 
 
-# --------------------------------------------------------------------- helpers
-DEVICE_FIELD_CANDIDATES = ("Device type", "Device Type", "Device")
-AUTOMATION_TOOL_CANDIDATES = ("Automation Tool", "Automation tool")
-PROD_SANITY_CANDIDATES = ("Prod Sanity", "Production Sanity")
-MULTI_COUNTRIES_CANDIDATES = ("multi_countries", "Multi Countries", "Multi_countries")
-DEPRECATED_CANDIDATES = ("Deprecated",)
+# ----------------------------------------------------------------- field labels
+# Use the EXACT label from the TestRail Customizations page.
+_DEVICE_LABEL        = "Device"
+_DEPRECATED_LABEL    = "Deprecated"
+_PROD_SANITY_LABEL   = "Prod Sanity"
+_MULTI_COUNTRIES_LABEL = "multi_countries"
+_AUTOMATION_TOOL_LABEL = "Automation MAPP Tool"  # screenshot: "Automation MAPP Tool"
 
 
+# ----------------------------------------------------------------- helpers
 def _get_multi_countries(case: dict, reg: FieldRegistry) -> list[str]:
-    meta = reg.field("multi_countries")
-    for cand in MULTI_COUNTRIES_CANDIDATES:
-        meta = meta or reg.field(cand)
-        if meta:
-            break
+    """Return list of country label-strings from the multi_countries multi-select field."""
+    meta = reg.field(_MULTI_COUNTRIES_LABEL)
     if not meta:
         return []
     raw = case.get(meta.system_name)
     if raw is None:
         return []
-    # multi-select: list of ids OR newline/comma-separated ids
+    # TestRail multi-select returns a list of integer IDs (or None if empty)
     if isinstance(raw, list):
-        ids = [int(x) for x in raw]
+        ids = []
+        for x in raw:
+            try:
+                ids.append(int(x))
+            except (TypeError, ValueError):
+                pass
     elif isinstance(raw, str):
         ids = []
         for token in raw.replace("\n", ",").split(","):
@@ -53,29 +61,31 @@ def _get_multi_countries(case: dict, reg: FieldRegistry) -> list[str]:
             if token.isdigit():
                 ids.append(int(token))
     else:
-        ids = []
-    return [meta.values_by_id.get(i, "") for i in ids if i in meta.values_by_id]
-
-
-def _get_single_label(case: dict, reg: FieldRegistry, candidates: tuple[str, ...]) -> str | None:
-    for cand in candidates:
-        meta = reg.field(cand)
-        if not meta:
-            continue
-        raw = case.get(meta.system_name)
-        if raw is None:
-            return None
-        if isinstance(raw, int):
-            return meta.values_by_id.get(raw)
-        if isinstance(raw, str) and raw.strip().isdigit():
-            return meta.values_by_id.get(int(raw.strip()))
-        if isinstance(raw, str):
-            return raw
-    return None
+        return []
+    return [meta.values_by_id[i] for i in ids if i in meta.values_by_id]
 
 
 def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
-    meta = reg.field("Deprecated")
+    """Deprecated is a Checkbox field → bool value in the API."""
+    meta = reg.field(_DEPRECATED_LABEL)
+    if not meta:
+        return False
+    raw = case.get(meta.system_name)
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return raw
+    # Fallback: some older TestRail versions return 0/1
+    if isinstance(raw, int):
+        return raw == 1
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("yes", "true", "1")
+    return False
+
+
+def _get_prod_sanity(case: dict, reg: FieldRegistry) -> bool:
+    """Prod Sanity is a Checkbox field → bool value in the API."""
+    meta = reg.field(_PROD_SANITY_LABEL)
     if not meta:
         return False
     raw = case.get(meta.system_name)
@@ -84,65 +94,90 @@ def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
     if isinstance(raw, bool):
         return raw
     if isinstance(raw, int):
-        label = meta.values_by_id.get(raw, "").strip().lower()
-        return label in ("yes", "true", "deprecated")
+        return raw == 1
     if isinstance(raw, str):
-        return raw.strip().lower() in ("yes", "true", "deprecated")
+        return raw.strip().lower() in ("yes", "true", "1")
     return False
 
 
-def _devices_for(case: dict, reg: FieldRegistry) -> list[str]:
-    """Return ["Desktop"], ["Mobile"], or ["Desktop", "Mobile"] (Both expands).
+def _get_automation_tool(case: dict, reg: FieldRegistry) -> str | None:
+    """Automation MAPP Tool dropdown → string label."""
+    meta = reg.field(_AUTOMATION_TOOL_LABEL)
+    if not meta:
+        return None
+    raw = case.get(meta.system_name)
+    if isinstance(raw, int):
+        return meta.values_by_id.get(raw)
+    return None
 
-    Cases with no device info fall back to ["Unspecified"] so they still surface
-    somewhere rather than silently vanishing from the totals.
+
+def _devices_for(case: dict, reg: FieldRegistry) -> list[str]:
+    """Expand the Device dropdown:
+    - "Both"           → ["Desktop", "Mobile"]
+    - "Desktop" / "Desktop only" → ["Desktop"]
+    - "Mobile" / "Mobile only"   → ["Mobile"]
+    - anything else / missing    → ["Unspecified"]
     """
-    label = _get_single_label(case, reg, DEVICE_FIELD_CANDIDATES)
-    if not label:
+    meta = reg.field(_DEVICE_LABEL)
+    if not meta:
         return ["Unspecified"]
+    raw = case.get(meta.system_name)
+    if raw is None:
+        return ["Unspecified"]
+    if isinstance(raw, int):
+        label = meta.values_by_id.get(raw, "")
+    elif isinstance(raw, str):
+        label = raw
+    else:
+        return ["Unspecified"]
+
     low = label.strip().lower()
-    if low == "both":
+    if "both" in low:
         return ["Desktop", "Mobile"]
     if low.startswith("desktop"):
         return ["Desktop"]
     if low.startswith("mobile"):
         return ["Mobile"]
-    return [label]
+    return ["Unspecified"]
 
 
 def _case_url(base_url: str, case_id: int) -> str:
     return f"{base_url.rstrip('/')}/index.php?/cases/view/{case_id}"
 
 
-# --------------------------------------------------------------------- matching
+# ----------------------------------------------------------------- matching
 def _rule_matches(case: dict, rule: Rule, reg: FieldRegistry) -> tuple[bool, list[str]]:
-    """Return (match, matched_country_tokens). Empty token list = no country filter."""
-    # Type
+    """Return (match, matched_country_tokens).
+
+    Steps (short-circuit on first failure):
+      1. type_filter
+      2. NOT deprecated
+      3. automation status value in allowed set
+      4. multi_countries intersects countries_filter (if set)
+    """
+    # 1. Type
     if rule.type_filter:
-        expected = {reg.type_id(t) for t in rule.type_filter}
-        expected.discard(None)
+        expected = {reg.type_id(t) for t in rule.type_filter} - {None}
         if case.get("type_id") not in expected:
             return False, []
-    # Deprecated
-    if _is_deprecated(case, reg) != (rule.deprecated.strip().lower() == "yes"):
+
+    # 2. Deprecated (must be False)
+    if _is_deprecated(case, reg):
         return False, []
-    # Priority (optional filter)
-    if rule.priority_filter:
-        expected = {reg.priority_id(p) for p in rule.priority_filter}
-        expected.discard(None)
-        if case.get("priority_id") not in expected:
-            return False, []
-    # Automation status
+
+    # 3. Automation status
     status_meta = reg.field(rule.status_field_label)
     if not status_meta:
-        # Field missing altogether — rule cannot apply
         return False, []
     raw = case.get(status_meta.system_name)
     if raw is None:
         return False, []
     allowed_ids = reg.status_value_ids(rule.status_field_label, rule.automated_values)
+    if not allowed_ids:
+        # Field found but no value IDs resolved — label mismatch in automated_values
+        return False, []
     if isinstance(raw, list):
-        if not any(int(v) in allowed_ids for v in raw):
+        if not any(int(v) in allowed_ids for v in raw if str(v).isdigit()):
             return False, []
     elif isinstance(raw, int):
         if raw not in allowed_ids:
@@ -153,7 +188,7 @@ def _rule_matches(case: dict, rule: Rule, reg: FieldRegistry) -> tuple[bool, lis
     else:
         return False, []
 
-    # Country filter
+    # 4. Country filter
     if rule.countries_filter:
         tokens = set(_get_multi_countries(case, reg))
         matched = [c for c in rule.countries_filter if c in tokens]
@@ -164,96 +199,109 @@ def _rule_matches(case: dict, rule: Rule, reg: FieldRegistry) -> tuple[bool, lis
     return True, []
 
 
-# --------------------------------------------------------------------- expansion
-def _expand_rows(case: dict, rule: Rule, reg: FieldRegistry,
-                 matched_countries: list[str], base_url: str) -> list[dict]:
-    devices = _devices_for(case, reg)
-    prod_sanity = _get_single_label(case, reg, PROD_SANITY_CANDIDATES)
-    prod_sanity_yes = bool(prod_sanity and prod_sanity.strip().lower() == "yes")
-    automation_tool = _get_single_label(case, reg, AUTOMATION_TOOL_CANDIDATES)
-    priority_label = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
-    status_meta = reg.field(rule.status_field_label)
-    raw_status = case.get(status_meta.system_name) if status_meta else None
-    if isinstance(raw_status, list) and raw_status:
-        status_label = status_meta.values_by_id.get(int(raw_status[0]))
-    elif isinstance(raw_status, int):
-        status_label = status_meta.values_by_id.get(raw_status)
-    else:
-        status_label = None
+# ----------------------------------------------------------------- expansion
+def _expand_rows(
+    case: dict, rule: Rule, reg: FieldRegistry,
+    matched_countries: list[str], base_url: str
+) -> list[dict]:
+    devices          = _devices_for(case, reg)
+    prod_sanity_yes  = _get_prod_sanity(case, reg)
+    automation_tool  = _get_automation_tool(case, reg)
+    priority_label   = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
 
-    # Country expansion: tokens that passed the filter, or a single implicit country
+    status_meta  = reg.field(rule.status_field_label)
+    raw_status   = case.get(status_meta.system_name) if status_meta else None
+    status_label = None
+    if status_meta and isinstance(raw_status, int):
+        status_label = status_meta.values_by_id.get(raw_status)
+
+    # Country pairs: (token, display_label)
     if matched_countries:
         country_pairs = [(tok, rule.country_labels.get(tok, tok)) for tok in matched_countries]
     elif rule.implicit_country:
         country_pairs = [(rule.implicit_country, rule.implicit_country)]
     else:
-        # Next Gen / TP-Java / mobile-app: no country expansion; tag with scope token
         country_pairs = [("__ALL__", rule.bu)]
 
     rows: list[dict] = []
     for tok, label in country_pairs:
         for dev in devices:
             rows.append({
-                "case_id": int(case["id"]),
-                "title": case.get("title"),
-                "url": _case_url(base_url, int(case["id"])),
-                "section_id": case.get("section_id"),
-                "type_id": case.get("type_id"),
-                "priority_id": case.get("priority_id"),
+                "case_id":       int(case["id"]),
+                "title":         case.get("title"),
+                "url":           _case_url(base_url, int(case["id"])),
+                "section_id":    case.get("section_id"),
+                "type_id":       case.get("type_id"),
+                "priority_id":   case.get("priority_id"),
                 "priority_label": priority_label,
-                "deprecated": _is_deprecated(case, reg),
-                "suite_id": rule.suite_id,
-                "bu": rule.bu,
-                "scope": rule.scope,
-                "framework": rule.framework,
-                "rule_name": rule.name,
+                "deprecated":    False,  # already filtered above
+                "suite_id":      rule.suite_id,
+                "bu":            rule.bu,
+                "scope":         rule.scope,
+                "framework":     rule.framework,
+                "rule_name":     rule.name,
                 "country_token": tok,
                 "country_label": label,
-                "device": dev,
+                "device":        dev,
                 "automation_tool": automation_tool,
-                "is_automated": True,
+                "is_automated":  True,
                 "is_regression": True,
                 "is_prod_sanity": prod_sanity_yes,
-                "status_value": status_label,
+                "status_value":  status_label,
             })
     return rows
 
 
-# --------------------------------------------------------------------- public API
-@dataclass
-class ExpansionResult:
-    automated: pd.DataFrame   # one row per (case × matched country × device), only automated
-    raw_cases: pd.DataFrame   # one row per RAW case (all of them), for Tab 1 pivot + coverage
-
-
+# ----------------------------------------------------------------- raw case row
 def _raw_case_row(case: dict, reg: FieldRegistry, suite_id: int, base_url: str) -> dict:
-    devices = _devices_for(case, reg)
-    device_label = "Both" if len(devices) == 2 else devices[0]
+    devices     = _devices_for(case, reg)
+    dev_label   = "Both" if len(devices) == 2 else devices[0]
     priority_label = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
+    # Resolve type_id → human label
     type_label = None
     for t_name, t_id in reg.type_label_to_id.items():
         if t_id == case.get("type_id"):
             type_label = t_name.title()
             break
+    # Collect all automation status values for display in Tab 1
+    auto_status_fields = {
+        lbl: reg.field(lbl)
+        for lbl in [
+            "Automation Status", "Automation Status KV SPR", "Automation Status TP",
+            "Automation Status ICI", "Automation Status MFR", "Automation Status MRN SPR",
+            "Automation Status SD", "Automation Status TPS", "Automation Status DRG",
+            "Automation Status Testim Desktop", "Automation Status Testim Mobile View",
+        ]
+        if reg.field(lbl)
+    }
+    auto_status_resolved: dict[str, str | None] = {}
+    for lbl, meta in auto_status_fields.items():
+        raw = case.get(meta.system_name)
+        if isinstance(raw, int):
+            auto_status_resolved[lbl] = meta.values_by_id.get(raw)
+        else:
+            auto_status_resolved[lbl] = None
+
     return {
-        "case_id": int(case["id"]),
-        "title": case.get("title"),
-        "url": _case_url(base_url, int(case["id"])),
-        "suite_id": suite_id,
-        "section_id": case.get("section_id"),
-        "type_id": case.get("type_id"),
-        "type_label": type_label,
-        "priority_id": case.get("priority_id"),
+        "case_id":       int(case["id"]),
+        "title":         case.get("title"),
+        "url":           _case_url(base_url, int(case["id"])),
+        "suite_id":      suite_id,
+        "section_id":    case.get("section_id"),
+        "type_id":       case.get("type_id"),
+        "type_label":    type_label,
+        "priority_id":   case.get("priority_id"),
         "priority_label": priority_label,
-        "deprecated": _is_deprecated(case, reg),
-        "device": device_label,
-        "device_expanded": devices,
+        "deprecated":    _is_deprecated(case, reg),
+        "device":        dev_label,
         "multi_countries": _get_multi_countries(case, reg),
-        "automation_tool": _get_single_label(case, reg, AUTOMATION_TOOL_CANDIDATES),
-        "prod_sanity": _get_single_label(case, reg, PROD_SANITY_CANDIDATES),
+        "automation_tool": _get_automation_tool(case, reg),
+        "prod_sanity":   _get_prod_sanity(case, reg),
+        **{f"status_{k}": v for k, v in auto_status_resolved.items()},
     }
 
 
+# ----------------------------------------------------------------- section path
 def _section_path_lookup(sections: list[dict]) -> dict[int, str]:
     by_id = {int(s["id"]): s for s in sections}
     cache: dict[int, str] = {}
@@ -274,36 +322,36 @@ def _section_path_lookup(sections: list[dict]) -> dict[int, str]:
     return cache
 
 
+# ----------------------------------------------------------------- public API
+@dataclass
+class ExpansionResult:
+    automated: pd.DataFrame   # expanded (case × country × device), only automated
+    raw_cases: pd.DataFrame   # every case in the suites (for Tab 1 pivot)
+
+
 @st.cache_data(show_spinner="Fetching and expanding cases…", ttl=600)
 def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
-    """Fetch every suite referenced by the given rules and evaluate them.
-
-    Returns both:
-        - `automated`: post-filter rows expanded per country/device (used for metrics)
-        - `raw_cases`: every raw case fetched (one row each) — used by Tab 1's pivot view
-    """
-    reg = get_registry()
-    rules = [r for r in ALL_RULES if r.name in rule_names]
-    # base URL for building case links
+    reg      = get_registry()
+    rules    = [r for r in ALL_RULES if r.name in rule_names]
     base_url = tr.TestRailCredentials.from_secrets().base_url
 
-    # Group rules by suite so we download each suite only once
-    suites = sorted({r.suite_id for r in rules})
+    suites           = sorted({r.suite_id for r in rules})
     suite_to_project = {sid: tr.resolve_project_id(sid) for sid in suites}
-    suite_cases: dict[int, list[dict]] = {}
+    suite_cases:    dict[int, list[dict]]  = {}
     suite_sections: dict[int, dict[int, str]] = {}
     for sid in suites:
         pid = suite_to_project[sid]
-        suite_cases[sid] = tr.fetch_cases(pid, sid)
+        suite_cases[sid]    = tr.fetch_cases(pid, sid)
         suite_sections[sid] = _section_path_lookup(tr.fetch_sections(pid, sid))
 
     automated_rows: list[dict] = []
-    raw_rows: list[dict] = []
-    seen_raw: set[tuple[int, int]] = set()  # (suite_id, case_id)
+    raw_rows:       list[dict] = []
+    seen_raw: set[tuple[int, int]] = set()
 
     for rule in rules:
-        cases = suite_cases.get(rule.suite_id, [])
+        cases    = suite_cases.get(rule.suite_id, [])
         sect_map = suite_sections.get(rule.suite_id, {})
+
         for case in cases:
             cid = int(case["id"])
             key = (rule.suite_id, cid)
@@ -312,6 +360,7 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
                 raw["section_path"] = sect_map.get(int(case.get("section_id") or 0), "")
                 raw_rows.append(raw)
                 seen_raw.add(key)
+
             matched, countries = _rule_matches(case, rule, reg)
             if not matched:
                 continue
@@ -319,6 +368,7 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
                 row["section_path"] = sect_map.get(int(case.get("section_id") or 0), "")
                 automated_rows.append(row)
 
-    automated_df = pd.DataFrame(automated_rows)
-    raw_df = pd.DataFrame(raw_rows)
-    return ExpansionResult(automated=automated_df, raw_cases=raw_df)
+    return ExpansionResult(
+        automated = pd.DataFrame(automated_rows) if automated_rows else pd.DataFrame(),
+        raw_cases = pd.DataFrame(raw_rows)        if raw_rows       else pd.DataFrame(),
+    )
