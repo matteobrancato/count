@@ -155,11 +155,14 @@ def _rule_matches(case: dict, rule: Rule, reg: FieldRegistry) -> tuple[bool, lis
       3. automation status value in allowed set
       4. multi_countries intersects countries_filter (if set)
     """
-    # 1. Type
+    # 1. Type — skip gracefully if type names can't be resolved (e.g. custom type fields
+    #    per BU like "Type WTR / Type MRN" used instead of the standard type_id).
     if rule.type_filter:
         expected = {reg.type_id(t) for t in rule.type_filter} - {None}
-        if case.get("type_id") not in expected:
+        if expected and case.get("type_id") not in expected:
             return False, []
+        # If expected is empty, resolution failed → don't reject the case; rely on
+        # the automation-status filter (which is already BU/framework-specific).
 
     # 2. Deprecated (must be False)
     if _is_deprecated(case, reg):

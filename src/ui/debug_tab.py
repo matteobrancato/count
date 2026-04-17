@@ -50,6 +50,21 @@ def render() -> None:
         st.error(f"fetch_case_fields error: {exc}")
         st.code(traceback.format_exc())
 
+    # ============================================================ 1b. Case types + priorities
+    with st.expander("1b. Case types + priorities (built-in)", expanded=False):
+        try:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Case types** (`get_case_types`)")
+                types = tr.fetch_case_types()
+                st.dataframe(pd.DataFrame(types)[["id","name"]], hide_index=True, use_container_width=True)
+            with c2:
+                st.markdown("**Priorities** (`get_priorities`)")
+                prios = tr.fetch_priorities()
+                st.dataframe(pd.DataFrame(prios)[["id","name","short_name"]], hide_index=True, use_container_width=True)
+        except Exception as exc:
+            st.error(str(exc))
+
     # ============================================================ 2. Resolver test
     st.markdown("---")
     st.markdown("### 2. Field resolver")
@@ -151,7 +166,7 @@ def render() -> None:
         )
 
         for case in cases:
-            # type
+            # type — skip if resolution failed (expected_type_ids empty)
             if expected_type_ids and case.get("type_id") not in expected_type_ids:
                 fail_type += 1; continue
             # deprecated
