@@ -253,7 +253,7 @@ def build_rules() -> list[Rule]:
     rules.append(Rule(
         name="TPS JAVA", bu="The Perfume Shop", scope="website", framework="java",
         suite_id=TPS_SUITE,
-        status_field_label="Automation Status TPS",
+        status_field_label="Automation Status",   # generic field — TPS cases use the standard status
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=TPS_TOKENS,
         country_labels=TPS_LABELS,
