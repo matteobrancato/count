@@ -13,6 +13,7 @@ Confirmed system names from screenshots:
   Automation Status TP          → custom_automation_status_tp     (TKP Java)
   Automation Status TP SPR      → custom_automation_status_tp_spr
   Automation Status MFR         → custom_automation_status_mfr
+  Automation Status MRN         → custom_automation_status_mrn      (MRN Java, other countries)
   Automation Status MRN SPR     → custom_automation_status_mrn_spr
   Automation Status SD          → custom_automation_status_sd
   Automation Status TPS         → custom_automation_status_tps
@@ -20,15 +21,15 @@ Confirmed system names from screenshots:
   Automation Status SD SPR      → custom_automation_status_sd_spr
   Automation status WTR SPR     → custom_automation_status_wtr_spr
   Automation Status DRG         → custom_automation_status_wlctr_spr  (weird legacy name)
-  Automation Status Testim Desktop   → custom_automation_status_testim
-  Automation Status Testim Mobile View → custom_automation_status_mobile_view
+  Automation Status Testim Desktop   → custom_case_automation_status_testim
+  Automation Status Testim Mobile View → custom_case_automation_status_mobile_view
   Device                        → custom_device                   (Dropdown)
   Deprecated                    → custom_deprecated               (Checkbox → bool)
-  Prod Sanity                   → custom_prod_sanity              (Checkbox → bool)
+  Prod Sanity                   → custom_case_prod_sanity         (Checkbox → bool)
   multi_countries               → custom_multi_countries          (Multi-select)
 
-NOTE: "Automation status MRN" (automation_status_mrn) and
-      "Automation status WTR" (automation_status_wtctr) are INACTIVE — not used.
+NOTE: "Automation status WTR" (automation_status_wtctr) is INACTIVE — not used.
+      "Automation status MRN" IS used for Java on non-France MRN countries.
 """
 from __future__ import annotations
 
@@ -107,37 +108,44 @@ def build_rules() -> list[Rule]:
     # Shared baseline suite 722.
     KV_SUITE = 722
 
-    # KV Java — uses "Automation Status KV SPR" field (confirmed screenshot)
+    # KV Java — "Automation Status KV SPR" field.
+    # KV suite (722) project config: 1=KVBE, 2=KVN, 3=TP  (project-specific IDs)
+    KV_TOKENS  = ["KVBE", "KVN"]
+    KV_LABELS  = {"KVBE": "Belgium", "KVN": "Netherlands"}
     rules.append(Rule(
         name="KV JAVA", bu="Kruidvat", scope="website", framework="java",
         suite_id=KV_SUITE,
         status_field_label="Automation Status KV SPR",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=["KV"],
-        country_labels={"KV": "Kruidvat"},
-        implicit_country="Kruidvat",
+        countries_filter=KV_TOKENS,
+        country_labels=KV_LABELS,
     ))
-    rules += _testim_pair("Kruidvat", "KV", KV_SUITE, ["KV"],
-                          country_labels={"KV": "Kruidvat"},
-                          implicit_country="Kruidvat")
+    rules += _testim_pair("Kruidvat", "KV", KV_SUITE, KV_TOKENS,
+                          country_labels=KV_LABELS)
 
-    # TKP Java — "Automation Status TP" field; no multi_countries filter per PDF
+    # TKP Java — "Automation Status TP" field identifies TKP-specific cases.
+    # TKP cases in suite 722 carry country token "TP" (ID=3 in the KV project config).
+    TKP_TOKENS = ["TP"]
+    TKP_LABELS = {"TP": "Trekpleister"}
     rules.append(Rule(
         name="TKP JAVA", bu="Trekpleister", scope="website", framework="java",
         suite_id=KV_SUITE,
         status_field_label="Automation Status TP",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=[],          # PDF: no country filter for TKP Java
+        countries_filter=TKP_TOKENS,
+        country_labels=TKP_LABELS,
         implicit_country="Trekpleister",
     ))
-    rules += _testim_pair("Trekpleister", "TKP", KV_SUITE, ["TP"],
-                          country_labels={"TP": "Trekpleister"},
+    rules += _testim_pair("Trekpleister", "TKP", KV_SUITE, TKP_TOKENS,
+                          country_labels=TKP_LABELS,
                           implicit_country="Trekpleister")
 
     # ==================================================================== IPXL
     IPXL_SUITE   = 30122
-    IPXL_TOKENS  = ["IPXLBE", "IPXLNL", "IPXLLU"]
-    IPXL_LABELS  = {"IPXLBE": "Belgium", "IPXLNL": "Netherlands", "IPXLLU": "Luxembourg"}
+    # Tokens MUST match the exact strings in the TestRail multi_countries global config.
+    # Global config (28-value): 6=IPXL NL, 7=IPXL BE, 8=IPXL LU  (with spaces!)
+    IPXL_TOKENS  = ["IPXL NL", "IPXL BE", "IPXL LU"]
+    IPXL_LABELS  = {"IPXL NL": "Netherlands", "IPXL BE": "Belgium", "IPXL LU": "Luxembourg"}
 
     # IPXL Java — "Automation Status ICI" (ICI = ICI Paris XL code, confirmed screenshot)
     rules.append(Rule(
@@ -154,7 +162,7 @@ def build_rules() -> list[Rule]:
     # ==================================================================== Marionnaud
     MRN_SUITE = 30784
 
-    # MFR (France) Java — "Automation Status MFR"
+    # MFR (France) Java — "Automation Status MFR" + multi_countries=MFR
     rules.append(Rule(
         name="MFR JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
@@ -166,22 +174,31 @@ def build_rules() -> list[Rule]:
     rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, ["MFR"],
                           country_labels={"MFR": "France"})
 
-    # Other MRN countries — Java uses "Automation Status MRN SPR" + _SPR tokens
-    MRN_OTHER_TOKENS = ["MHU_SPR", "MCZ_SPR", "MAT_SPR", "MIT_SPR", "MRO_SPR", "MSK_SPR"]
-    MRN_OTHER_LABELS = {
-        "MHU_SPR": "Hungary",  "MCZ_SPR": "Czechia", "MAT_SPR": "Austria",
-        "MIT_SPR": "Italy",    "MRO_SPR": "Romania",  "MSK_SPR": "Slovakia",
+    # Other MRN countries (7): Switzerland, Austria, Romania, Italy, Czechia, Slovakia, Hungary
+    # Java rule: "Automation Status MRN" (custom_automation_status_mrn) + non-SPR tokens
+    # TestIM rule: TestIM Desktop/Mobile + _SPR tokens in multi_countries
+    # The two token sets map to the same display labels so dedup works correctly.
+    MRN_JAVA_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU"]
+    MRN_JAVA_LABELS = {
+        "MCH": "Switzerland", "MAT": "Austria",  "MRO": "Romania",
+        "MIT": "Italy",       "MCZ": "Czechia",  "MSK": "Slovakia", "MHU": "Hungary",
+    }
+    MRN_SPR_TOKENS = ["MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
+    MRN_SPR_LABELS = {
+        "MCH_SPR": "Switzerland", "MAT_SPR": "Austria",  "MRO_SPR": "Romania",
+        "MIT_SPR": "Italy",       "MCZ_SPR": "Czechia",  "MSK_SPR": "Slovakia",
+        "MHU_SPR": "Hungary",
     }
     rules.append(Rule(
         name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
-        status_field_label="Automation Status MRN SPR",
+        status_field_label="Automation Status MRN",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=MRN_OTHER_TOKENS,
-        country_labels=MRN_OTHER_LABELS,
+        countries_filter=MRN_JAVA_TOKENS,
+        country_labels=MRN_JAVA_LABELS,
     ))
-    rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_OTHER_TOKENS,
-                          country_labels=MRN_OTHER_LABELS)
+    rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_SPR_TOKENS,
+                          country_labels=MRN_SPR_LABELS)
 
     # ==================================================================== Superdrug
     SD_SUITE = 9422
@@ -218,8 +235,9 @@ def build_rules() -> list[Rule]:
 
     # ==================================================================== The Perfume Shop
     TPS_SUITE  = 11833
-    TPS_TOKENS = ["TPSUK", "TPSIE"]
-    TPS_LABELS = {"TPSUK": "United Kingdom", "TPSIE": "Ireland"}
+    # Global config: 18=TPSGB, 19=TPSIE  (NOT TPSUK — that token does not exist)
+    TPS_TOKENS = ["TPSGB", "TPSIE"]
+    TPS_LABELS = {"TPSGB": "United Kingdom", "TPSIE": "Ireland"}
 
     # TPS Java — "Automation Status TPS" (confirmed screenshot)
     rules.append(Rule(
@@ -247,11 +265,14 @@ def build_rules() -> list[Rule]:
     DRG_SUITE  = 16093
     DRG_TOKENS = ["LV", "LT"]
     DRG_LABELS = {"LV": "Latvia", "LT": "Lithuania"}
+    # DRG field (custom_automation_status_wtctr_spr) uses different labels for DEV/UAT:
+    #   8=Automated Dev only, 9=Automated UAT only   (NOT "Automated DEV" / "Automated UAT")
+    DRG_AUTOMATED = ["Automated", "Automated Dev only", "Automated UAT only"]
     rules.append(Rule(
         name="DRG ALL", bu="Drogas", scope="website", framework="java",
         suite_id=DRG_SUITE,
         status_field_label="Automation Status DRG",
-        automated_values=list(AUTOMATED_FULL),
+        automated_values=DRG_AUTOMATED,
         countries_filter=DRG_TOKENS,
         country_labels=DRG_LABELS,
     ))

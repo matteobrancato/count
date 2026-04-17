@@ -38,8 +38,13 @@ _AUTOMATION_TOOL_LABEL = "Automation MAPP Tool"  # screenshot: "Automation MAPP 
 
 
 # ----------------------------------------------------------------- helpers
-def _get_multi_countries(case: dict, reg: FieldRegistry) -> list[str]:
-    """Return list of country label-strings from the multi_countries multi-select field."""
+def _get_multi_countries(case: dict, reg: FieldRegistry, project_id: int | None = None) -> list[str]:
+    """Return list of country label-strings from the multi_countries multi-select field.
+
+    *project_id* selects the correct per-project config so that the same integer ID
+    resolves to the right label in each suite (e.g. ID=3 is "TP" in the KV/TKP suite
+    but "MRN" in the global config).
+    """
     meta = reg.field(_MULTI_COUNTRIES_LABEL)
     if not meta:
         return []
@@ -62,7 +67,8 @@ def _get_multi_countries(case: dict, reg: FieldRegistry) -> list[str]:
                 ids.append(int(token))
     else:
         return []
-    return [meta.values_by_id[i] for i in ids if i in meta.values_by_id]
+    val_map = meta.values_for_project(project_id)
+    return [val_map[i] for i in ids if i in val_map]
 
 
 def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
@@ -146,7 +152,9 @@ def _case_url(base_url: str, case_id: int) -> str:
 
 
 # ----------------------------------------------------------------- matching
-def _rule_matches(case: dict, rule: Rule, reg: FieldRegistry) -> tuple[bool, list[str]]:
+def _rule_matches(
+    case: dict, rule: Rule, reg: FieldRegistry, project_id: int | None = None
+) -> tuple[bool, list[str]]:
     """Return (match, matched_country_tokens).
 
     Steps (short-circuit on first failure):
@@ -191,9 +199,9 @@ def _rule_matches(case: dict, rule: Rule, reg: FieldRegistry) -> tuple[bool, lis
     else:
         return False, []
 
-    # 4. Country filter
+    # 4. Country filter — use project-aware ID→label mapping
     if rule.countries_filter:
-        tokens = set(_get_multi_countries(case, reg))
+        tokens = set(_get_multi_countries(case, reg, project_id))
         matched = [c for c in rule.countries_filter if c in tokens]
         if not matched:
             return False, []
@@ -205,7 +213,8 @@ def _rule_matches(case: dict, rule: Rule, reg: FieldRegistry) -> tuple[bool, lis
 # ----------------------------------------------------------------- expansion
 def _expand_rows(
     case: dict, rule: Rule, reg: FieldRegistry,
-    matched_countries: list[str], base_url: str
+    matched_countries: list[str], base_url: str,
+    project_id: int | None = None,
 ) -> list[dict]:
     devices          = _devices_for(case, reg)
     prod_sanity_yes  = _get_prod_sanity(case, reg)
@@ -256,7 +265,8 @@ def _expand_rows(
 
 
 # ----------------------------------------------------------------- raw case row
-def _raw_case_row(case: dict, reg: FieldRegistry, suite_id: int, base_url: str) -> dict:
+def _raw_case_row(case: dict, reg: FieldRegistry, suite_id: int, base_url: str,
+                  project_id: int | None = None) -> dict:
     devices     = _devices_for(case, reg)
     dev_label   = "Both" if len(devices) == 2 else devices[0]
     priority_label = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
@@ -297,7 +307,7 @@ def _raw_case_row(case: dict, reg: FieldRegistry, suite_id: int, base_url: str) 
         "priority_label": priority_label,
         "deprecated":    _is_deprecated(case, reg),
         "device":        dev_label,
-        "multi_countries": _get_multi_countries(case, reg),
+        "multi_countries": _get_multi_countries(case, reg, project_id),
         "automation_tool": _get_automation_tool(case, reg),
         "prod_sanity":   _get_prod_sanity(case, reg),
         **{f"status_{k}": v for k, v in auto_status_resolved.items()},
@@ -354,20 +364,21 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
     for rule in rules:
         cases    = suite_cases.get(rule.suite_id, [])
         sect_map = suite_sections.get(rule.suite_id, {})
+        pid      = suite_to_project.get(rule.suite_id)
 
         for case in cases:
             cid = int(case["id"])
             key = (rule.suite_id, cid)
             if key not in seen_raw:
-                raw = _raw_case_row(case, reg, rule.suite_id, base_url)
+                raw = _raw_case_row(case, reg, rule.suite_id, base_url, project_id=pid)
                 raw["section_path"] = sect_map.get(int(case.get("section_id") or 0), "")
                 raw_rows.append(raw)
                 seen_raw.add(key)
 
-            matched, countries = _rule_matches(case, rule, reg)
+            matched, countries = _rule_matches(case, rule, reg, project_id=pid)
             if not matched:
                 continue
-            for row in _expand_rows(case, rule, reg, countries, base_url):
+            for row in _expand_rows(case, rule, reg, countries, base_url, project_id=pid):
                 row["section_path"] = sect_map.get(int(case.get("section_id") or 0), "")
                 automated_rows.append(row)
 
