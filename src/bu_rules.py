@@ -92,7 +92,8 @@ def build_rules() -> list[Rule]:
         country_labels=KV_LABELS,
     ))
     rules += _testim_pair("Kruidvat", "KV", KV_SUITE, KV_TOKENS,
-                          country_labels=KV_LABELS)
+                          country_labels=KV_LABELS,
+                          type_filter=[])
 
     # TKP cases carry token "TP" (ID=3 in the KV project config).
     TKP_TOKENS = ["TP"]
@@ -109,7 +110,8 @@ def build_rules() -> list[Rule]:
     ))
     rules += _testim_pair("Trekpleister", "TKP", KV_SUITE, TKP_TOKENS,
                           country_labels=TKP_LABELS,
-                          implicit_country="NL")
+                          implicit_country="NL",
+                          type_filter=[])
 
     # ==================================================================== IPXL
     # Uses the generic "Automation Status" field (not "Automation Status ICI").
@@ -229,11 +231,14 @@ def build_rules() -> list[Rule]:
                           country_labels=TPS_LABELS)
 
     # ==================================================================== Watsons
-    # TestIM only (no Java SPR).  Dedicated suite, no multi_countries filter.
+    # Suite 7544 is shared across BUs — country token WTR_SPR identifies Watsons TestIM cases.
+    # (WTR = legacy token; WTR_SPR = the active SPR token used for TestIM Desktop/Mobile.)
     # Slide label: "TR" (Turkey).
-    WTR_SUITE = 7544
-    rules += _testim_pair("Watsons", "WTR", WTR_SUITE, [],
-                          country_labels={},
+    WTR_SUITE  = 7544
+    WTR_TOKENS = ["WTR_SPR"]
+    WTR_LABELS = {"WTR_SPR": "TR"}
+    rules += _testim_pair("Watsons", "WTR", WTR_SUITE, WTR_TOKENS,
+                          country_labels=WTR_LABELS,
                           implicit_country="TR")
 
     # ==================================================================== Drogas
