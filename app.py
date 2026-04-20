@@ -5,7 +5,6 @@ import traceback
 import streamlit as st
 
 from src import testrail_client as tr
-from src.rules_engine import warmup_cache
 from src.ui import overview_tab, pivot_tab
 
 
@@ -67,8 +66,12 @@ def main() -> None:
     # Pre-fetch all suite data in the background on first load.
     # Uses a module-level flag so it runs only once per process.
     # After this completes, every BU click only needs Python processing.
-    with st.spinner("⚡ Pre-loading test suites…"):
-        warmup_cache()
+    try:
+        from src.rules_engine import warmup_cache
+        with st.spinner("⚡ Pre-loading test suites…"):
+            warmup_cache()
+    except ImportError:
+        pass
 
     tab_explore, tab_overview, tab_debug = st.tabs(
         ["📊 Explorer", "🧭 Overview", "Debug"]
