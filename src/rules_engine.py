@@ -226,9 +226,12 @@ def _rule_matches(
     else:
         return False, []
 
-    # 4. Country filter — read from the field specified by rule.country_field_label
+    # 4. Country filter — read from the field specified by rule.country_field_label.
+    #    If the primary field returns nothing AND a fallback is configured, try that.
     if rule.countries_filter:
         tokens = set(_get_country_tokens(case, reg, rule.country_field_label, project_id))
+        if not tokens and rule.country_fallback_field_label:
+            tokens = set(_get_country_tokens(case, reg, rule.country_fallback_field_label, project_id))
         matched = [c for c in rule.countries_filter if c in tokens]
         if not matched:
             return False, []
@@ -305,51 +308,59 @@ def _expand_rows(
 
 
 # ----------------------------------------------------------------- raw case row
-def _raw_case_row(case: dict, reg: FieldRegistry, suite_id: int, base_url: str,
-                  project_id: int | None = None) -> dict:
-    devices     = _devices_for(case, reg)
-    dev_label   = "Both" if len(devices) == 2 else devices[0]
+_ALL_STATUS_LABELS = [
+    "Automation Status", "Automation Status KV SPR", "Automation Status TP",
+    "Automation Status ICI", "Automation Status MFR", "Automation Status MRN SPR",
+    "Automation Status SD", "Automation Status TPS", "Automation Status DRG",
+    "Automation Status Testim Desktop", "Automation Status Testim Mobile View",
+]
+
+
+def _resolve_status_fields(reg: FieldRegistry) -> dict[str, Any]:
+    """Return {label: FieldMeta} for every status label that exists in this registry.
+
+    Called once per evaluate_rules() invocation and reused for all cases.
+    """
+    return {lbl: meta for lbl in _ALL_STATUS_LABELS if (meta := reg.field(lbl))}
+
+
+def _raw_case_row(
+    case: dict,
+    reg: FieldRegistry,
+    suite_id: int,
+    base_url: str,
+    project_id: int | None = None,
+    status_fields: dict | None = None,      # pre-computed once per suite
+    type_id_to_label: dict[int, str] | None = None,  # pre-computed once
+) -> dict:
+    devices        = _devices_for(case, reg)
+    dev_label      = "Both" if len(devices) == 2 else devices[0]
     priority_label = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
-    # Resolve type_id → human label
-    type_label = None
-    for t_name, t_id in reg.type_label_to_id.items():
-        if t_id == case.get("type_id"):
-            type_label = t_name.title()
-            break
-    # Collect all automation status values for display in Tab 1
-    auto_status_fields = {
-        lbl: reg.field(lbl)
-        for lbl in [
-            "Automation Status", "Automation Status KV SPR", "Automation Status TP",
-            "Automation Status ICI", "Automation Status MFR", "Automation Status MRN SPR",
-            "Automation Status SD", "Automation Status TPS", "Automation Status DRG",
-            "Automation Status Testim Desktop", "Automation Status Testim Mobile View",
-        ]
-        if reg.field(lbl)
-    }
+    type_id        = case.get("type_id")
+    type_label     = (type_id_to_label or {}).get(type_id)
+
+    # Resolve status values using pre-computed field map
+    sf = status_fields or {}
     auto_status_resolved: dict[str, str | None] = {}
-    for lbl, meta in auto_status_fields.items():
+    for lbl, meta in sf.items():
         raw = case.get(meta.system_name)
-        if isinstance(raw, int):
-            auto_status_resolved[lbl] = meta.values_by_id.get(raw)
-        else:
-            auto_status_resolved[lbl] = None
+        auto_status_resolved[lbl] = meta.values_by_id.get(raw) if isinstance(raw, int) else None
 
     return {
-        "case_id":       int(case["id"]),
-        "title":         case.get("title"),
-        "url":           _case_url(base_url, int(case["id"])),
-        "suite_id":      suite_id,
-        "section_id":    case.get("section_id"),
-        "type_id":       case.get("type_id"),
-        "type_label":    type_label,
-        "priority_id":   case.get("priority_id"),
+        "case_id":        int(case["id"]),
+        "title":          case.get("title"),
+        "url":            _case_url(base_url, int(case["id"])),
+        "suite_id":       suite_id,
+        "section_id":     case.get("section_id"),
+        "type_id":        type_id,
+        "type_label":     type_label,
+        "priority_id":    case.get("priority_id"),
         "priority_label": priority_label,
-        "deprecated":    _is_deprecated(case, reg),
-        "device":        dev_label,
+        "deprecated":     _is_deprecated(case, reg),
+        "device":         dev_label,
         "multi_countries": _get_multi_countries(case, reg, project_id),
         "automation_tool": _get_automation_tool(case, reg),
-        "prod_sanity":   _get_prod_sanity(case, reg),
+        "prod_sanity":    _get_prod_sanity(case, reg),
         **{f"status_{k}": v for k, v in auto_status_resolved.items()},
     }
 
@@ -415,6 +426,10 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
             suite_cases[sid]    = cases
             suite_sections[sid] = sections
 
+    # Pre-compute once: status field map + type label map (reused for every case)
+    status_fields    = _resolve_status_fields(reg)
+    type_id_to_label = {tid: name.title() for name, tid in reg.type_label_to_id.items()}
+
     automated_rows: list[dict] = []
     raw_rows:       list[dict] = []
     seen_raw: set[tuple[int, int]] = set()
@@ -428,7 +443,12 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
             cid = int(case["id"])
             key = (rule.suite_id, cid)
             if key not in seen_raw:
-                raw = _raw_case_row(case, reg, rule.suite_id, base_url, project_id=pid)
+                raw = _raw_case_row(
+                    case, reg, rule.suite_id, base_url,
+                    project_id=pid,
+                    status_fields=status_fields,
+                    type_id_to_label=type_id_to_label,
+                )
                 raw["section_path"] = sect_map.get(int(case.get("section_id") or 0), "")
                 raw_rows.append(raw)
                 seen_raw.add(key)
@@ -444,3 +464,15 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
         automated = pd.DataFrame(automated_rows) if automated_rows else pd.DataFrame(),
         raw_cases = pd.DataFrame(raw_rows)        if raw_rows       else pd.DataFrame(),
     )
+
+
+# ----------------------------------------------------------------- warmup
+def warmup_cache() -> None:
+    """Pre-fetch cases + sections for ALL known suites in parallel.
+
+    Call once at app startup.  After this returns every subsequent
+    evaluate_rules() call skips the API and only does Python processing.
+    """
+    from .bu_rules import ALL_RULES
+    suite_ids = sorted({r.suite_id for r in ALL_RULES})
+    tr.prefetch_all_suites(suite_ids)

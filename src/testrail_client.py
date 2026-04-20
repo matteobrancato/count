@@ -7,6 +7,7 @@ When "next" is null we are done. We follow the next link (relative) until exhaus
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Iterable
 from urllib.parse import urljoin
@@ -107,17 +108,38 @@ class TestRailClient:
             endpoint = nxt.lstrip("/") if nxt else None
         return out
 
-    def get_cases(self, project_id: int, suite_id: int) -> list[dict]:
-        out: list[dict] = []
-        endpoint = f"get_cases/{project_id}&suite_id={suite_id}"
-        while endpoint:
-            payload = self._get(endpoint)
-            if isinstance(payload, list):
-                return payload
-            out.extend(payload.get("cases", []))
-            nxt = (payload.get("_links") or {}).get("next")
-            endpoint = nxt.lstrip("/") if nxt else None
-        return out
+    def get_cases(self, project_id: int, suite_id: int, limit: int = 250) -> list[dict]:
+        """Fetch all cases with parallel pagination (N pages at a time)."""
+        base = f"get_cases/{project_id}&suite_id={suite_id}&limit={limit}"
+
+        # Page 0 — always sequential so we know if there is more
+        first = self._get(f"{base}&offset=0")
+        if isinstance(first, list):
+            return first
+        cases: list[dict] = list(first.get("cases", []))
+        if first.get("size", 0) < limit:
+            return cases  # fits in a single page
+
+        # Fetch remaining pages in parallel batches of BATCH_SIZE
+        BATCH_SIZE = 5
+        offset = limit
+        while True:
+            offsets = list(range(offset, offset + BATCH_SIZE * limit, limit))
+            with ThreadPoolExecutor(max_workers=BATCH_SIZE) as pool:
+                futures = [(o, pool.submit(self._get, f"{base}&offset={o}"))
+                           for o in offsets]
+            done = False
+            for o, fut in futures:            # already in order
+                data = fut.result()
+                page = data.get("cases", []) if not isinstance(data, list) else data
+                cases.extend(page)
+                if len(page) < limit:        # last page found → stop
+                    done = True
+                    break
+            if done:
+                break
+            offset += BATCH_SIZE * limit
+        return cases
 
 
 # --------------------------------------------------------------------- caching
@@ -174,3 +196,30 @@ def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
                fetch_suite, fetch_sections, fetch_cases):
         fn.clear()
+
+
+# ----------------------------------------------------------------- startup pre-warm
+_WARMED = False   # module-level flag — runs once per process, not per user session
+
+
+def prefetch_all_suites(suite_ids: list[int]) -> None:
+    """Pre-warm fetch_cases + fetch_sections caches for every known suite.
+
+    Called once at app startup.  Subsequent BU clicks only need Python
+    processing (rule matching), not API calls.
+    """
+    global _WARMED
+    if _WARMED:
+        return
+    _WARMED = True
+
+    # Step 1: resolve all project IDs in parallel
+    with ThreadPoolExecutor(max_workers=min(len(suite_ids), 8)) as pool:
+        pid_futures = {sid: pool.submit(resolve_project_id, sid) for sid in suite_ids}
+    suite_to_project = {sid: f.result() for sid, f in pid_futures.items()}
+
+    # Step 2: fetch cases + sections for all suites in parallel
+    with ThreadPoolExecutor(max_workers=min(len(suite_ids) * 2, 12)) as pool:
+        for sid, pid in suite_to_project.items():
+            pool.submit(fetch_cases, pid, sid)
+            pool.submit(fetch_sections, pid, sid)

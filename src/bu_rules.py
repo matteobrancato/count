@@ -42,6 +42,9 @@ class Rule:
     # Field used to read country tokens — defaults to "multi_countries".
     # Some BUs (e.g. MRN Java) use "Country Validation"; MRN TestIM uses "Testim Country Coverage".
     country_field_label: str          = "multi_countries"
+    # Optional fallback field: if the primary country field is empty for a case,
+    # try this field instead (e.g. MRN/NextGen TestIM: CC empty → use Country Validation).
+    country_fallback_field_label: str | None = None
 
 
 # --------------------------------------------------------------------- helpers
@@ -55,6 +58,7 @@ def _testim_pair(
     scope: Scope = "website",
     type_filter: list[str] | None = None,
     country_field_label: str = "multi_countries",
+    country_fallback_field_label: str | None = None,
 ) -> list[Rule]:
 
     if type_filter is None:
@@ -67,6 +71,7 @@ def _testim_pair(
         implicit_country=implicit_country,
         type_filter=list(type_filter),
         country_field_label=country_field_label,
+        country_fallback_field_label=country_fallback_field_label,
     )
     return [
         Rule(name=f"{name_base} TESTIM DESKTOP", framework="testim_desktop",
@@ -175,7 +180,8 @@ def build_rules() -> list[Rule]:
     rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, MFR_TOKENS,
                           country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
                           type_filter=[],
-                          country_field_label="Testim Country Coverage")
+                          country_field_label="Testim Country Coverage",
+                          country_fallback_field_label="Country Validation")
 
     # Other 7 MRN countries (CH, AT, RO, IT, CZ, SK, HU).
     # Java:  Automation Status MRN SPR — country from "Country Validation" (bare + _SPR tokens)
@@ -198,7 +204,8 @@ def build_rules() -> list[Rule]:
     rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_SPR_TOKENS,
                           country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_SPR_TOKENS},
                           type_filter=[],
-                          country_field_label="Testim Country Coverage")
+                          country_field_label="Testim Country Coverage",
+                          country_fallback_field_label="Country Validation")
 
     # ==================================================================== Superdrug
     # Slide label: "GB"
@@ -280,6 +287,10 @@ def build_rules() -> list[Rule]:
                           country_labels=DRG_LABELS)
 
     # ==================================================================== Next Gen
+    # Country resolution mirrors Marionnaud:
+    #   Java  → "Country Validation"       (custom_country_validation)
+    #   TestIM → "Testim Country Coverage" (custom_case_country_coverage_testim),
+    #            falling back to Country Validation when CC is empty.
     NEXTGEN_SUITE = 9570
     rules.append(Rule(
         name="NEXTGEN ALL", bu="Next Gen", scope="next_gen", framework="java",
@@ -287,7 +298,13 @@ def build_rules() -> list[Rule]:
         status_field_label="Automation Status",
         automated_values=list(AUTOMATED_FULL),
         countries_filter=[],
+        country_field_label="Country Validation",
     ))
+    rules += _testim_pair("Next Gen", "NEXTGEN", NEXTGEN_SUITE, [],
+                          scope="next_gen",
+                          type_filter=[],
+                          country_field_label="Testim Country Coverage",
+                          country_fallback_field_label="Country Validation")
 
     # ==================================================================== Mobile Apps
     # One suite per BU; no country filter (each suite is already BU-specific).
