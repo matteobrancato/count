@@ -33,20 +33,34 @@ from .field_resolver import FieldRegistry, get_registry
 # Use the EXACT label from the TestRail Customizations page.
 _DEVICE_LABEL        = "Device"
 _DEPRECATED_LABEL    = "Deprecated"
-_PROD_SANITY_LABEL   = "Prod Sanity"
+_PROD_SANITY_LABEL   = "Test Automation PRD Run"
 _MULTI_COUNTRIES_LABEL = "multi_countries"
 _AUTOMATION_TOOL_LABEL = "Automation MAPP Tool"  # screenshot: "Automation MAPP Tool"
 
 
 # ----------------------------------------------------------------- helpers
-def _get_multi_countries(case: dict, reg: FieldRegistry, project_id: int | None = None) -> list[str]:
-    """Return list of country label-strings from the multi_countries multi-select field.
+def _get_country_tokens(
+    case: dict,
+    reg: FieldRegistry,
+    field_label: str = _MULTI_COUNTRIES_LABEL,
+    project_id: int | None = None,
+) -> list[str]:
+    """Return list of country token strings from a multi-select country field.
 
-    *project_id* selects the correct per-project config so that the same integer ID
-    resolves to the right label in each suite (e.g. ID=3 is "TP" in the KV/TKP suite
-    but "MRN" in the global config).
+    Supports any multi-select field by label:
+      - "multi_countries"           → the standard field (default)
+      - "Country Validation"        → custom_country_validation  (MRN Java)
+      - "Testim Country Coverage"   → custom_case_country_coverage_testim  (MRN TestIM)
+
+    *project_id* selects the correct per-project value map so that the same
+    integer ID resolves to the right label in each suite.
     """
-    meta = reg.field(_MULTI_COUNTRIES_LABEL)
+    # Try by label first; fall back to known system names for the two MRN fields
+    meta = reg.field(field_label)
+    if not meta and field_label == "Country Validation":
+        meta = reg.field("custom_country_validation")
+    if not meta and field_label == "Testim Country Coverage":
+        meta = reg.field("custom_case_country_coverage_testim")
     if not meta:
         return []
     raw = case.get(meta.system_name)
@@ -72,6 +86,11 @@ def _get_multi_countries(case: dict, reg: FieldRegistry, project_id: int | None 
     return [val_map[i] for i in ids if i in val_map]
 
 
+# Keep backward-compatible alias used elsewhere
+def _get_multi_countries(case: dict, reg: FieldRegistry, project_id: int | None = None) -> list[str]:
+    return _get_country_tokens(case, reg, _MULTI_COUNTRIES_LABEL, project_id)
+
+
 def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
     """Deprecated is a Checkbox field → bool value in the API."""
     meta = reg.field(_DEPRECATED_LABEL) or reg.field("custom_deprecated")
@@ -91,12 +110,15 @@ def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
 
 
 def _get_prod_sanity(case: dict, reg: FieldRegistry) -> bool:
-    """Prod Sanity is a Checkbox field → bool value in the API.
+    """Test Automation PRD Run is a Checkbox field → bool value in the API.
 
-    Try the human label first; fall back to the known system name so a label
-    mismatch in TestRail doesn't silently zero-out all prod-sanity counts.
+    Try the human label first; fall back to known system name candidates so a
+    label mismatch in TestRail doesn't silently zero-out all prod-sanity counts.
     """
-    meta = reg.field(_PROD_SANITY_LABEL) or reg.field("custom_case_prod_sanity")
+    meta = (
+        reg.field(_PROD_SANITY_LABEL)
+        or reg.field("custom_test_automation_prd_run")   # confirmed system name
+    )
     if not meta:
         return False
     raw = case.get(meta.system_name)
@@ -204,9 +226,9 @@ def _rule_matches(
     else:
         return False, []
 
-    # 4. Country filter — use project-aware ID→label mapping
+    # 4. Country filter — read from the field specified by rule.country_field_label
     if rule.countries_filter:
-        tokens = set(_get_multi_countries(case, reg, project_id))
+        tokens = set(_get_country_tokens(case, reg, rule.country_field_label, project_id))
         matched = [c for c in rule.countries_filter if c in tokens]
         if not matched:
             return False, []

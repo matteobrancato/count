@@ -33,12 +33,15 @@ class Rule:
     framework: Framework
     suite_id: int
     status_field_label: str
-    automated_values: list[str]     = field(default_factory=lambda: list(AUTOMATED_TESTIM))
-    countries_filter:  list[str]    = field(default_factory=list)
-    country_labels:    dict[str,str]= field(default_factory=dict)
-    implicit_country:  str | None   = None
-    priority_filter:   list[str]    = field(default_factory=list)
-    type_filter:       list[str]    = field(default_factory=lambda: ["Regression"])
+    automated_values:    list[str]    = field(default_factory=lambda: list(AUTOMATED_TESTIM))
+    countries_filter:    list[str]    = field(default_factory=list)
+    country_labels:      dict[str,str]= field(default_factory=dict)
+    implicit_country:    str | None   = None
+    priority_filter:     list[str]    = field(default_factory=list)
+    type_filter:         list[str]    = field(default_factory=lambda: ["Regression"])
+    # Field used to read country tokens — defaults to "multi_countries".
+    # Some BUs (e.g. MRN Java) use "Country Validation"; MRN TestIM uses "Testim Country Coverage".
+    country_field_label: str          = "multi_countries"
 
 
 # --------------------------------------------------------------------- helpers
@@ -51,6 +54,7 @@ def _testim_pair(
     implicit_country: str | None = None,
     scope: Scope = "website",
     type_filter: list[str] | None = None,
+    country_field_label: str = "multi_countries",
 ) -> list[Rule]:
 
     if type_filter is None:
@@ -62,6 +66,7 @@ def _testim_pair(
         country_labels=dict(country_labels or {}),
         implicit_country=implicit_country,
         type_filter=list(type_filter),
+        country_field_label=country_field_label,
     )
     return [
         Rule(name=f"{name_base} TESTIM DESKTOP", framework="testim_desktop",
@@ -135,57 +140,65 @@ def build_rules() -> list[Rule]:
                           type_filter=[])
 
     # ==================================================================== Marionnaud
-    # BU-specific status fields per country group. No type_filter (cases may not be
-    # typed Regression/Functional in TestRail — safer to match on status field alone).
+    # BU-specific status fields per country group. No type_filter.
+    # Country matching uses dedicated fields (not multi_countries):
+    #   Java  → "Country Validation"       (custom_country_validation)
+    #   TestIM → "Testim Country Coverage" (custom_case_country_coverage_testim)
+    # Tokens MAT and MAT_SPR both map to "AT" — dedup on (case_id, country_label, device)
+    # ensures a case tagged with both counts only once.
     MRN_SUITE = 30784
 
-    # France: "Automation Status MFR" + multi_countries=MFR
+    # Shared label maps: bare and _SPR tokens both resolve to the same ISO code.
+    MRN_ALL_LABELS = {
+        "MFR": "FR",
+        "MCH": "CH", "MCH_SPR": "CH",
+        "MAT": "AT", "MAT_SPR": "AT",
+        "MRO": "RO", "MRO_SPR": "RO",
+        "MIT": "IT", "MIT_SPR": "IT",
+        "MCZ": "CZ", "MCZ_SPR": "CZ",
+        "MSK": "SK", "MSK_SPR": "SK",
+        "MHU": "HU", "MHU_SPR": "HU",
+    }
+
+    # France: Automation Status MFR — country resolved via Country Validation / Testim CC
+    MFR_TOKENS = ["MFR"]
     rules.append(Rule(
         name="MFR JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
         status_field_label="Automation Status MFR",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=["MFR"],
-        country_labels={"MFR": "FR"},
+        countries_filter=MFR_TOKENS,
+        country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
         type_filter=[],
+        country_field_label="Country Validation",
     ))
-    rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, ["MFR"],
-                          country_labels={"MFR": "FR"},
-                          type_filter=[])
+    rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, MFR_TOKENS,
+                          country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
+                          type_filter=[],
+                          country_field_label="Testim Country Coverage")
 
-    # Other 7 MRN countries (ISO codes on slide: CH, AT, RO, IT, CZ, SK, HU).
-    # Java:  "Automation Status MRN SPR" + BOTH bare tokens (MCH, MAT, …) AND
-    #        _SPR tokens (MCH_SPR, MAT_SPR, …).  Spartacus cases carry _SPR tokens and also
-    #        have MRN SPR = Automated, so the Java rule must cover them too.
-    # TestIM: TestIM Desktop/Mobile + _SPR tokens only (framework determines device, not
-    #         the Device field — see rules_engine._expand_rows).
-    # Both token sets map to the same ISO label → dedup on (case_id, country_label, device)
-    # collapses Java + TestIM correctly.
-    MRN_JAVA_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU"]
-    MRN_JAVA_LABELS = {
-        "MCH": "CH", "MAT": "AT", "MRO": "RO",
-        "MIT": "IT", "MCZ": "CZ", "MSK": "SK", "MHU": "HU",
-    }
-    MRN_SPR_TOKENS = ["MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
-    MRN_SPR_LABELS = {
-        "MCH_SPR": "CH", "MAT_SPR": "AT", "MRO_SPR": "RO",
-        "MIT_SPR": "IT", "MCZ_SPR": "CZ", "MSK_SPR": "SK", "MHU_SPR": "HU",
-    }
-    # Java: bare + SPR tokens combined (both map to the same ISO label)
-    MRN_JAVA_ALL_TOKENS = MRN_JAVA_TOKENS + MRN_SPR_TOKENS
-    MRN_JAVA_ALL_LABELS = {**MRN_JAVA_LABELS, **MRN_SPR_LABELS}
+    # Other 7 MRN countries (CH, AT, RO, IT, CZ, SK, HU).
+    # Java:  Automation Status MRN SPR — country from "Country Validation" (bare + _SPR tokens)
+    # TestIM: TestIM Desktop/Mobile     — country from "Testim Country Coverage" (_SPR tokens)
+    # framework determines device (see rules_engine._expand_rows); dedup handles the rest.
+    MRN_JAVA_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU",
+                        "MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
+    MRN_SPR_TOKENS  = ["MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
+
     rules.append(Rule(
         name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
-        status_field_label="Automation Status MRN SPR",   # confirmed from CSV export
+        status_field_label="Automation Status MRN SPR",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=MRN_JAVA_ALL_TOKENS,
-        country_labels=MRN_JAVA_ALL_LABELS,
+        countries_filter=MRN_JAVA_TOKENS,
+        country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_JAVA_TOKENS},
         type_filter=[],
+        country_field_label="Country Validation",
     ))
     rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_SPR_TOKENS,
-                          country_labels=MRN_SPR_LABELS,
-                          type_filter=[])
+                          country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_SPR_TOKENS},
+                          type_filter=[],
+                          country_field_label="Testim Country Coverage")
 
     # ==================================================================== Superdrug
     # Slide label: "GB"
