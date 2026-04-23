@@ -60,20 +60,18 @@ COL_LABELS: dict[str, str] = {
 def _rules_for_choice(choice: str):
     if choice == "Microservices":
         return [r for r in ALL_RULES if r.scope == "next_gen"]
-    if choice == "Mobile Appplication":
+    if choice == "Mobile Applications":
         return [r for r in ALL_RULES if r.scope == "mobile_app"]
     return [r for r in ALL_RULES if r.bu == choice and r.scope == "website"]
 
 
 def _dedup_auto(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove duplicate (case_id, device) rows from multi-rule overlap."""
     if df.empty:
         return df
     return df.drop_duplicates(subset=["case_id", "country_label", "device"])
 
 
 def _apply_display_values(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy with human-readable values in known columns."""
     df = df.copy()
     if "framework" in df.columns:
         df["framework"] = df["framework"].map(FRAMEWORK_LABELS).fillna(df["framework"])
@@ -148,9 +146,9 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
             p.split(">")[0].strip() if p else "(root)"
             for p in df["section_path"].fillna("")
         })
-        sel_sect   = r2[0].multiselect("Section (top-level)", sections, key=f"{key_prefix}_sect")
-        prod_only  = r2[1].checkbox("Prod Sanity only",    key=f"{key_prefix}_prod")
-        smoke_only = r2[2].checkbox("Smoke (Highest) only", key=f"{key_prefix}_smoke")
+        sel_sect   = r2[0].multiselect("Section", sections, key=f"{key_prefix}_sect")
+        prod_only  = r2[1].checkbox("Production Sanity",    key=f"{key_prefix}_prod")
+        smoke_only = r2[2].checkbox("Smoke (Highest Priority)", key=f"{key_prefix}_smoke")
 
     # ── Apply filters ────────────────────────────────────────────────────────
     out = df
@@ -257,7 +255,6 @@ def _status_col_label(col: str) -> str:
 
 # ------------------------------------------------------------------ test list
 def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
-    """Show automated test cases: one row per (case_id × country_label)."""
     st.markdown("#### 🗂 Test list")
     if auto_df.empty:
         st.info("No automated cases.")
