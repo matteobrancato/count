@@ -84,34 +84,21 @@ def _apply_display_values(df: pd.DataFrame) -> pd.DataFrame:
 def _kpi_row(raw: pd.DataFrame, auto_dedup: pd.DataFrame) -> None:
     non_dep = raw[~raw["deprecated"]] if not raw.empty else raw
     total   = len(non_dep)
-    auto_n  = auto_dedup["case_id"].nunique() if not auto_dedup.empty else 0
-    pct     = (auto_n / total * 100) if total else 0.0
-
     desktop = int((auto_dedup["device"] == "Desktop").sum()) if not auto_dedup.empty else 0
     mobile  = int((auto_dedup["device"] == "Mobile").sum())  if not auto_dedup.empty else 0
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric(
         "Total cases", f"{total:,}",
         help="All non-deprecated cases in this BU's suite(s).",
     )
     c2.metric(
-        "Coverage", f"{pct:.1f}%",
-        help="Automated cases / Total cases (non-deprecated).",
+        "Desktop", f"{desktop:,}",
+        help="Expanded Desktop rows (case × country).",
     )
     c3.metric(
-        "Desktop", f"{desktop:,}",
-        help=(
-            "Expanded Desktop rows (country × device). "
-            "A case with Device=Both across 3 countries contributes 3 here."
-        ),
-    )
-    c4.metric(
         "Mobile", f"{mobile:,}",
-        help=(
-            "Expanded Mobile rows (country × device). "
-            "A case with Device=Both across 3 countries contributes 3 here."
-        ),
+        help="Expanded Mobile rows (case × country).",
     )
 
 
@@ -122,56 +109,60 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         return df
 
     with st.expander("🔎 Filters", expanded=False):
-        c1, c2, c3 = st.columns(3)
+        # ── Row 1: Country · Device · Framework · Priority ──────────────────
+        r1 = st.columns(4)
 
-        priorities = sorted(df["priority_label"].dropna().unique())
-        sel_prio = c1.multiselect("Priority", priorities, key=f"{key_prefix}_prio")
-
-        # Device filter uses device_original so "Both" is selectable
-        dev_col = "device_original" if "device_original" in df.columns else "device"
-        devices_orig = sorted(df[dev_col].dropna().unique(),
-                              key=lambda d: {"Desktop": 0, "Mobile": 1, "Both": 2}.get(d, 3))
-        sel_dev_orig = c2.multiselect("Device", devices_orig, key=f"{key_prefix}_dev")
-
-        frameworks = sorted(df["framework"].dropna().unique())
-        fw_labels  = [FRAMEWORK_LABELS.get(f, f) for f in frameworks]
-        sel_fw_lbl = c3.multiselect("Framework", fw_labels, key=f"{key_prefix}_fw")
-        sel_fw     = [frameworks[i] for i, lbl in enumerate(fw_labels) if lbl in sel_fw_lbl]
-
-        c4, c5 = st.columns(2)
-
+        # Country (only shown when multiple countries exist)
+        sel_ctry: list[str] = []
         if "country_label" in df.columns:
-            countries_iso = sorted(df["country_label"].dropna().unique())
-            # Show full country names; map back to ISO for filtering
+            countries_iso   = sorted(df["country_label"].dropna().unique())
             country_display = [COUNTRY_NAMES.get(c, c) for c in countries_iso]
             display_to_iso  = {COUNTRY_NAMES.get(c, c): c for c in countries_iso}
             if len(countries_iso) > 1:
-                sel_ctry_disp = c4.multiselect("Country", country_display, key=f"{key_prefix}_ctry")
+                sel_ctry_disp = r1[0].multiselect(
+                    "Country", country_display, key=f"{key_prefix}_ctry")
                 sel_ctry = [display_to_iso[d] for d in sel_ctry_disp]
-            else:
-                sel_ctry = []
-        else:
-            sel_ctry = []
+
+        # Device (uses device_original so "Both" is selectable)
+        dev_col      = "device_original" if "device_original" in df.columns else "device"
+        devices_orig = sorted(
+            df[dev_col].dropna().unique(),
+            key=lambda d: {"Desktop": 0, "Mobile": 1, "Both": 2}.get(d, 3),
+        )
+        sel_dev_orig = r1[1].multiselect("Device", devices_orig, key=f"{key_prefix}_dev")
+
+        # Framework (internal codes → readable labels)
+        frameworks = sorted(df["framework"].dropna().unique())
+        fw_labels  = [FRAMEWORK_LABELS.get(f, f) for f in frameworks]
+        sel_fw_lbl = r1[2].multiselect("Framework", fw_labels, key=f"{key_prefix}_fw")
+        sel_fw     = [frameworks[i] for i, lbl in enumerate(fw_labels) if lbl in sel_fw_lbl]
+
+        # Priority
+        priorities = sorted(df["priority_label"].dropna().unique())
+        sel_prio   = r1[3].multiselect("Priority", priorities, key=f"{key_prefix}_prio")
+
+        # ── Row 2: Section · Prod Sanity · Smoke ────────────────────────────
+        r2 = st.columns([2, 1, 1])
 
         sections = sorted({
             p.split(">")[0].strip() if p else "(root)"
             for p in df["section_path"].fillna("")
         })
-        sel_sect = c5.multiselect("Section (top-level)", sections, key=f"{key_prefix}_sect")
+        sel_sect   = r2[0].multiselect("Section (top-level)", sections, key=f"{key_prefix}_sect")
+        prod_only  = r2[1].checkbox("Prod Sanity only",    key=f"{key_prefix}_prod")
+        smoke_only = r2[2].checkbox("Smoke (Highest) only", key=f"{key_prefix}_smoke")
 
-        prod_only  = st.checkbox("Prod Sanity only", key=f"{key_prefix}_prod")
-        smoke_only = st.checkbox("Smoke (Highest) only", key=f"{key_prefix}_smoke")
-
+    # ── Apply filters ────────────────────────────────────────────────────────
     out = df
-    if sel_prio:
-        out = out[out["priority_label"].isin(sel_prio)]
+    if sel_ctry:
+        out = out[out["country_label"].isin(sel_ctry)]
     if sel_dev_orig:
         dev_col = "device_original" if "device_original" in out.columns else "device"
         out = out[out[dev_col].isin(sel_dev_orig)]
     if sel_fw:
         out = out[out["framework"].isin(sel_fw)]
-    if sel_ctry:
-        out = out[out["country_label"].isin(sel_ctry)]
+    if sel_prio:
+        out = out[out["priority_label"].isin(sel_prio)]
     if sel_sect:
         top = out["section_path"].fillna("").map(
             lambda p: p.split(">")[0].strip() if p else "(root)"

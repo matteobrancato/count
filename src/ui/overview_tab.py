@@ -111,14 +111,13 @@ def _coverage_view(scope: str, label: str, result=None) -> None:
     raw = result.raw_cases
     automated = result.automated
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     non_dep = raw[raw["deprecated"] == False] if not raw.empty else raw  # noqa: E712
     auto_ids = set(automated["case_id"].unique()) if not automated.empty else set()
     auto_n = int(non_dep["case_id"].isin(auto_ids).sum()) if not non_dep.empty else 0
     total = int(len(non_dep))
     c1.metric("Total cases", f"{total:,}")
     c2.metric("Automated", f"{auto_n:,}")
-    c3.metric("Coverage", f"{(auto_n / total * 100 if total else 0):.1f}%")
 
     level = st.slider("Section depth", 1, 4, 1,
                       key=f"cov_depth_{scope}",
@@ -127,18 +126,15 @@ def _coverage_view(scope: str, label: str, result=None) -> None:
     if cov.empty:
         st.info("No sections to display.")
         return
-    cov_disp = cov.copy()
-    cov_disp["coverage"] = (cov_disp["coverage"] * 100).round(1)
+    cov_disp = cov[["section", "total", "automated"]].copy()
     st.dataframe(
         cov_disp,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "section": st.column_config.TextColumn("Section", width="large"),
-            "total": st.column_config.NumberColumn("Total"),
-            "automated": st.column_config.NumberColumn("Automated"),
-            "coverage": st.column_config.ProgressColumn(
-                "Coverage %", min_value=0, max_value=100, format="%.1f%%"),
+            "section":    st.column_config.TextColumn("Section", width="large"),
+            "total":      st.column_config.NumberColumn("Total"),
+            "automated":  st.column_config.NumberColumn("Automated"),
         },
     )
 

@@ -165,7 +165,8 @@ def build_rules() -> list[Rule]:
         "MHU": "HU", "MHU_SPR": "HU",
     }
 
-    # France: Automation Status MFR — country resolved via Country Validation / Testim CC
+    # France: Automation Status MFR — country from multi_countries (standard field).
+    # TestIM Desktop/Mobile — country from Testim Country Coverage.
     MFR_TOKENS = ["MFR"]
     rules.append(Rule(
         name="MFR JAVA", bu="Marionnaud", scope="website", framework="java",
@@ -175,7 +176,6 @@ def build_rules() -> list[Rule]:
         countries_filter=MFR_TOKENS,
         country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
         type_filter=[],
-        country_field_label="Country Validation",
     ))
     rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, MFR_TOKENS,
                           country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
@@ -184,25 +184,24 @@ def build_rules() -> list[Rule]:
                           country_fallback_field_label="Country Validation")
 
     # Other 7 MRN countries (CH, AT, RO, IT, CZ, SK, HU).
-    # Java:  Automation Status MRN SPR — country from "Country Validation" (bare + _SPR tokens)
-    # TestIM: TestIM Desktop/Mobile     — country from "Testim Country Coverage" (_SPR tokens)
-    # framework determines device (see rules_engine._expand_rows); dedup handles the rest.
-    MRN_JAVA_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU",
-                        "MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
-    MRN_SPR_TOKENS  = ["MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
+    # Java:  Automation Status MRN SPR — country from multi_countries (bare + _SPR tokens).
+    # TestIM: TestIM Desktop/Mobile    — country from Testim Country Coverage.
+    #         Both bare (MAT) and _SPR (MAT_SPR) tokens are accepted; dedup on
+    #         (case_id, country_label, device) ensures a case counts once per country.
+    MRN_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU",
+                  "MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
 
     rules.append(Rule(
         name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
         status_field_label="Automation Status MRN SPR",
         automated_values=list(AUTOMATED_JAVA),
-        countries_filter=MRN_JAVA_TOKENS,
-        country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_JAVA_TOKENS},
+        countries_filter=MRN_TOKENS,
+        country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_TOKENS},
         type_filter=[],
-        country_field_label="Country Validation",
     ))
-    rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_SPR_TOKENS,
-                          country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_SPR_TOKENS},
+    rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_TOKENS,
+                          country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_TOKENS},
                           type_filter=[],
                           country_field_label="Testim Country Coverage",
                           country_fallback_field_label="Country Validation")
