@@ -100,10 +100,12 @@ def build_rules() -> list[Rule]:
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=KV_TOKENS,
         country_labels=KV_LABELS,
+        # multi_countries is the correct field for Java (default — no override needed)
     ))
     rules += _testim_pair("Kruidvat", "KV", KV_SUITE, KV_TOKENS,
                           country_labels=KV_LABELS,
-                          type_filter=[])
+                          type_filter=[],
+                          country_field_label="Testim Country Coverage")
 
     # TKP cases carry token "TP" (ID=3 in the KV project config).
     TKP_TOKENS = ["TP"]
@@ -121,7 +123,8 @@ def build_rules() -> list[Rule]:
     rules += _testim_pair("Trekpleister", "TKP", KV_SUITE, TKP_TOKENS,
                           country_labels=TKP_LABELS,
                           implicit_country="NL",
-                          type_filter=[])
+                          type_filter=[],
+                          country_field_label="Testim Country Coverage")
 
     # ==================================================================== IPXL
     # Uses the generic "Automation Status" field (not "Automation Status ICI").

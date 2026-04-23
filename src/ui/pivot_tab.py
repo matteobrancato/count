@@ -364,10 +364,6 @@ def render() -> None:
         st.warning("No cases loaded. Check the Debug tab for field mapping issues.")
         return
 
-    # ---- KPI
-    _kpi_row(raw, auto_all)
-    st.divider()
-
     # ---- Filters + Pivot (on automated expanded df)
     filtered_auto = _auto_filters(auto_all, key_prefix="t1")
     _pivot_builder(filtered_auto, key_prefix="t1")
