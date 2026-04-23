@@ -337,7 +337,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     if n_rows == n_cases:
         st.caption(f"{n_cases:,} automated test cases")
     else:
-        st.caption(f"{n_rows:,} rows — {n_cases:,} unique test cases × country")
+        st.caption(f"{n_rows:,} rows")
 
 
 # ------------------------------------------------------------------ render
