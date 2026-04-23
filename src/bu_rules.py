@@ -18,15 +18,6 @@ _TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" s
 
 @dataclass(frozen=True)
 class Rule:
-    """A single declarative filter rule.
-
-    A case matches when ALL hold:
-      - type_id is in type_filter (default: Regression)
-      - deprecated == False  (Checkbox field)
-      - status field value ∈ automated_values
-      - multi_countries intersects countries_filter  (empty = no filter)
-      - priority ∈ priority_filter  (empty = any)
-    """
     name: str
     bu: str
     scope: Scope

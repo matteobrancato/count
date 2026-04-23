@@ -184,10 +184,10 @@ def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
         st.info("No automated cases match the current filters.")
         return
 
-    # Internal columns available for pivoting (rule_name excluded — internal construct)
+    # Internal columns available for pivoting (rule_name and is_prod_sanity excluded —
+    # the latter is already exposed as a dedicated filter checkbox)
     internal_cols = [c for c in [
-        "device", "priority_label", "framework", "country_label",
-        "is_prod_sanity", "status_value",
+        "device", "priority_label", "framework", "country_label", "status_value",
     ] if c in df.columns]
 
     # Display labels for the selectors
