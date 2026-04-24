@@ -15,6 +15,35 @@ AUTOMATED_FULL       = ["Automated", "Automated DEV", "Automated UAT", "Automate
 _TESTIM_DESKTOP_LABEL = "Automation Status Testim Desktop"
 _TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" suffix!
 
+# --------------------------------------------------------------------- global token map
+# Single source of truth: every country token that can appear in any TestRail field,
+# mapped to its ISO display code.
+# Used by cross-BU rules (e.g. Next Gen) so they pick up new tokens automatically
+# without requiring per-rule changes — just add the token here.
+ALL_COUNTRY_TOKENS: dict[str, str] = {
+    # Kruidvat / Trekpleister
+    "KVBE": "BE", "KVN": "NL", "TP": "NL",
+    # ICI Paris XL
+    "IPXL NL": "NL", "IPXL BE": "BE", "IPXL LU": "LU",
+    # Marionnaud (bare + SPR variants both resolve to the same ISO code)
+    "MFR": "FR",
+    "MCH": "CH", "MCH_SPR": "CH",
+    "MAT": "AT", "MAT_SPR": "AT",
+    "MRO": "RO", "MRO_SPR": "RO",
+    "MIT": "IT", "MIT_SPR": "IT",
+    "MCZ": "CZ", "MCZ_SPR": "CZ",
+    "MSK": "SK", "MSK_SPR": "SK",
+    "MHU": "HU", "MHU_SPR": "HU",
+    # Superdrug / Savers
+    "SD": "GB", "SV": "GB",
+    # The Perfume Shop
+    "TPSGB": "UK", "TPSIE": "IE",
+    # Watsons
+    "WTR": "TR", "WTR_SPR": "TR",
+    # Drogas
+    "LV": "LV", "LT": "LT",
+}
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -280,24 +309,22 @@ def build_rules() -> list[Rule]:
                           country_labels=DRG_LABELS)
 
     # ==================================================================== Next Gen
-    # Country resolution mirrors Marionnaud:
-    #   Java  → "Country Validation"       (custom_country_validation)
-    #   TestIM → "Testim Country Coverage" (custom_case_country_coverage_testim),
-    #            falling back to Country Validation when CC is empty.
+    # Type filter: API only.
+    # Country: "country_coverage_automation" field (custom_country_coverage_automation).
+    # Tokens and ISO codes confirmed from CSV export (microservices.csv).
+    # Next Gen uses the global token map — no manual update needed when new BUs are added.
+    # System name confirmed from TestRail: custom_country_coverage
     NEXTGEN_SUITE = 9570
     rules.append(Rule(
         name="NEXTGEN ALL", bu="Next Gen", scope="next_gen", framework="java",
         suite_id=NEXTGEN_SUITE,
         status_field_label="Automation Status",
         automated_values=list(AUTOMATED_FULL),
-        countries_filter=[],
-        country_field_label="Country Validation",
+        type_filter=["API"],
+        countries_filter=list(ALL_COUNTRY_TOKENS.keys()),
+        country_labels=dict(ALL_COUNTRY_TOKENS),
+        country_field_label="custom_country_coverage",
     ))
-    rules += _testim_pair("Next Gen", "NEXTGEN", NEXTGEN_SUITE, [],
-                          scope="next_gen",
-                          type_filter=[],
-                          country_field_label="Testim Country Coverage",
-                          country_fallback_field_label="Country Validation")
 
     # ==================================================================== Mobile Apps
     # One suite per BU; no country filter (each suite is already BU-specific).
