@@ -177,8 +177,17 @@ def _auto_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------ pivot
-def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
-    """Excel-style pivot: row/col selectors + crosstab."""
+def _pivot_builder(
+    df: pd.DataFrame,
+    key_prefix: str,
+    default_rows: list[str] | None = None,
+    default_cols: list[str] | None = None,
+) -> None:
+    """Excel-style pivot: row/col selectors + crosstab.
+
+    *default_rows* / *default_cols* set the initial selection (display labels).
+    Including the BU name in *key_prefix* ensures defaults reset when switching BUs.
+    """
     st.markdown("#### 📊 Pivot")
     if df.empty:
         st.info("No automated cases match the current filters.")
@@ -194,12 +203,17 @@ def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
     display_cols = [COL_LABELS.get(c, c) for c in internal_cols]
     lbl_to_internal = {COL_LABELS.get(c, c): c for c in internal_cols}
 
+    # Validate defaults against available columns (avoids Streamlit errors)
+    safe_rows = [l for l in (default_rows or ["Device"]) if l in display_cols]
+    safe_cols = [l for l in (default_cols or [])          if l in display_cols]
+
     c1, c2 = st.columns(2)
-    row_sel_lbl = c1.multiselect("Rows", display_cols, default=["Device"],
+    row_sel_lbl = c1.multiselect("Rows", display_cols, default=safe_rows,
                                  key=f"{key_prefix}_pv_rows")
     col_sel_lbl = c2.multiselect(
         "Columns",
         [l for l in display_cols if l not in row_sel_lbl],
+        default=[l for l in safe_cols if l not in row_sel_lbl],
         key=f"{key_prefix}_pv_cols",
     )
 
@@ -356,8 +370,16 @@ def render() -> None:
         return
 
     # ---- Filters + Pivot (on automated expanded df)
-    filtered_auto = _auto_filters(auto_all, key_prefix="t1")
-    _pivot_builder(filtered_auto, key_prefix="t1")
+    # key_prefix includes choice so switching BU resets widget state to correct defaults
+    bu_key = choice.replace(" ", "_")
+    if choice == "Microservices":
+        pv_rows, pv_cols = ["Framework"], ["Country"]
+    else:
+        pv_rows, pv_cols = ["Device"], ["Framework", "Country"]
+
+    filtered_auto = _auto_filters(auto_all, key_prefix=f"t1_{bu_key}")
+    _pivot_builder(filtered_auto, key_prefix=f"t1_{bu_key}",
+                   default_rows=pv_rows, default_cols=pv_cols)
     st.divider()
 
     # ---- Test list
