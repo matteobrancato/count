@@ -255,6 +255,9 @@ def _expand_rows(
     elif rule.framework == "testim_mobile":
         devices         = ["Mobile"]
         device_original = "Mobile"
+    elif rule.framework == "mobile_app":
+        devices         = ["Mobile"]
+        device_original = "Mobile"
     else:
         devices         = _devices_for(case, reg)
         # Track the original Device field value before expansion

@@ -42,17 +42,18 @@ COUNTRY_NAMES: dict[str, str] = {
 
 # Human-readable labels for every internal column name that surfaces in the UI
 COL_LABELS: dict[str, str] = {
-    "device":         "Device",
-    "priority_label": "Priority",
-    "framework":      "Framework",
-    "country_label":  "Country",
-    "is_prod_sanity": "Prod Sanity",
-    "rule_name":      "Rule",
-    "status_value":   "Status",
-    "case_id":        "ID",
-    "title":          "Title",
-    "section_path":   "Section",
-    "url":            "URL",
+    "device":          "Device",
+    "priority_label":  "Priority",
+    "framework":       "Framework",
+    "country_label":   "Country",
+    "automation_tool": "Automation Tool",
+    "is_prod_sanity":  "Prod Sanity",
+    "rule_name":       "Rule",
+    "status_value":    "Status",
+    "case_id":         "ID",
+    "title":           "Title",
+    "section_path":    "Section",
+    "url":             "URL",
 }
 
 
@@ -60,7 +61,7 @@ COL_LABELS: dict[str, str] = {
 def _rules_for_choice(choice: str):
     if choice == "Microservices":
         return [r for r in ALL_RULES if r.scope == "next_gen"]
-    if choice == "Mobile Applications":
+    if choice == "Mobile Application":
         return [r for r in ALL_RULES if r.scope == "mobile_app"]
     return [r for r in ALL_RULES if r.bu == choice and r.scope == "website"]
 
@@ -196,7 +197,8 @@ def _pivot_builder(
     # Internal columns available for pivoting (rule_name and is_prod_sanity excluded —
     # the latter is already exposed as a dedicated filter checkbox)
     internal_cols = [c for c in [
-        "device", "priority_label", "framework", "country_label", "status_value",
+        "device", "priority_label", "framework", "country_label",
+        "automation_tool", "status_value",
     ] if c in df.columns]
 
     # Display labels for the selectors
@@ -374,6 +376,8 @@ def render() -> None:
     bu_key = choice.replace(" ", "_")
     if choice == "Microservices":
         pv_rows, pv_cols = ["Framework"], ["Country"]
+    elif choice == "Mobile Application":
+        pv_rows, pv_cols = ["Country"], ["Automation Tool"]
     else:
         pv_rows, pv_cols = ["Device"], ["Framework", "Country"]
 
