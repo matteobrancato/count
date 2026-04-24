@@ -14,8 +14,8 @@ BU_ORDER = [
 
 FRAMEWORK_LABELS = {
     "java":           "Java Testing Framework",
-    "testim_desktop": "TestIM - Desktop View",
-    "testim_mobile":  "TestIM - Mobile View",
+    "testim_desktop": "Testim.io | Desktop",
+    "testim_mobile":  "Testim.io | Mobile",
     "mobile_app":     "Mobile Application",
 }
 
@@ -75,6 +75,8 @@ def _apply_display_values(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if "framework" in df.columns:
         df["framework"] = df["framework"].map(FRAMEWORK_LABELS).fillna(df["framework"])
+    if "country_label" in df.columns:
+        df["country_label"] = df["country_label"].map(lambda c: COUNTRY_NAMES.get(c, c))
     return df
 
 
@@ -234,22 +236,14 @@ def _pivot_builder(df: pd.DataFrame, key_prefix: str) -> None:
 
 # ------------------------------------------------------------------ test list helpers
 def _status_col_label(col: str) -> str:
-    """Convert internal status column name to a short display label.
-
-    "status_Automation Status MFR"          → "MFR"
-    "status_Automation Status MRN SPR"      → "MRN SPR"
-    "status_Automation Status Testim Desktop" → "TestIM Desktop"
-    "status_Automation Status Testim Mobile View" → "TestIM Mobile"
-    "status_Automation Status"              → "Status"
-    """
     name = col[len("status_"):] if col.startswith("status_") else col
     prefix = "Automation Status "
     if name.startswith(prefix):
         name = name[len(prefix):]
     if not name:
         name = "Status"
-    name = name.replace("Testim Desktop", "TestIM Desktop")
-    name = name.replace("Testim Mobile View", "TestIM Mobile")
+    name = name.replace("Testim Desktop", "Testim.io | Desktop")
+    name = name.replace("Testim Mobile View", "Testim.io | Mobile")
     return name
 
 

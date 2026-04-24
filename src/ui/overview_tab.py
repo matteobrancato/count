@@ -151,11 +151,11 @@ def _coverage_view(scope: str, label: str, result=None) -> None:
             st.caption("No `Automation Tool` values populated on matching cases.")
 
     if scope in ("website", "next_gen") and not automated.empty:
-        st.markdown("##### Automated cases by framework (legacy Java vs TestIM)")
+        st.markdown("##### Automated cases by framework")
         fw_label = automated["framework"].map({
             "java": "Legacy (Java + Selenide + Cucumber)",
-            "testim_desktop": "TestIM Desktop",
-            "testim_mobile": "TestIM Mobile",
+            "testim_desktop": "Testim.io | Desktop",
+            "testim_mobile": "Testim.io | Mobile",
         }).fillna(automated["framework"])
         tmp = automated.assign(framework_label=fw_label)
         pivot = (tmp.drop_duplicates(subset=["bu", "country_label", "case_id", "framework_label"])
