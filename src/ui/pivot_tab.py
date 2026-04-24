@@ -349,7 +349,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
 def render() -> None:
     st.subheader("📊 Business Units")
 
-    options = BU_ORDER + ["─────────────", "Microservices", "Mobile Appplication"]
+    options = BU_ORDER + ["─", "Microservices", "Mobile Application"]
     choice  = st.selectbox("Business Unit", options, index=0, key="tab1_bu")
     if choice.startswith("─"):
         st.stop()
