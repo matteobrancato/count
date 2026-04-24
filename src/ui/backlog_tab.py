@@ -90,14 +90,37 @@ def _stats_from_cat(cat: pd.Series, total: int) -> dict:
     }
 
 
+def _in_scope_mask(raw: pd.DataFrame, rules: list) -> pd.Series:
+    """Boolean mask: True for cases that belong to this BU's country scope.
+
+    Uses the multi_countries column (already resolved to string tokens).
+    If no rule has a countries_filter, all cases are in scope.
+    """
+    all_tokens: set[str] = set()
+    for rule in rules:
+        all_tokens.update(rule.countries_filter)
+
+    if not all_tokens:
+        return pd.Series(True, index=raw.index)
+
+    def _matches(tokens: object) -> bool:
+        if not isinstance(tokens, list):
+            return False
+        return bool(set(tokens) & all_tokens)
+
+    return raw["multi_countries"].apply(_matches)
+
+
 def _load(bu: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (raw_non_deprecated, automated) for a website BU."""
+    """Return (raw_non_deprecated_in_scope, automated) for a website BU."""
     rules  = [r for r in ALL_RULES if r.bu == bu and r.scope == "website"]
     result = evaluate_rules(tuple(r.name for r in rules))
     raw    = result.raw_cases
     auto   = result.automated
     if not raw.empty:
         raw = raw[~raw["deprecated"]].reset_index(drop=True)
+        # Keep only cases in the BU's country scope (mirrors the rule country filter)
+        raw = raw[_in_scope_mask(raw, rules)].reset_index(drop=True)
     return raw, auto
 
 

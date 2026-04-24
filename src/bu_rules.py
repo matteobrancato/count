@@ -40,8 +40,8 @@ ALL_COUNTRY_TOKENS: dict[str, str] = {
     "TPSGB": "UK", "TPSIE": "IE",
     # Watsons
     "WTR": "TR", "WTR_SPR": "TR",
-    # Drogas
-    "LV": "LV", "LT": "LT",
+    # Drogas (RU = second Latvia locale, maps to LV)
+    "LV": "LV", "LT": "LT", "RU": "LV",
 }
 
 
@@ -295,8 +295,8 @@ def build_rules() -> list[Rule]:
     # TestIM: standard TestIM Desktop + Mobile fields + LV/LT in multi_countries
     # Slide labels: "LT", "LV"
     DRG_SUITE     = 16093
-    DRG_TOKENS    = ["LV", "LT"]
-    DRG_LABELS    = {"LV": "LV", "LT": "LT"}
+    DRG_TOKENS    = ["LV", "LT", "RU"]          # RU = second Latvia locale
+    DRG_LABELS    = {"LV": "LV", "LT": "LT", "RU": "LV"}
     rules.append(Rule(
         name="DRG ALL", bu="Drogas", scope="website", framework="java",
         suite_id=DRG_SUITE,
