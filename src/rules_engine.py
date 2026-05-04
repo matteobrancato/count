@@ -500,11 +500,24 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
 
 # ----------------------------------------------------------------- warmup
 def warmup_cache() -> None:
-    """Pre-fetch cases + sections for ALL known suites in parallel.
+    """Pre-fetch ALL data and pre-cache ALL rule evaluations at startup.
 
-    Call once at app startup.  After this returns every subsequent
-    evaluate_rules() call skips the API and only does Python processing.
+    Two-phase warm-up:
+      1. Fetch raw cases + sections for every suite in parallel (API layer).
+      2. Run evaluate_rules() for every scope so the Python expansion/matching
+         is also cached.  All subsequent tab renders (Overview, Backlog, Explorer)
+         hit the @st.cache_data cache and return instantly.
     """
     from .bu_rules import ALL_RULES
+
+    # Phase 1 – parallelised API fetch
     suite_ids = sorted({r.suite_id for r in ALL_RULES})
     tr.prefetch_all_suites(suite_ids)
+
+    # Phase 2 – pre-cache the Python processing per scope
+    # Use the same rule-name tuples that Overview / Backlog tabs use, so all
+    # renders share a single cached result rather than recomputing per BU.
+    for scope in ("website", "next_gen", "mobile_app"):
+        rules = [r for r in ALL_RULES if r.scope == scope]
+        if rules:
+            evaluate_rules(tuple(r.name for r in rules))

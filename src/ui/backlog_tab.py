@@ -61,15 +61,33 @@ COUNTRY_NAMES: dict[str, str] = {
 
 
 # ── load ──────────────────────────────────────────────────────────────────────
-def _load(bu: str, scope: str) -> tuple[pd.DataFrame, pd.DataFrame, list]:
-    """Return (raw_non_deprecated, automated, rules) for a BU + scope."""
-    rules  = [r for r in ALL_RULES if r.bu == bu and r.scope == scope]
+def _load_scope(scope: str) -> tuple[pd.DataFrame, pd.DataFrame, list]:
+    """Load ALL rules for a scope in ONE evaluate_rules call.
+
+    Uses the same rule-name tuple as the Overview tab, so both tabs share
+    a single @st.cache_data entry — no redundant processing.
+    """
+    rules  = [r for r in ALL_RULES if r.scope == scope]
     result = evaluate_rules(tuple(r.name for r in rules))
     raw    = result.raw_cases
     auto   = result.automated
     if not raw.empty:
         raw = raw[~raw["deprecated"]].reset_index(drop=True)
     return raw, auto, rules
+
+
+def _filter_bu(
+    raw: pd.DataFrame,
+    auto: pd.DataFrame,
+    rules: list,
+    bu: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, list]:
+    """Slice scope-wide DataFrames down to a single BU."""
+    rules_bu   = [r for r in rules if r.bu == bu]
+    suite_ids  = {r.suite_id for r in rules_bu}
+    raw_bu     = raw[raw["suite_id"].isin(suite_ids)]  if not raw.empty  else raw
+    auto_bu    = auto[auto["bu"] == bu]                if not auto.empty else auto
+    return raw_bu, auto_bu, rules_bu
 
 
 def _scoped_bus() -> list[tuple[str, str]]:
@@ -164,23 +182,25 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
 
 
 def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFrame:
-    """Add 'category' column — 'automated' overrides _cat_base where applicable."""
+    """Add 'category' column — 'automated' overrides _cat_base where applicable.
+
+    Uses a vectorised merge instead of a row-by-row apply, so it's O(n log n)
+    regardless of DataFrame size.
+    """
     expanded = expanded.copy()
+    expanded["category"] = expanded["_cat_base"]
     if auto.empty:
-        expanded["category"] = expanded["_cat_base"]
         return expanded
 
-    auto_keys = set(zip(
-        auto["case_id"].astype(int),
-        auto["country_label"],
-        auto["device"],
-    ))
-    is_auto = expanded.apply(
-        lambda r: (int(r["case_id"]), r["country_label"], r["device"]) in auto_keys,
-        axis=1,
+    auto_keys = (
+        auto[["case_id", "country_label", "device"]]
+        .drop_duplicates()
+        .assign(case_id=lambda d: d["case_id"].astype(int))
+        .assign(_auto=True)
     )
-    expanded["category"] = expanded["_cat_base"]
-    expanded.loc[is_auto, "category"] = "automated"
+    expanded["case_id"] = expanded["case_id"].astype(int)
+    merged = expanded.merge(auto_keys, on=["case_id", "country_label", "device"], how="left")
+    expanded.loc[merged["_auto"].fillna(False).to_numpy(), "category"] = "automated"
     return expanded
 
 
@@ -245,10 +265,19 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
 
 
 # ── summary table ─────────────────────────────────────────────────────────────
-def _build_summary() -> pd.DataFrame:
+def _build_summary(
+    scope_data: dict[str, tuple],
+) -> pd.DataFrame:
+    """Build the summary table from pre-loaded scope data.
+
+    *scope_data* maps scope → (raw, auto, rules) already filtered to that scope.
+    """
     rows = []
     for bu, scope in _scoped_bus():
-        raw, auto, rules = _load(bu, scope)
+        if scope not in scope_data:
+            continue
+        raw_all, auto_all, rules_all = scope_data[scope]
+        raw, auto, rules = _filter_bu(raw_all, auto_all, rules_all, bu)
         if raw.empty:
             continue
         expanded = _expand_baseline(raw, rules)
@@ -257,15 +286,15 @@ def _build_summary() -> pd.DataFrame:
         expanded = _classify_expanded(expanded, auto)
         s = _stats(expanded, auto)
         rows.append({
-            "BU":         bu,
-            "Scope":      "Next Gen" if scope == "next_gen" else "Website",
-            "Total":      s["total"],
-            "Automated":  s["automated"],
-            "Java":       s["java"],
-            "TestIM":     s["testim"],
-            "Backlog":    s["backlog"],
-            "N/A":        s["not_applicable"],
-            "Cov. %":     round(s["cov_total"], 1),
+            "BU":        bu,
+            "Scope":     "Next Gen" if scope == "next_gen" else "Website",
+            "Total":     s["total"],
+            "Automated": s["automated"],
+            "Java":      s["java"],
+            "TestIM":    s["testim"],
+            "Backlog":   s["backlog"],
+            "N/A":       s["not_applicable"],
+            "Cov. %":    round(s["cov_total"], 1),
         })
     return pd.DataFrame(rows)
 
@@ -277,8 +306,12 @@ def _metric_pair(col, label: str, n: int, u: int, help: str = "") -> None:
     col.caption(f"{u:,} {'case' if u == 1 else 'cases'}")
 
 
-def _detail_view(bu: str, scope: str) -> None:
-    raw, auto, rules = _load(bu, scope)
+def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
+    if scope not in scope_data:
+        st.info("No data loaded for this scope.")
+        return
+    raw_all, auto_all, rules_all = scope_data[scope]
+    raw, auto, rules = _filter_bu(raw_all, auto_all, rules_all, bu)
     if raw.empty:
         st.info("No cases found.")
         return
@@ -361,7 +394,12 @@ def render() -> None:
     )
 
     with st.spinner("Computing backlog stats…"):
-        summary = _build_summary()
+        scope_data: dict[str, tuple] = {}
+        for scope in ("website", "next_gen"):
+            raw, auto, rules = _load_scope(scope)
+            if not raw.empty:
+                scope_data[scope] = (raw, auto, rules)
+        summary = _build_summary(scope_data)
 
     if summary.empty:
         st.warning(
@@ -413,4 +451,4 @@ def render() -> None:
         label_visibility="collapsed",
     )
     chosen_bu, chosen_scope = pair_map[choice_lbl]
-    _detail_view(chosen_bu, chosen_scope)
+    _detail_view(chosen_bu, chosen_scope, scope_data)
