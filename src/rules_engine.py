@@ -133,31 +133,28 @@ def _get_prod_sanity(case: dict, reg: FieldRegistry) -> bool:
     return False
 
 
-def _get_labels(case: dict, reg: FieldRegistry) -> list[str]:
-    """Return label strings from the 'Labels' multi-select field."""
-    meta = reg.field("Labels")
-    if not meta:
-        return []
-    raw_val = case.get(meta.system_name)
-    if raw_val is None:
-        return []
-    if isinstance(raw_val, list):
-        ids = []
-        for x in raw_val:
+def _get_labels(case: dict, project_id: int) -> list[str]:
+    """Return label name strings from the native TestRail Labels feature.
+
+    TestRail stores labels as a list of dicts under case["labels"], each with
+    an "id" key.  The human names come from get_labels/{project_id}.
+    """
+    label_map = tr.fetch_labels(project_id)   # {int id → str name}, cached
+    raw = case.get("labels") or []
+    # "labels" may be a list of dicts [{"id": 3, ...}] or a list of ints
+    ids: list[int] = []
+    for entry in raw:
+        if isinstance(entry, dict):
             try:
-                ids.append(int(x))
+                ids.append(int(entry["id"]))
+            except (KeyError, TypeError, ValueError):
+                pass
+        else:
+            try:
+                ids.append(int(entry))
             except (TypeError, ValueError):
                 pass
-    elif isinstance(raw_val, str):
-        ids = []
-        for tok in raw_val.replace("\n", ",").split(","):
-            tok = tok.strip()
-            if tok.isdigit():
-                ids.append(int(tok))
-    else:
-        return []
-    val_map = meta.values_by_id
-    return [val_map[i] for i in ids if i in val_map]
+    return [label_map[i] for i in ids if i in label_map]
 
 
 def _get_automation_tool(case: dict, reg: FieldRegistry) -> str | None:
@@ -390,7 +387,7 @@ def _raw_case_row(
         "device":         dev_label,
         "multi_countries":  _get_multi_countries(case, reg, project_id),
         "country_coverage": _get_country_tokens(case, reg, "custom_country_coverage", project_id),
-        "labels":           _get_labels(case, reg),
+        "labels":           _get_labels(case, project_id),
         "automation_tool":  _get_automation_tool(case, reg),
         "prod_sanity":    _get_prod_sanity(case, reg),
         **{f"status_{k}": v for k, v in auto_status_resolved.items()},

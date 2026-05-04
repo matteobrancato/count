@@ -96,6 +96,19 @@ class TestRailClient:
     def get_suite(self, suite_id: int) -> dict:
         return self._get(f"get_suite/{suite_id}")
 
+    def get_labels(self, project_id: int, limit: int = 250) -> list[dict]:
+        """Fetch all labels defined for a project (native TR labels, not custom fields)."""
+        labels: list[dict] = []
+        offset = 0
+        while True:
+            data = self._get(f"get_labels/{project_id}&offset={offset}&limit={limit}")
+            chunk = data.get("labels", []) if isinstance(data, dict) else data
+            labels.extend(chunk)
+            if len(chunk) < limit:
+                break
+            offset += limit
+        return labels
+
     def get_sections(self, project_id: int, suite_id: int) -> list[dict]:
         out: list[dict] = []
         endpoint = f"get_sections/{project_id}&suite_id={suite_id}"
@@ -186,6 +199,13 @@ def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_cases(project_id, suite_id)
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_labels(project_id: int) -> dict[int, str]:
+    """Return {label_id: label_name} for the given project."""
+    raw = _get_client().get_labels(project_id)
+    return {int(lbl["id"]): lbl.get("title", lbl.get("name", "")) for lbl in raw}
+
+
 def resolve_project_id(suite_id: int) -> int:
     """Get the project_id that owns a given suite (needed for get_cases)."""
     suite = fetch_suite(suite_id)
@@ -194,7 +214,7 @@ def resolve_project_id(suite_id: int) -> int:
 
 def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
-               fetch_suite, fetch_sections, fetch_cases):
+               fetch_suite, fetch_sections, fetch_cases, fetch_labels):
         fn.clear()
 
 
@@ -218,8 +238,11 @@ def prefetch_all_suites(suite_ids: list[int]) -> None:
         pid_futures = {sid: pool.submit(resolve_project_id, sid) for sid in suite_ids}
     suite_to_project = {sid: f.result() for sid, f in pid_futures.items()}
 
-    # Step 2: fetch cases + sections for all suites in parallel
-    with ThreadPoolExecutor(max_workers=min(len(suite_ids) * 2, 12)) as pool:
+    # Step 2: fetch cases + sections + labels for all suites in parallel
+    project_ids = set(suite_to_project.values())
+    with ThreadPoolExecutor(max_workers=min(len(suite_ids) * 2 + len(project_ids), 16)) as pool:
         for sid, pid in suite_to_project.items():
             pool.submit(fetch_cases, pid, sid)
             pool.submit(fetch_sections, pid, sid)
+        for pid in project_ids:
+            pool.submit(fetch_labels, pid)
