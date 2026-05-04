@@ -133,6 +133,33 @@ def _get_prod_sanity(case: dict, reg: FieldRegistry) -> bool:
     return False
 
 
+def _get_labels(case: dict, reg: FieldRegistry) -> list[str]:
+    """Return label strings from the 'Labels' multi-select field."""
+    meta = reg.field("Labels")
+    if not meta:
+        return []
+    raw_val = case.get(meta.system_name)
+    if raw_val is None:
+        return []
+    if isinstance(raw_val, list):
+        ids = []
+        for x in raw_val:
+            try:
+                ids.append(int(x))
+            except (TypeError, ValueError):
+                pass
+    elif isinstance(raw_val, str):
+        ids = []
+        for tok in raw_val.replace("\n", ",").split(","):
+            tok = tok.strip()
+            if tok.isdigit():
+                ids.append(int(tok))
+    else:
+        return []
+    val_map = meta.values_by_id
+    return [val_map[i] for i in ids if i in val_map]
+
+
 def _get_automation_tool(case: dict, reg: FieldRegistry) -> str | None:
     """Automation MAPP Tool dropdown → string label."""
     meta = reg.field(_AUTOMATION_TOOL_LABEL) or reg.field("custom_case_automation_mapp_tool")
@@ -361,8 +388,10 @@ def _raw_case_row(
         "priority_label": priority_label,
         "deprecated":     _is_deprecated(case, reg),
         "device":         dev_label,
-        "multi_countries": _get_multi_countries(case, reg, project_id),
-        "automation_tool": _get_automation_tool(case, reg),
+        "multi_countries":  _get_multi_countries(case, reg, project_id),
+        "country_coverage": _get_country_tokens(case, reg, "custom_country_coverage", project_id),
+        "labels":           _get_labels(case, reg),
+        "automation_tool":  _get_automation_tool(case, reg),
         "prod_sanity":    _get_prod_sanity(case, reg),
         **{f"status_{k}": v for k, v in auto_status_resolved.items()},
     }

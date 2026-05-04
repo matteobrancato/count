@@ -1,23 +1,35 @@
-"""Backlog & Coverage tab.
+"""Backlog & Coverage tab — big_regr regression baseline.
 
-All counts use the same expansion as the Explorer/Pivot tab:
-  one row per (case_id × country_label × device).
+Baseline definition
+───────────────────
+  A case enters the baseline if it has the label "big_regr_desktop" and/or
+  "big_regr_mobile" in the TestRail Labels field (non-deprecated).
 
-Classification priority (per expanded row):
+Device expansion
+────────────────
+  Comes from the labels, NOT from the Device field:
+    big_regr_desktop only  → one Desktop row
+    big_regr_mobile  only  → one Mobile row
+    both labels            → one Desktop row + one Mobile row
+
+Country expansion
+─────────────────
+  Website BUs  : multi_countries filtered to BU tokens (same as Explorer)
+  Next Gen     : custom_country_coverage filtered to ALL_COUNTRY_TOKENS
+
+Classification (per expanded row)
+──────────────────────────────────
   automated      → (case_id, country_label, device) is in evaluate_rules().automated
   not_applicable → any status field = "Automation not applicable"
   backlog        → any other non-empty, non-automated status
   unknown        → no status field populated
 
-Metrics
-───────
-  Total            expanded (case × country × device) rows, non-deprecated, in scope
-  Automated        rows matched by the existing rules — same count as Explorer pivot Total
-  Backlog          rows not yet automated, excluding N/A
-  Not Applicable   rows explicitly excluded from automation
-  Cov. vs Total    Automated / Total
-  Cov. vs Auto.    Automated / (Automated + Backlog)
-  N/A %            Not Applicable / (Automated + Backlog + N/A)
+Counts
+──────
+  Expanded  = one row per (case_id × country_label × device) — shown as main number
+  Unique    = distinct case_id values within each category — shown in small text below
+
+Scope: website + microservices (next_gen). Mobile App excluded for now.
 """
 from __future__ import annotations
 
@@ -27,18 +39,15 @@ import streamlit as st
 from ..bu_rules import ALL_RULES, WEBSITE_BUS
 from ..rules_engine import evaluate_rules
 
-# ------------------------------------------------------------------ constants
+# ── constants ─────────────────────────────────────────────────────────────────
+_LABEL_DESKTOP = "big_regr_desktop"
+_LABEL_MOBILE  = "big_regr_mobile"
+
 _STATUS_AUTO: set[str] = {
     "Automated", "Automated DEV", "Automated UAT", "Automated Prod",
 }
 _STATUS_NA: set[str] = {
     "Automation not applicable",
-}
-
-_FW_LABELS: dict[str, str] = {
-    "java":           "Java",
-    "testim_desktop": "TestIM Desktop",
-    "testim_mobile":  "TestIM Mobile",
 }
 
 COUNTRY_NAMES: dict[str, str] = {
@@ -50,34 +59,57 @@ COUNTRY_NAMES: dict[str, str] = {
     "TR": "Turkey",     "UK": "United Kingdom",
 }
 
-# How the Device field value (already resolved in raw_cases) maps to expanded devices
-_DEVICE_EXPAND: dict[str, list[str]] = {
-    "Both":         ["Desktop", "Mobile"],
-    "Desktop":      ["Desktop"],
-    "Desktop only": ["Desktop"],
-    "Mobile":       ["Mobile"],
-    "Mobile only":  ["Mobile"],
-}
+
+# ── load ──────────────────────────────────────────────────────────────────────
+def _load(bu: str, scope: str) -> tuple[pd.DataFrame, pd.DataFrame, list]:
+    """Return (raw_non_deprecated, automated, rules) for a BU + scope."""
+    rules  = [r for r in ALL_RULES if r.bu == bu and r.scope == scope]
+    result = evaluate_rules(tuple(r.name for r in rules))
+    raw    = result.raw_cases
+    auto   = result.automated
+    if not raw.empty:
+        raw = raw[~raw["deprecated"]].reset_index(drop=True)
+    return raw, auto, rules
 
 
-# ------------------------------------------------------------------ expansion
-def _expand_raw(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
-    """Expand raw cases by country × device, mirroring evaluate_rules expansion.
+def _scoped_bus() -> list[tuple[str, str]]:
+    """Return [(bu, scope), ...] for website BUs + next_gen BU."""
+    pairs: list[tuple[str, str]] = [(bu, "website") for bu in WEBSITE_BUS]
+    ng_bus = sorted({r.bu for r in ALL_RULES if r.scope == "next_gen"})
+    for bu in ng_bus:
+        pairs.append((bu, "next_gen"))
+    return pairs
 
-    Returns a DataFrame with columns:
-        case_id, country_label, device, _cat_base
-    where _cat_base is the status classification BEFORE checking the auto set.
-    """
-    # Build token → label map from all rules for this BU
+
+# ── expansion ─────────────────────────────────────────────────────────────────
+def _pick_country_col(rules: list) -> str:
+    """Return which raw_cases column to use for country expansion."""
+    for r in rules:
+        if getattr(r, "country_field_label", "multi_countries") == "custom_country_coverage":
+            return "country_coverage"
+    return "multi_countries"
+
+
+def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
+    """Expand big_regr cases into (case_id × country_label × device) rows."""
+    _empty = pd.DataFrame(columns=["case_id", "country_label", "device", "_cat_base"])
+
+    if raw.empty:
+        return _empty
+
+    country_col = _pick_country_col(rules)
+    if "labels" not in raw.columns or country_col not in raw.columns:
+        return _empty
+
+    # Build token → ISO label map for this BU
     token_label: dict[str, str] = {}
     for rule in rules:
         for tok in rule.countries_filter:
             token_label[tok] = rule.country_labels.get(tok, tok)
-
     all_tokens = set(token_label)
-    status_cols = [c for c in raw.columns if c.startswith("status_")]
 
-    # ── Classify each raw case (before country/device expansion) ────────────
+    # ── Status classification (vectorised) ────────────────────────────────────
+    status_cols = [c for c in raw.columns if c.startswith("status_")]
     na_mask      = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
     for col in status_cols:
@@ -90,50 +122,59 @@ def _expand_raw(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     raw.loc[backlog_mask, "_cat_base"] = "backlog"
     raw.loc[na_mask,      "_cat_base"] = "not_applicable"
 
-    # ── Country expansion via multi_countries ─────────────────────────────────
+    # ── Filter to baseline (big_regr labels) ──────────────────────────────────
+    raw["_label_devs"] = raw["labels"].apply(
+        lambda ls: (
+            (["Desktop"] if _LABEL_DESKTOP in ls else []) +
+            (["Mobile"]  if _LABEL_MOBILE  in ls else [])
+        ) if isinstance(ls, list) else []
+    )
+    raw = raw[raw["_label_devs"].map(len) > 0]
+    if raw.empty:
+        return _empty
+
+    # ── Country expansion ─────────────────────────────────────────────────────
     if all_tokens:
-        raw["_mc_filtered"] = raw["multi_countries"].apply(
+        raw["_countries"] = raw[country_col].apply(
             lambda mc: list({
-                token_label[t]          # map to ISO label
+                token_label[t]
                 for t in (mc if isinstance(mc, list) else [])
                 if t in all_tokens
             })
         )
-        raw = raw[raw["_mc_filtered"].map(len) > 0]
+        raw = raw[raw["_countries"].map(len) > 0]
     else:
-        raw["_mc_filtered"] = raw.apply(lambda _: ["__ALL__"], axis=1)
+        raw["_countries"] = raw.apply(lambda _: ["__ALL__"], axis=1)
 
-    raw = raw.explode("_mc_filtered").rename(columns={"_mc_filtered": "country_label"})
+    if raw.empty:
+        return _empty
 
-    # ── Device expansion ──────────────────────────────────────────────────────
-    raw["_devices"] = raw["device"].map(lambda d: _DEVICE_EXPAND.get(d, ["Unspecified"]))
-    raw = raw.explode("_devices").rename(columns={"_devices": "device_exp"})
+    raw = raw.explode("_countries").rename(columns={"_countries": "country_label"})
+
+    # ── Device expansion from labels ──────────────────────────────────────────
+    raw = raw.explode("_label_devs").rename(columns={"_label_devs": "device_exp"})
 
     # ── Dedup on (case_id, country_label, device) ─────────────────────────────
-    expanded = (
+    return (
         raw[["case_id", "country_label", "device_exp", "_cat_base"]]
         .drop_duplicates(subset=["case_id", "country_label", "device_exp"])
         .rename(columns={"device_exp": "device"})
         .reset_index(drop=True)
     )
-    return expanded
 
 
 def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFrame:
-    """Add final 'category' column, overriding _cat_base with 'automated' where applicable."""
+    """Add 'category' column — 'automated' overrides _cat_base where applicable."""
+    expanded = expanded.copy()
     if auto.empty:
-        expanded = expanded.copy()
         expanded["category"] = expanded["_cat_base"]
         return expanded
 
-    auto_keys = set(
-        zip(
-            auto["case_id"].astype(int),
-            auto["country_label"],
-            auto["device"],
-        )
-    )
-    expanded = expanded.copy()
+    auto_keys = set(zip(
+        auto["case_id"].astype(int),
+        auto["country_label"],
+        auto["device"],
+    ))
     is_auto = expanded.apply(
         lambda r: (int(r["case_id"]), r["country_label"], r["device"]) in auto_keys,
         axis=1,
@@ -143,82 +184,131 @@ def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFra
     return expanded
 
 
-def _stats(expanded: pd.DataFrame) -> dict:
-    counts      = expanded["category"].value_counts()
-    total       = len(expanded)
-    n_auto      = int(counts.get("automated",      0))
-    n_back      = int(counts.get("backlog",         0))
-    n_na        = int(counts.get("not_applicable", 0))
+# ── stats ─────────────────────────────────────────────────────────────────────
+def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
+    """Expanded row counts, unique case counts, and framework breakdown."""
+    cats   = expanded["category"].value_counts()
+    n_auto = int(cats.get("automated",      0))
+    n_back = int(cats.get("backlog",         0))
+    n_na   = int(cats.get("not_applicable",  0))
+    total  = len(expanded)
+
+    def _u(cat: str) -> int:
+        return int(expanded[expanded["category"] == cat]["case_id"].nunique())
+
+    u_total = int(expanded["case_id"].nunique())
+    u_auto  = _u("automated")
+    u_back  = _u("backlog")
+    u_na    = _u("not_applicable")
+
+    # Framework breakdown via merge (vectorised — no row-by-row apply)
+    n_java = u_java = n_testim = u_testim = 0
+    if not auto.empty and n_auto > 0:
+        auto_exp = expanded[expanded["category"] == "automated"].copy()
+        auto_exp["case_id"] = auto_exp["case_id"].astype(int)
+
+        base = auto[["case_id", "country_label", "device", "framework"]].copy()
+        base["case_id"] = base["case_id"].astype(int)
+
+        for fw_name, fw_mask in [
+            ("java",   base["framework"] == "java"),
+            ("testim", base["framework"].isin(["testim_desktop", "testim_mobile"])),
+        ]:
+            keys = (
+                base[fw_mask][["case_id", "country_label", "device"]]
+                .drop_duplicates()
+                .assign(**{f"_{fw_name}": True})
+            )
+            m    = auto_exp.merge(keys, on=["case_id", "country_label", "device"], how="left")
+            flag = f"_{fw_name}"
+            if fw_name == "java":
+                n_java   = int(m[flag].sum())
+                u_java   = int(m[m[flag] == True]["case_id"].nunique())
+            else:
+                n_testim = int(m[flag].sum())
+                u_testim = int(m[m[flag] == True]["case_id"].nunique())
+
     automatable = n_auto + n_back
     scoped      = n_auto + n_back + n_na
+
     return {
-        "total":           total,
-        "automated":       n_auto,
-        "backlog":         n_back,
-        "not_applicable":  n_na,
+        "total":           total,    "u_total":   u_total,
+        "automated":       n_auto,   "u_auto":    u_auto,
+        "java":            n_java,   "u_java":    u_java,
+        "testim":          n_testim, "u_testim":  u_testim,
+        "backlog":         n_back,   "u_back":    u_back,
+        "not_applicable":  n_na,     "u_na":      u_na,
         "cov_total":       n_auto / total        * 100 if total        else 0.0,
         "cov_automatable": n_auto / automatable  * 100 if automatable  else 0.0,
         "na_pct":          n_na   / scoped        * 100 if scoped       else 0.0,
     }
 
 
-# ------------------------------------------------------------------ load
-def _load(bu: str) -> tuple[pd.DataFrame, pd.DataFrame, list]:
-    """Return (raw_non_deprecated, automated, rules) for a website BU."""
-    rules  = [r for r in ALL_RULES if r.bu == bu and r.scope == "website"]
-    result = evaluate_rules(tuple(r.name for r in rules))
-    raw    = result.raw_cases
-    auto   = result.automated
-    if not raw.empty:
-        raw = raw[~raw["deprecated"]].reset_index(drop=True)
-    return raw, auto, rules
-
-
-# ------------------------------------------------------------------ summary
+# ── summary table ─────────────────────────────────────────────────────────────
 def _build_summary() -> pd.DataFrame:
     rows = []
-    for bu in WEBSITE_BUS:
-        raw, auto, rules = _load(bu)
+    for bu, scope in _scoped_bus():
+        raw, auto, rules = _load(bu, scope)
         if raw.empty:
             continue
-        expanded  = _expand_raw(raw, rules)
-        expanded  = _classify_expanded(expanded, auto)
-        s         = _stats(expanded)
+        expanded = _expand_baseline(raw, rules)
+        if expanded.empty:
+            continue
+        expanded = _classify_expanded(expanded, auto)
+        s = _stats(expanded, auto)
         rows.append({
-            "BU":              bu,
-            "Total":           s["total"],
-            "Automated":       s["automated"],
-            "Backlog":         s["backlog"],
-            "Not Applicable":  s["not_applicable"],
-            "Cov. vs Total %": round(s["cov_total"],       1),
-            "Cov. vs Auto. %": round(s["cov_automatable"], 1),
-            "N/A %":           round(s["na_pct"],          1),
+            "BU":         bu,
+            "Scope":      "Next Gen" if scope == "next_gen" else "Website",
+            "Total":      s["total"],
+            "Automated":  s["automated"],
+            "Java":       s["java"],
+            "TestIM":     s["testim"],
+            "Backlog":    s["backlog"],
+            "N/A":        s["not_applicable"],
+            "Cov. %":     round(s["cov_total"], 1),
         })
     return pd.DataFrame(rows)
 
 
-# ------------------------------------------------------------------ detail
-def _detail_view(bu: str) -> None:
-    raw, auto, rules = _load(bu)
+# ── detail view ───────────────────────────────────────────────────────────────
+def _metric_pair(col, label: str, n: int, u: int, help: str = "") -> None:
+    """Metric card showing expanded count + unique case count caption."""
+    col.metric(label, f"{n:,}", help=help or None)
+    col.caption(f"{u:,} {'case' if u == 1 else 'cases'}")
+
+
+def _detail_view(bu: str, scope: str) -> None:
+    raw, auto, rules = _load(bu, scope)
     if raw.empty:
         st.info("No cases found.")
         return
 
-    expanded = _expand_raw(raw, rules)
+    expanded = _expand_baseline(raw, rules)
+    if expanded.empty:
+        st.info(
+            "No big_regr cases found for this BU. "
+            "Check that cases have the 'big_regr_desktop' / 'big_regr_mobile' label. "
+            "If you just labelled them, click 🔄 Refresh."
+        )
+        return
+
     expanded = _classify_expanded(expanded, auto)
-    s        = _stats(expanded)
+    s        = _stats(expanded, auto)
 
-    # ── Metric cards ──────────────────────────────────────────────────────────
+    # ── Row 1: Total · Automated · Backlog · N/A ─────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total (baseline)",  f"{s['total']:,}",
-              help="Expanded rows: case × country × device")
-    c2.metric("Automated",         f"{s['automated']:,}",
-              help=f"{s['cov_total']:.1f}% of total — same counting as Explorer")
-    c3.metric("Backlog",           f"{s['backlog']:,}",
-              help="Not yet automated — excludes N/A")
-    c4.metric("Not Applicable",    f"{s['not_applicable']:,}",
-              help=f"{s['na_pct']:.1f}% of all scoped rows")
+    _metric_pair(c1, "Total (baseline)", s["total"],         s["u_total"])
+    _metric_pair(
+        c2, "Automated", s["automated"], s["u_auto"],
+        help=f"{s['cov_total']:.1f}% of total · {s['cov_automatable']:.1f}% of automatable",
+    )
+    _metric_pair(c3, "Backlog",          s["backlog"],        s["u_back"])
+    _metric_pair(
+        c4, "Not Applicable", s["not_applicable"], s["u_na"],
+        help=f"{s['na_pct']:.1f}% of scoped rows",
+    )
 
+    # ── Coverage line ─────────────────────────────────────────────────────────
     st.markdown(
         f"**Coverage vs total:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
         f"**Coverage vs automatable:** `{s['cov_automatable']:.1f}%`",
@@ -226,15 +316,29 @@ def _detail_view(bu: str) -> None:
     )
     st.divider()
 
-    # ── Automated breakdown ────────────────────────────────────────────────────
+    # ── Row 2: Framework breakdown ────────────────────────────────────────────
+    st.markdown("##### Automated by framework")
+    f1, f2, f3 = st.columns(3)
+    _metric_pair(f1, "Java",   s["java"],   s["u_java"])
+    _metric_pair(f2, "TestIM", s["testim"], s["u_testim"])
+
+    java_pct   = s["java"]   / s["automated"] * 100 if s["automated"] else 0.0
+    testim_pct = s["testim"] / s["automated"] * 100 if s["automated"] else 0.0
+    f3.markdown(
+        f"<div style='padding-top:8px;font-size:13px;color:#5e6677'>"
+        f"Java &nbsp;<b>{java_pct:.1f}%</b><br>"
+        f"TestIM &nbsp;<b>{testim_pct:.1f}%</b><br>"
+        f"<span style='font-size:11px'>"
+        f"(% of automated rows — may sum &gt;100% if both frameworks cover the same row)"
+        f"</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.divider()
+
+    # ── Automated by country ──────────────────────────────────────────────────
     auto_rows = expanded[expanded["category"] == "automated"]
-    if auto_rows.empty:
-        st.info("No automated cases for this BU.")
-        return
-
-    tab_country, tab_framework = st.tabs(["By Country", "By Framework"])
-
-    with tab_country:
+    if not auto_rows.empty:
+        st.markdown("##### Automated by country")
         country_counts = (
             auto_rows.groupby("country_label").size()
             .reset_index(name="Automated")
@@ -246,59 +350,67 @@ def _detail_view(bu: str) -> None:
         )
         st.dataframe(country_counts, use_container_width=True, hide_index=True)
 
-    with tab_framework:
-        if not auto.empty:
-            auto_dedup = auto.drop_duplicates(["case_id", "country_label", "device"]).copy()
-            auto_dedup["framework_label"] = (
-                auto_dedup["framework"].map(_FW_LABELS).fillna(auto_dedup["framework"])
-            )
-            fw_pivot = (
-                auto_dedup
-                .groupby(["country_label", "framework_label"]).size()
-                .unstack(fill_value=0)
-                .rename(index=lambda c: COUNTRY_NAMES.get(c, c))
-            )
-            fw_pivot.index.name = "Country"
-            st.dataframe(fw_pivot, use_container_width=True)
 
-
-# ------------------------------------------------------------------ render
+# ── render ────────────────────────────────────────────────────────────────────
 def render() -> None:
     st.subheader("📋 Backlog & Coverage")
     st.caption(
-        "Counts match Explorer: each row = case × country × device. "
-        "Backlog = any status except Automated* and Automation not applicable."
+        "Baseline: cases labelled big_regr_desktop / big_regr_mobile. "
+        "Main number = expanded rows (case × country × device). "
+        "Small number below = unique cases."
     )
 
     with st.spinner("Computing backlog stats…"):
         summary = _build_summary()
 
     if summary.empty:
-        st.warning("No data available.")
+        st.warning(
+            "No baseline data found. Ensure cases have the big_regr_desktop / "
+            "big_regr_mobile labels in TestRail, then click 🔄 Refresh."
+        )
         return
 
+    # ── Summary table ─────────────────────────────────────────────────────────
     st.markdown("#### All Business Units")
     st.dataframe(
         summary,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "BU":              st.column_config.TextColumn("Business Unit", width="medium"),
-            "Total":           st.column_config.NumberColumn("Total"),
-            "Automated":       st.column_config.NumberColumn("Automated"),
-            "Backlog":         st.column_config.NumberColumn("Backlog"),
-            "Not Applicable":  st.column_config.NumberColumn("N/A"),
-            "Cov. vs Total %": st.column_config.NumberColumn("Cov. vs Total",       format="%.1f%%"),
-            "Cov. vs Auto. %": st.column_config.NumberColumn("Cov. vs Automatable", format="%.1f%%"),
-            "N/A %":           st.column_config.NumberColumn("N/A %",               format="%.1f%%"),
+            "BU":        st.column_config.TextColumn("Business Unit", width="medium"),
+            "Scope":     st.column_config.TextColumn("Scope",         width="small"),
+            "Total":     st.column_config.NumberColumn("Total"),
+            "Automated": st.column_config.NumberColumn("Automated"),
+            "Java":      st.column_config.NumberColumn("Java"),
+            "TestIM":    st.column_config.NumberColumn("TestIM"),
+            "Backlog":   st.column_config.NumberColumn("Backlog"),
+            "N/A":       st.column_config.NumberColumn("N/A"),
+            "Cov. %":    st.column_config.NumberColumn("Coverage %", format="%.1f%%"),
         },
     )
 
     st.divider()
 
+    # ── Detail ────────────────────────────────────────────────────────────────
     st.markdown("#### Detail by Business Unit")
-    bu_choice = st.selectbox(
-        "Business Unit", WEBSITE_BUS, key="bl_bu_detail",
+
+    all_pairs   = _scoped_bus()
+    pair_labels = [
+        f"{bu} (Next Gen)" if sc == "next_gen" else bu
+        for bu, sc in all_pairs
+    ]
+    pair_map    = dict(zip(pair_labels, all_pairs))
+
+    # Only show BUs that have data
+    summary_bus = set(summary["BU"].tolist())
+    available   = [lbl for lbl in pair_labels if pair_map[lbl][0] in summary_bus]
+
+    if not available:
+        return
+
+    choice_lbl = st.selectbox(
+        "Business Unit", available, key="bl_bu_detail",
         label_visibility="collapsed",
     )
-    _detail_view(bu_choice)
+    chosen_bu, chosen_scope = pair_map[choice_lbl]
+    _detail_view(chosen_bu, chosen_scope)
