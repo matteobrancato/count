@@ -126,7 +126,10 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
             token_label[tok] = rule.country_labels.get(tok, tok)
     all_tokens = set(token_label)
 
-    # ── Status classification (vectorised) ────────────────────────────────────
+    # ── Initial status classification (combined — used as fallback) ──────────────
+    # We compute a combined mask first so non-TestIM rules (Java, etc.) that use a
+    # single status field still get classified correctly.  TestIM cases are then
+    # re-classified per-device after expansion (see below).
     status_cols = [c for c in raw.columns if c.startswith("status_")]
     na_mask      = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
@@ -171,6 +174,33 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
 
     # ── Device expansion from labels ──────────────────────────────────────────
     raw = raw.explode("_label_devs").rename(columns={"_label_devs": "device_exp"})
+
+    # ── Device-specific re-classification (TestIM) ───────────────────────────
+    # Problem: a case with Desktop="Ready to be automated" + Mobile="Automation not
+    # applicable" gets combined na_mask=True → _cat_base="not_applicable" for BOTH
+    # device rows, which wrongly excludes it from the Desktop backlog.
+    # Fix: after expansion, overwrite _cat_base for Desktop/Mobile rows using only
+    # the device-specific status column so each device is judged independently.
+    _DEVICE_STATUS_COL = {
+        "Desktop": "status_Automation Status Testim Desktop",
+        "Mobile":  "status_Automation Status Testim Mobile View",
+    }
+    for dev, scol in _DEVICE_STATUS_COL.items():
+        if scol not in raw.columns:
+            continue
+        dev_mask = raw["device_exp"] == dev
+        if not dev_mask.any():
+            continue
+        col_vals = raw[scol]  # full column — index-aligned with raw
+        raw.loc[dev_mask, "_cat_base"] = "unknown"
+        raw.loc[dev_mask & col_vals.isin(_STATUS_NA), "_cat_base"] = "not_applicable"
+        raw.loc[
+            dev_mask
+            & col_vals.notna()
+            & ~col_vals.isin(_STATUS_AUTO | _STATUS_NA)
+            & (col_vals != ""),
+            "_cat_base",
+        ] = "backlog"
 
     # ── Dedup on (case_id, country_label, device) ─────────────────────────────
     return (
