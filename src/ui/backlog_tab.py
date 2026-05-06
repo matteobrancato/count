@@ -302,6 +302,11 @@ def _build_summary(
 
     *scope_data* maps scope → (raw, auto, rules) already filtered to that scope.
     """
+    # Pre-compute and cache expanded DataFrames so _detail_view can reuse them
+    # without running _expand_baseline / _classify_expanded a second time.
+    expanded_cache: dict[tuple, pd.DataFrame] = {}
+    scope_data["_expanded_cache"] = expanded_cache  # type: ignore[assignment]
+
     rows = []
     for bu, scope in _scoped_bus():
         if scope not in scope_data:
@@ -314,6 +319,7 @@ def _build_summary(
         if expanded.empty:
             continue
         expanded = _classify_expanded(expanded, auto)
+        expanded_cache[(bu, scope)] = expanded   # cache for detail view
         s = _stats(expanded, auto)
         rows.append({
             "BU":        bu,
@@ -336,6 +342,55 @@ def _metric_pair(col, label: str, n: int, u: int, help: str = "") -> None:
     col.caption(f"{u:,} {'case' if u == 1 else 'cases'}")
 
 
+def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
+    """Interactive pivot over the full regression baseline (all categories)."""
+    st.markdown("##### 📊 Pivot")
+    if expanded.empty:
+        return
+
+    # Build display DataFrame
+    disp = expanded[["case_id", "country_label", "device", "category"]].copy()
+    disp["Country"]  = disp["country_label"].map(lambda c: COUNTRY_NAMES.get(c, c))
+    disp["Device"]   = disp["device"]
+    disp["Category"] = disp["category"].map({
+        "automated":      "Automated",
+        "backlog":        "Backlog",
+        "not_applicable": "N/A",
+    }).fillna("Other")
+
+    available = ["Country", "Device"]
+
+    c1, c2 = st.columns(2)
+    row_sel = c1.multiselect(
+        "Rows", available, default=["Country"], key=f"{key_prefix}_bl_rows"
+    )
+    remaining = [d for d in available if d not in row_sel]
+    col_sel = c2.multiselect(
+        "Columns", remaining, default=remaining, key=f"{key_prefix}_bl_cols"
+    )
+
+    if not row_sel:
+        st.caption("Select at least one row dimension.")
+        return
+
+    col_dims = col_sel + ["Category"]
+
+    try:
+        pv = pd.pivot_table(
+            disp,
+            values="case_id",
+            index=row_sel,
+            columns=col_dims,
+            aggfunc="count",
+            fill_value=0,
+            margins=True,
+            margins_name="Total",
+        )
+        st.dataframe(pv, use_container_width=True)
+    except Exception as exc:
+        st.error(f"Pivot error: {exc}")
+
+
 def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
     if scope not in scope_data:
         st.info("No data loaded for this scope.")
@@ -346,7 +401,15 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
         st.info("No cases found.")
         return
 
-    expanded = _expand_baseline(raw, rules)
+    # Re-use pre-computed expanded data cached in scope_data if available,
+    # otherwise compute it now (avoids double work vs _build_summary).
+    _cache = scope_data.get("_expanded_cache", {})
+    cache_key = (bu, scope)
+    if cache_key in _cache:
+        expanded = _cache[cache_key]
+    else:
+        expanded = _classify_expanded(_expand_baseline(raw, rules), auto)
+
     if expanded.empty:
         st.info(
             "No big_regr cases found for this BU. "
@@ -355,8 +418,7 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
         )
         return
 
-    expanded = _classify_expanded(expanded, auto)
-    s        = _stats(expanded, auto)
+    s = _stats(expanded, auto)
 
     # ── Row 1: Total · Automated · Backlog · N/A ─────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
@@ -371,10 +433,11 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
         help=f"{s['na_pct']:.1f}% of scoped rows",
     )
 
-    # ── Coverage line ─────────────────────────────────────────────────────────
+    # ── Coverage line (with N/A %) ────────────────────────────────────────────
     st.markdown(
         f"**Coverage vs total:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
-        f"**Coverage vs automatable:** `{s['cov_automatable']:.1f}%`",
+        f"**Coverage vs automatable:** `{s['cov_automatable']:.1f}%` &nbsp;·&nbsp; "
+        f"**Not Applicable:** `{s['na_pct']:.1f}%`",
         unsafe_allow_html=True,
     )
     st.divider()
@@ -398,20 +461,9 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
     )
     st.divider()
 
-    # ── Automated by country ──────────────────────────────────────────────────
-    auto_rows = expanded[expanded["category"] == "automated"]
-    if not auto_rows.empty:
-        st.markdown("##### Automated by country")
-        country_counts = (
-            auto_rows.groupby("country_label").size()
-            .reset_index(name="Automated")
-            .rename(columns={"country_label": "Country"})
-            .sort_values("Automated", ascending=False)
-        )
-        country_counts["Country"] = country_counts["Country"].map(
-            lambda c: COUNTRY_NAMES.get(c, c)
-        )
-        st.dataframe(country_counts, use_container_width=True, hide_index=True)
+    # ── Pivot ─────────────────────────────────────────────────────────────────
+    bu_key = bu.lower().replace(" ", "_")
+    _baseline_pivot(expanded, key_prefix=f"bl_{bu_key}_{scope}")
 
 
 # ── render ────────────────────────────────────────────────────────────────────
