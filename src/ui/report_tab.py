@@ -11,6 +11,7 @@ from ..rules_engine import evaluate_rules
 # ── palette ───────────────────────────────────────────────────────────────────
 _BLUE   = "#4472C4"   # Mobile
 _ORANGE = "#ED7D31"   # Desktop
+_GREY   = "#A0A0A0"   # Unspecified (Next Gen)
 _RED    = "#C00000"   # metric numbers
 
 _BU_ORDER = [
@@ -61,9 +62,14 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
         grp.groupby("bu")["country_label"]
         .transform(lambda s: s.map({c: i for i, c in enumerate(sorted(s.unique()))}))
     )
-    grp["dev_rank"]  = grp["device"].map({"Mobile": 0, "Desktop": 1})
+    grp["dev_rank"]  = grp["device"].map({"Mobile": 0, "Desktop": 1, "Unspecified": 2}).fillna(2).astype(int)
     grp["sort_key"]  = grp["ctry_rank"] * 10 + grp["dev_rank"]
-    grp["label"]     = grp["device"].str.lower() + " " + grp["country_label"]
+    # For Unspecified device (Next Gen), show just the country code — no device prefix
+    grp["label"] = grp.apply(
+        lambda r: r["country_label"] if r["device"] == "Unspecified"
+        else r["device"].lower() + " " + r["country_label"],
+        axis=1,
+    )
     grp["bu_rank"]   = grp["bu"].map({b: i for i, b in enumerate(bus)})
 
     return grp.rename(columns={"country_label": "country"})
@@ -82,7 +88,10 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
     # and cause Altair to bleed data across facet panels.
     y_sort = alt.EncodingSortField(field="sort_key", order="ascending")
 
-    color_scale = alt.Scale(domain=["Mobile", "Desktop"], range=[_BLUE, _ORANGE])
+    color_scale = alt.Scale(
+        domain=["Mobile", "Desktop", "Unspecified"],
+        range=[_BLUE, _ORANGE, _GREY],
+    )
 
     y_axis = alt.Axis(title=None, labelFontSize=10.5, labelFont="Arial",
                       labelLimit=170, ticks=False, domain=False)
@@ -95,11 +104,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
                     axis=alt.Axis(title=None, grid=True, gridColor="#f0f0f0",
                                   tickCount=5, labelFontSize=10, domain=False)),
             y=alt.Y("label:N", sort=y_sort, axis=y_axis),
-            color=alt.Color("device:N",
-                            scale=color_scale,
-                            legend=alt.Legend(title=None, orient="top-right",
-                                              labelFontSize=12, symbolSize=110,
-                                              direction="horizontal")),
+            color=alt.Color("device:N", scale=color_scale, legend=None),
             tooltip=[
                 alt.Tooltip("bu:N",      title="BU"),
                 alt.Tooltip("country:N", title="Country"),
@@ -213,6 +218,22 @@ def render() -> None:
         "<div style='font-family:Arial;font-weight:700;font-size:15px;"
         "color:#1a1f36;border-left:4px solid #ED7D31;padding-left:10px;margin-bottom:8px'>"
         "📊 Automated Tests by Business Unit</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Legend (HTML, outside chart to avoid overlap) ─────────────────────────
+    def _dot(color: str) -> str:
+        return (f'<span style="display:inline-block;width:11px;height:11px;'
+                f'border-radius:2px;background:{color};margin-right:5px;'
+                f'vertical-align:middle"></span>')
+
+    st.markdown(
+        f'<div style="display:flex;gap:20px;font-family:Arial;font-size:12px;'
+        f'color:#1a1f36;margin-bottom:4px;margin-left:4px">'
+        f'{_dot(_BLUE)}<span>Mobile</span>'
+        f'{_dot(_ORANGE)}<span>Desktop</span>'
+        f'{_dot(_GREY)}<span style="color:#888">Unspecified</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
