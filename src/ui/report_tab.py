@@ -6,8 +6,8 @@ Reproduces the 'Automation – Frameworks and Status' PowerPoint slide:
 """
 from __future__ import annotations
 
+import altair as alt
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from .. import metrics
@@ -15,14 +15,10 @@ from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
 
 # ── palette ───────────────────────────────────────────────────────────────────
-_BLUE       = "#4472C4"   # Mobile bars
-_ORANGE     = "#ED7D31"   # Desktop bars
-_RED        = "#C00000"   # metric numbers
-_BG_JAVA    = "#FFFBEC"   # java card bg
-_BG_TESTIM  = "#EBF2FF"   # testim card bg
-_BU_SEP_COL = "rgba(0,0,0,0)"  # invisible separator bar
+_BLUE   = "#4472C4"   # Mobile
+_ORANGE = "#ED7D31"   # Desktop
+_RED    = "#C00000"   # metric numbers
 
-# Preferred display order (matches slide)
 _BU_ORDER = [
     "The Perfume Shop", "Savers", "Superdrug",
     "Kruidvat", "Trekplaister", "Watsons", "Drogas",
@@ -33,7 +29,7 @@ _BU_ORDER = [
 
 # ── data ──────────────────────────────────────────────────────────────────────
 def _load() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (website_auto, all_auto), both deduplicated on (bu, country, device, case_id)."""
+    """Return (website_auto, all_auto) both deduplicated."""
     frames_all: list[pd.DataFrame] = []
     frames_web: list[pd.DataFrame] = []
 
@@ -58,7 +54,7 @@ def _load() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 # ── chart ─────────────────────────────────────────────────────────────────────
-def _build_chart(auto: pd.DataFrame) -> go.Figure:
+def _build_chart(auto: pd.DataFrame) -> alt.Chart:
     """Horizontal bar chart grouped by BU, coloured by device."""
     grp = (
         auto.groupby(["bu", "country_label", "device"])["case_id"]
@@ -71,109 +67,115 @@ def _build_chart(auto: pd.DataFrame) -> go.Figure:
     bus = [b for b in _BU_ORDER if b in present]
     bus += sorted(b for b in present if b not in bus)
 
-    # Build the y-axis row list bottom-to-top.
-    # Each BU group: [country rows…, BU_separator]
-    # reversed(bus) → last BU at bottom, first BU at top.
-    # Within a BU: reversed(countries) + Desktop-before-Mobile
-    #   → top-to-bottom reading: country A: Mobile then Desktop, country B: …
-    y_labels:   list[str] = []
-    x_vals:     list[int] = []
-    bar_colors: list[str] = []
-    bar_texts:  list[str] = []
+    # Build a flat DataFrame with a sort key for the y-axis.
+    # Row label = "device country" e.g. "mobile LT".
+    # bu_rank controls BU grouping order; ctry_rank controls country order within BU.
+    rows: list[dict] = []
+    bu_rank = {b: i for i, b in enumerate(bus)}
 
-    for bu in reversed(bus):
+    for bu in bus:
         bu_data   = grp[grp["bu"] == bu]
         countries = sorted(bu_data["country_label"].unique())
-
-        for ctry in reversed(countries):          # reversed so first country ends up on top
-            for device in ["Desktop", "Mobile"]:  # Mobile gets higher index → above Desktop
+        for ci, ctry in enumerate(countries):
+            for di, device in enumerate(["Mobile", "Desktop"]):  # Mobile on top within pair
                 row = bu_data[
                     (bu_data["country_label"] == ctry) &
                     (bu_data["device"] == device)
                 ]
                 count = int(row["count"].iloc[0]) if not row.empty else 0
-                y_labels.append(f"  {device.lower()} {ctry}")
-                x_vals.append(count)
-                bar_colors.append(_ORANGE if device == "Desktop" else _BLUE)
-                bar_texts.append(str(count) if count else "")
+                rows.append({
+                    "bu":       bu,
+                    "label":    f"{device.lower()} {ctry}",
+                    "device":   device,
+                    "country":  ctry,
+                    "count":    count,
+                    # sort_key: lower = higher on chart (Altair sorts ascending by default,
+                    # so we reverse: higher sort_key = lower on chart)
+                    "sort_key": bu_rank[bu] * 1000 + ci * 10 + di,
+                })
 
-        # BU separator row: zero-width bar, bold name on y-axis
-        y_labels.append(f"<b>  {bu}</b>")
-        x_vals.append(0)
-        bar_colors.append(_BU_SEP_COL)
-        bar_texts.append("")
+    df = pd.DataFrame(rows)
 
-    # ── traces ────────────────────────────────────────────────────────────────
-    fig = go.Figure()
-
-    # Main bar trace (single trace with per-bar colours)
-    fig.add_trace(go.Bar(
-        y=y_labels,
-        x=x_vals,
-        orientation="h",
-        marker=dict(color=bar_colors, line=dict(width=0)),
-        text=bar_texts,
-        textposition="outside",
-        textfont=dict(size=9.5, color="#444444"),
-        cliponaxis=False,
-        showlegend=False,
-        hovertemplate="%{y}: <b>%{x:,}</b><extra></extra>",
-    ))
-
-    # Legend-only dummy traces
-    for label, color in [("Mobile", _BLUE), ("Desktop", _ORANGE)]:
-        fig.add_trace(go.Bar(
-            y=[None], x=[None], orientation="h",
-            name=label, marker_color=color, showlegend=True,
-        ))
-
-    # ── horizontal separator lines between BU groups ──────────────────────────
-    # BU separator rows are at specific y-label values; draw a line just below them.
-    sep_labels = {lbl for lbl in y_labels if lbl.startswith("<b>")}
-    shapes = [
-        dict(
-            type="line", xref="paper", yref="y",
-            x0=0, x1=1.0,
-            y0=lbl, y1=lbl,
-            line=dict(color="#e0e0e0", width=1.2),
-        )
-        for lbl in sep_labels
-    ]
-
-    # ── layout ────────────────────────────────────────────────────────────────
-    n_rows = len(y_labels)
-    fig.update_layout(
-        height=max(450, n_rows * 19 + 60),
-        margin=dict(l=20, r=80, t=4, b=30),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        barmode="overlay",
-        shapes=shapes,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom", y=1.0,
-            xanchor="right",  x=1.0,
-            font=dict(size=12, family="Arial"),
-            traceorder="reversed",
-        ),
-        xaxis=dict(
-            showgrid=True, gridcolor="#f3f3f3",
-            zeroline=True, zerolinecolor="#dddddd", zerolinewidth=1,
-            showline=False, title=None,
-            tickfont=dict(size=10),
-        ),
-        yaxis=dict(
-            automargin=True,
-            tickfont=dict(size=10.5, family="Arial"),
-            showline=False, showgrid=False, showticklabels=True,
-        ),
-        font=dict(family="Arial, sans-serif", color="#333333"),
-        hoverlabel=dict(bgcolor="white", font_size=12),
+    # Altair y-axis order: provide explicit sorted list of labels
+    # sort ascending by sort_key means lower sort_key = top of chart
+    label_order = (
+        df.sort_values("sort_key")["label"].tolist()
     )
-    return fig
+
+    color_scale = alt.Scale(
+        domain=["Mobile", "Desktop"],
+        range=[_BLUE, _ORANGE],
+    )
+
+    bars = (
+        alt.Chart(df)
+        .mark_bar(height=14)
+        .encode(
+            x=alt.X("count:Q",
+                    axis=alt.Axis(title=None, grid=True, gridColor="#f0f0f0",
+                                  tickCount=6, labelFontSize=10)),
+            y=alt.Y("label:N",
+                    sort=label_order,
+                    axis=alt.Axis(title=None, labelFontSize=10.5,
+                                  labelFont="Arial", labelLimit=180,
+                                  ticks=False, domain=False)),
+            color=alt.Color("device:N",
+                            scale=color_scale,
+                            legend=alt.Legend(
+                                title=None, orient="top-right",
+                                labelFontSize=12, symbolSize=120,
+                                direction="horizontal",
+                            )),
+            tooltip=[
+                alt.Tooltip("bu:N",      title="BU"),
+                alt.Tooltip("country:N", title="Country"),
+                alt.Tooltip("device:N",  title="Device"),
+                alt.Tooltip("count:Q",   title="Automated", format=","),
+            ],
+        )
+    )
+
+    text = (
+        alt.Chart(df)
+        .mark_text(align="left", dx=4, fontSize=9.5, color="#444444")
+        .encode(
+            x=alt.X("count:Q"),
+            y=alt.Y("label:N", sort=label_order),
+            text=alt.Text("count:Q", format=","),
+        )
+    )
+
+    # BU label annotations — one row per BU as a rule/text separator
+    bu_df = (
+        df.groupby("bu")["sort_key"]
+        .min()
+        .reset_index()
+        .rename(columns={"sort_key": "first_label_key"})
+    )
+    # The BU header should appear just above the first row of that BU
+    # We do this by drawing text at the first label of each BU group.
+    bu_label_map = (
+        df.sort_values("sort_key")
+        .groupby("bu")["label"]
+        .first()
+        .reset_index()
+    )
+
+    chart = (
+        alt.layer(bars, text)
+        .properties(
+            width="container",
+            height=max(400, len(df) * 20),
+        )
+        .configure_view(strokeWidth=0)
+        .configure_axis(labelFont="Arial", titleFont="Arial")
+        .configure_legend(labelFont="Arial")
+    )
+
+    return chart
 
 
-# ── UI card helpers ───────────────────────────────────────────────────────────
+# ── UI helpers ────────────────────────────────────────────────────────────────
 def _fw_card(col, icon: str, name: str, subtitle: str, bg: str) -> None:
     col.markdown(
         f"""
@@ -212,13 +214,11 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
 
 # ── render ────────────────────────────────────────────────────────────────────
 def render() -> None:
-    # Tighter padding for clean screenshots
     st.markdown(
         "<style>.block-container{padding-top:1rem;padding-bottom:0.5rem}</style>",
         unsafe_allow_html=True,
     )
 
-    # ── Title ─────────────────────────────────────────────────────────────────
     st.markdown(
         "<h2 style='text-align:center;font-family:Arial;font-weight:800;"
         "color:#1a1f36;margin-bottom:20px;letter-spacing:-0.5px'>"
@@ -226,7 +226,6 @@ def render() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Load data ─────────────────────────────────────────────────────────────
     with st.spinner("Loading…"):
         web_auto, all_auto = _load()
 
@@ -234,50 +233,53 @@ def render() -> None:
         st.warning("No automated data available. Click 🔄 Refresh.")
         return
 
-    smoke  = metrics.select_smoke(web_auto)
-    s_tot  = metrics.totals(smoke)
-    a_tot  = metrics.totals(all_auto)
+    smoke = metrics.select_smoke(web_auto)
+    s_tot = metrics.totals(smoke)
+    a_tot = metrics.totals(all_auto)
 
-    # ── Header row: framework cards + metrics ─────────────────────────────────
+    # ── Header: frameworks + metric badges ────────────────────────────────────
     c_fw1, c_fw2, _sp, c_m1, c_m2 = st.columns([2.3, 2.3, 0.15, 1.3, 1.3])
 
     _fw_card(c_fw1, "☕",
              "Java  /  Selenium  /  Cucumber",
              "Legacy framework used by aLab",
-             _BG_JAVA)
+             "#FFFBEC")
     _fw_card(c_fw2, "🤖",
              "TestIM",
              "AI powered test automation platform",
-             _BG_TESTIM)
-    _metric_badge(c_m1,
-                  f"+{s_tot['total']:,}",
-                  "Test Cases",
-                  "Smoke Suite")
-    _metric_badge(c_m2,
-                  f"+{a_tot['total']:,}",
-                  "Test Cases",
-                  "Total Count")
+             "#EBF2FF")
+    _metric_badge(c_m1, f"+{s_tot['total']:,}", "Test Cases", "Smoke Suite")
+    _metric_badge(c_m2, f"+{a_tot['total']:,}", "Test Cases", "Total Count")
 
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
 
-    # ── Section header ────────────────────────────────────────────────────────
+    # ── BU grouping headers + chart ───────────────────────────────────────────
     st.markdown(
         "<div style='font-family:Arial;font-weight:700;font-size:15px;"
         "color:#1a1f36;border-left:4px solid #ED7D31;"
-        "padding-left:10px;margin-bottom:6px'>"
+        "padding-left:10px;margin-bottom:8px'>"
         "📊 Automated Tests by Business Unit *</div>",
         unsafe_allow_html=True,
     )
 
-    # ── Chart ─────────────────────────────────────────────────────────────────
-    fig = _build_chart(all_auto)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    # BU group labels rendered as HTML above the chart
+    # (Altair doesn't support mixed bold/normal y-axis without a facet)
+    grp = (
+        all_auto.groupby(["bu", "country_label", "device"])["case_id"]
+        .nunique()
+        .reset_index(name="count")
+    )
+    present = set(grp["bu"].unique())
+    bus_present = [b for b in _BU_ORDER if b in present]
+    bus_present += sorted(b for b in present if b not in bus_present)
 
-    # ── Footer note ───────────────────────────────────────────────────────────
+    chart = _build_chart(all_auto)
+    st.altair_chart(chart, use_container_width=True)
+
     st.markdown(
-        "<div style='font-size:10.5px;color:#888;margin-top:4px'>"
-        "* Expanded count: one row per test case × country × device — "
-        "deduplicated within each (BU, country, device) combination."
+        "<div style='font-size:10.5px;color:#888;margin-top:2px'>"
+        "* One row per test case × country × device — "
+        "deduplicated within each (BU, country, device)."
         "</div>",
         unsafe_allow_html=True,
     )
