@@ -21,8 +21,8 @@ def _header() -> None:
     left, right = st.columns([4, 1])
     with left:
         st.markdown(
-            "<h1 style='margin:0'>🧪 Automation Coverage</h1>"
-            "<div style='color:#5e6677;font-size:14px'>"
+            "<h1 style='margin:0;padding:6px 0 2px;white-space:nowrap'>🧪 Automation Coverage</h1>"
+            "<div style='color:#5e6677;font-size:14px;padding-bottom:6px'>"
             "Live view of TestRail's automation coverage across Business Units."
             "</div>",
             unsafe_allow_html=True,

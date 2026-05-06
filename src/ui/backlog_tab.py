@@ -388,9 +388,7 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
 def render() -> None:
     st.subheader("📋 Backlog & Coverage")
     st.caption(
-        "Baseline: cases labelled big_regr_desktop / big_regr_mobile. "
-        "Main number = expanded rows (case × country × device). "
-        "Small number below = unique cases."
+        "Baseline: cases with the label 'big_regr_desktop' / 'big_regr_mobile'. "
     )
 
     with st.spinner("Computing backlog stats…"):
