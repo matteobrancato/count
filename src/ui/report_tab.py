@@ -88,7 +88,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
                       labelLimit=170, ticks=False, domain=False)
 
     bars = (
-        alt.Chart(df)
+        alt.Chart()
         .mark_bar(size=13, cornerRadiusEnd=3)
         .encode(
             x=alt.X("count:Q",
@@ -109,19 +109,20 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
         )
     )
 
-    # Text labels at end of each bar — filter zero counts to avoid clutter
+    # Text labels at end of each bar — transform_filter avoids clutter on zero bars
     text = (
-        alt.Chart(df[df["count"] > 0])
+        alt.Chart()
         .mark_text(align="left", dx=5, fontSize=9.5, color="#555555")
         .encode(
             x=alt.X("count:Q"),
             y=alt.Y("label:N", sort=y_sort),
             text=alt.Text("count:Q", format=","),
         )
+        .transform_filter(alt.datum.count > 0)
     )
 
     chart = (
-        alt.layer(bars, text)
+        alt.layer(bars, text, data=df)
         .properties(height=alt.Step(21))
         .facet(
             row=alt.Row(
@@ -211,7 +212,7 @@ def render() -> None:
     st.markdown(
         "<div style='font-family:Arial;font-weight:700;font-size:15px;"
         "color:#1a1f36;border-left:4px solid #ED7D31;padding-left:10px;margin-bottom:8px'>"
-        "📊 Automated Tests by Business Unit *</div>",
+        "📊 Automated Tests by Business Unit</div>",
         unsafe_allow_html=True,
     )
 
