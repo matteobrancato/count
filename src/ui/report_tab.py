@@ -215,25 +215,27 @@ def render() -> None:
 
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
 
-    st.markdown(
-        "<div style='font-family:Arial;font-weight:700;font-size:15px;"
-        "color:#1a1f36;border-left:4px solid #ED7D31;padding-left:10px;margin-bottom:8px'>"
-        "📊 Automated Tests by Business Unit</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Legend (HTML, outside chart to avoid overlap) ─────────────────────────
+    # ── Section header + legend on the same row ───────────────────────────────
     def _dot(color: str) -> str:
         return (f'<span style="display:inline-block;width:11px;height:11px;'
                 f'border-radius:2px;background:{color};margin-right:5px;'
                 f'vertical-align:middle"></span>')
 
-    st.markdown(
-        f'<div style="display:flex;gap:20px;font-family:Arial;font-size:12px;'
-        f'color:#1a1f36;margin-bottom:4px;margin-left:4px">'
+    legend_html = (
+        f'<div style="display:flex;align-items:center;gap:16px;'
+        f'font-family:Arial;font-size:12px;color:#1a1f36">'
         f'{_dot(_BLUE)}<span>Mobile</span>'
         f'{_dot(_ORANGE)}<span>Desktop</span>'
         f'{_dot(_GREY)}<span style="color:#888">Unspecified</span>'
+        f'</div>'
+    )
+    st.markdown(
+        f'<div style="display:flex;align-items:center;justify-content:space-between;'
+        f'margin-bottom:10px">'
+        f'<div style="font-family:Arial;font-weight:700;font-size:15px;color:#1a1f36;'
+        f'border-left:4px solid #ED7D31;padding-left:10px">'
+        f'📊 Automated Tests by Business Unit</div>'
+        f'{legend_html}'
         f'</div>',
         unsafe_allow_html=True,
     )
