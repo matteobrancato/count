@@ -140,6 +140,89 @@ def _calc_expander(rules: list, auto_df: pd.DataFrame) -> None:
         st.dataframe(pd.DataFrame(tbl), use_container_width=True, hide_index=True)
 
 
+# ------------------------------------------------------------------ suite status breakdown
+def _suite_status(raw: pd.DataFrame, rules: list, key_prefix: str) -> None:
+    """Status distribution across ALL cases in this BU's suite (country-filtered)."""
+    st.markdown("#### 📋 Status by country")
+    if raw.empty:
+        return
+
+    # Determine country column (multi_countries vs country_coverage)
+    country_col = "multi_countries"
+    for r in rules:
+        if getattr(r, "country_field_label", "multi_countries") == "custom_country_coverage":
+            country_col = "country_coverage"
+            break
+
+    # Build token → display-label map
+    token_label: dict[str, str] = {}
+    for r in rules:
+        for tok in (r.countries_filter or []):
+            token_label[tok] = r.country_labels.get(tok, tok)
+    all_tokens = set(token_label)
+
+    df = raw.copy()
+    n_total = len(df)
+    if all_tokens and country_col in df.columns:
+        df["_ctry"] = df[country_col].apply(
+            lambda mc: list({
+                token_label[t]
+                for t in (mc if isinstance(mc, list) else [])
+                if t in all_tokens
+            })
+        )
+        n_excluded = int((df["_ctry"].map(len) == 0).sum())
+        df = df[df["_ctry"].map(len) > 0]
+    else:
+        df["_ctry"] = [["(all)"]] * len(df)
+        n_excluded = 0
+
+    if df.empty:
+        st.info("No cases with a matching country token.")
+        return
+
+    df = df.explode("_ctry")
+    df["Country"] = df["_ctry"].map(lambda c: COUNTRY_NAMES.get(c, c))
+
+    n_shown = df["case_id"].nunique()
+    if n_excluded:
+        st.caption(
+            f"Showing {n_shown:,} of {n_total:,} cases — "
+            f"{n_excluded:,} belong to other BUs sharing this suite "
+            f"(no matching token in `{country_col}`)."
+        )
+
+    status_cols = {
+        c[len("status_"):]: c
+        for c in df.columns
+        if c.startswith("status_") and df[c].notna().any()
+    }
+    if not status_cols:
+        st.info("No status fields found.")
+        return
+
+    sel = st.selectbox("Status field", list(status_cols.keys()), key=f"{key_prefix}_ss_field")
+    raw_col = status_cols[sel]
+
+    grp = (
+        df.assign(_s=df[raw_col].fillna("(not set)"))
+        .groupby(["Country", "_s"])["case_id"]
+        .nunique()
+        .reset_index(name="Cases")
+        .rename(columns={"_s": sel})
+    )
+    try:
+        pv = pd.pivot_table(
+            grp, values="Cases",
+            index="Country", columns=sel,
+            aggfunc="sum", fill_value=0,
+            margins=True, margins_name="Total",
+        )
+        st.dataframe(pv, use_container_width=True)
+    except Exception as exc:
+        st.error(f"Pivot error: {exc}")
+
+
 # ------------------------------------------------------------------ KPI row
 def _kpi_row(raw: pd.DataFrame, auto_dedup: pd.DataFrame) -> None:
     non_dep = raw[~raw["deprecated"]] if not raw.empty else raw
@@ -401,7 +484,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     n_cases = detail["case_id"].nunique()
     n_rows  = len(detail)
     if n_rows == n_cases:
-        st.caption(f"{n_cases:,} automated test cases")
+        st.caption(f"{n_cases:,} unique automated test cases")
     else:
         st.caption(f"{n_rows:,} rows")
 
@@ -444,6 +527,9 @@ def render() -> None:
     filtered_auto = _auto_filters(auto_all, key_prefix=f"t1_{bu_key}")
     _pivot_builder(filtered_auto, key_prefix=f"t1_{bu_key}",
                    default_rows=pv_rows, default_cols=pv_cols)
+    st.divider()
+
+    _suite_status(raw, rules, key_prefix=f"t1_{bu_key}")
     st.divider()
 
     # ---- Test list
