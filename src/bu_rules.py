@@ -82,7 +82,7 @@ def _testim_pair(
 ) -> list[Rule]:
 
     if type_filter is None:
-        type_filter = ["Regression"]
+        type_filter = []  # No type restriction — big_regr labels define the baseline
     shared = dict(
         bu=bu, scope=scope, suite_id=suite_id,
         automated_values=list(AUTOMATED_TESTIM),
