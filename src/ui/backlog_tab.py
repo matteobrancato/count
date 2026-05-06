@@ -405,6 +405,10 @@ def _status_detail(
     tab_status, tab_gap = st.tabs(["Status by country", "Automated not in baseline"])
 
     # ── Country expansion for raw cases ──────────────────────────────────────
+    # Uses the same token-filter logic as _expand_baseline so only cases
+    # belonging to THIS BU's country tokens are shown.  Cases with no matching
+    # token are from other BUs sharing the same TestRail suite — they are
+    # excluded here (same behaviour as the baseline/Explorer counts).
     country_col = _pick_country_col(rules)
     token_label: dict[str, str] = {}
     for rule in rules:
@@ -413,22 +417,33 @@ def _status_detail(
     all_tokens = set(token_label)
 
     df = raw.copy()
+    n_total_raw = len(df)
     if all_tokens and country_col in df.columns:
         df["_ctry"] = df[country_col].apply(
             lambda mc: list({
                 token_label[t]
                 for t in (mc if isinstance(mc, list) else [])
                 if t in all_tokens
-            }) or ["(no country)"]
+            })
         )
+        n_excluded = int((df["_ctry"].map(len) == 0).sum())
+        df = df[df["_ctry"].map(len) > 0]   # keep only BU-matched cases
     else:
         df["_ctry"] = [["(all)"]] * len(df)
+        n_excluded = 0
 
     df = df.explode("_ctry")
     df["Country"] = df["_ctry"].map(lambda c: COUNTRY_NAMES.get(c, c))
 
     # ── Tab 1: status pivot ───────────────────────────────────────────────────
     with tab_status:
+        if n_excluded:
+            st.caption(
+                f"Showing {len(df['case_id'].unique()):,} of {n_total_raw:,} cases in this suite. "
+                f"{n_excluded:,} excluded — they belong to other BUs sharing suite "
+                f"{rules[0].suite_id if rules else '?'} but don't have this BU's country token "
+                f"(`{country_col}` field)."
+            )
         status_cols = {
             c[len("status_"):]: c
             for c in df.columns
