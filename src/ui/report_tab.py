@@ -130,7 +130,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
         alt.layer(bars, text, data=df)
         .properties(height=alt.Step(21))
         .facet(
-            row=alt.Row(
+            facet=alt.Facet(
                 "bu:N",
                 sort=bus,
                 header=alt.Header(
@@ -143,7 +143,8 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
                     labelFont="Arial",
                     labelPadding=10,
                 ),
-            )
+            ),
+            columns=2,
         )
         .resolve_scale(y="independent", x="shared")
         .configure_view(stroke="#e8e8e8", strokeWidth=1)
