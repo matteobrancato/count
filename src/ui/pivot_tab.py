@@ -81,6 +81,65 @@ def _apply_display_values(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ------------------------------------------------------------------ calculation expander
+def _calc_expander(rules: list, auto_df: pd.DataFrame) -> None:
+    """Collapsible 'how are these numbers calculated?' section."""
+    with st.expander("ℹ️ How are these numbers calculated?", expanded=False):
+
+        st.markdown(
+            "A test case is counted as **Automated** when **all** of the following are true:\n"
+            "1. Its automation status field contains one of the *automated values* for its rule\n"
+            "2. Its country token appears in the rule's country filter\n"
+            "3. It is **not deprecated**\n\n"
+            "**Expansion:** a case covering N countries generates N rows (one per country). "
+            "TestIM Desktop and TestIM Mobile are separate rules, so a case that is automated "
+            "for both adds one Desktop row **and** one Mobile row.\n\n"
+            "**Deduplication:** each *(case_id, country, device)* combination is counted only once "
+            "— if two rules match the same case/country/device the row is not double-counted."
+        )
+
+        # Per-rule row counts from the auto DataFrame
+        if not auto_df.empty and "rule_name" in auto_df.columns:
+            st.markdown("**Rows contributed by each rule (before deduplication):**")
+            rule_counts = (
+                auto_df.groupby(["rule_name", "framework", "country_label", "device"])
+                .size()
+                .reset_index(name="Rows")
+                .sort_values(["rule_name", "country_label", "device"])
+            )
+            rule_counts["Framework"] = rule_counts["framework"].map(FRAMEWORK_LABELS).fillna(rule_counts["framework"])
+            rule_counts["Country"]   = rule_counts["country_label"].map(
+                lambda c: COUNTRY_NAMES.get(c, c)
+            )
+            st.dataframe(
+                rule_counts[["rule_name", "Framework", "Country", "device", "Rows"]]
+                .rename(columns={"rule_name": "Rule", "device": "Device"}),
+                use_container_width=True, hide_index=True,
+            )
+            total_before = int(rule_counts["Rows"].sum())
+            total_after  = len(auto_df)
+            if total_before != total_after:
+                st.caption(
+                    f"Before dedup: {total_before:,} rows → "
+                    f"after dedup on (case_id, country, device): **{total_after:,} rows**"
+                )
+
+        st.markdown("**Rules configured for this BU:**")
+        fw_label = {"java": "Java", "testim_desktop": "TestIM Desktop",
+                    "testim_mobile": "TestIM Mobile", "mobile_app": "Mobile App"}
+        tbl = []
+        for r in rules:
+            countries = ", ".join(r.country_labels.get(t, t) for t in r.countries_filter) or "all"
+            tbl.append({
+                "Rule":            r.name,
+                "Framework":       fw_label.get(r.framework, r.framework),
+                "Status field":    r.status_field_label,
+                "Countries":       countries,
+                "Automated values": ", ".join(r.automated_values),
+            })
+        st.dataframe(pd.DataFrame(tbl), use_container_width=True, hide_index=True)
+
+
 # ------------------------------------------------------------------ KPI row
 def _kpi_row(raw: pd.DataFrame, auto_dedup: pd.DataFrame) -> None:
     non_dep = raw[~raw["deprecated"]] if not raw.empty else raw
@@ -381,6 +440,7 @@ def render() -> None:
     else:
         pv_rows, pv_cols = ["Device"], ["Framework", "Country"]
 
+    _calc_expander(rules, auto_all)
     filtered_auto = _auto_filters(auto_all, key_prefix=f"t1_{bu_key}")
     _pivot_builder(filtered_auto, key_prefix=f"t1_{bu_key}",
                    default_rows=pv_rows, default_cols=pv_cols)

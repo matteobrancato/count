@@ -391,6 +391,123 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
         st.error(f"Pivot error: {exc}")
 
 
+def _status_detail(
+    raw: pd.DataFrame,
+    auto: pd.DataFrame,
+    expanded: pd.DataFrame,
+    rules: list,
+    key_prefix: str,
+) -> None:
+    """Two-tab section: (1) status × country pivot for all raw cases,
+    (2) automated cases missing from the regression baseline."""
+    st.markdown("##### 📋 Status detail")
+
+    tab_status, tab_gap = st.tabs(["Status by country", "Automated not in baseline"])
+
+    # ── Country expansion for raw cases ──────────────────────────────────────
+    country_col = _pick_country_col(rules)
+    token_label: dict[str, str] = {}
+    for rule in rules:
+        for tok in (rule.countries_filter or []):
+            token_label[tok] = rule.country_labels.get(tok, tok)
+    all_tokens = set(token_label)
+
+    df = raw.copy()
+    if all_tokens and country_col in df.columns:
+        df["_ctry"] = df[country_col].apply(
+            lambda mc: list({
+                token_label[t]
+                for t in (mc if isinstance(mc, list) else [])
+                if t in all_tokens
+            }) or ["(no country)"]
+        )
+    else:
+        df["_ctry"] = [["(all)"]] * len(df)
+
+    df = df.explode("_ctry")
+    df["Country"] = df["_ctry"].map(lambda c: COUNTRY_NAMES.get(c, c))
+
+    # ── Tab 1: status pivot ───────────────────────────────────────────────────
+    with tab_status:
+        status_cols = {
+            c[len("status_"):]: c
+            for c in df.columns
+            if c.startswith("status_") and df[c].notna().any()
+        }
+        if not status_cols:
+            st.info("No status fields found.")
+        else:
+            sel = st.selectbox(
+                "Status field", list(status_cols.keys()), key=f"{key_prefix}_field"
+            )
+            raw_col = status_cols[sel]
+            grp = (
+                df.assign(_s=df[raw_col].fillna("(not set)"))
+                .groupby(["Country", "_s"])["case_id"]
+                .nunique()
+                .reset_index(name="Cases")
+                .rename(columns={"_s": sel})
+            )
+            try:
+                pv = pd.pivot_table(
+                    grp, values="Cases",
+                    index="Country", columns=sel,
+                    aggfunc="sum", fill_value=0,
+                    margins=True, margins_name="Total",
+                )
+                st.dataframe(pv, use_container_width=True)
+            except Exception as exc:
+                st.error(f"Pivot error: {exc}")
+
+    # ── Tab 2: automated cases not in the regression baseline ─────────────────
+    with tab_gap:
+        if auto.empty or expanded.empty:
+            st.info("No data available.")
+            return
+
+        auto_keys = auto[["case_id", "country_label", "device"]].drop_duplicates()
+        base_keys = expanded[["case_id", "country_label", "device"]].drop_duplicates()
+
+        gap = auto_keys.merge(
+            base_keys.assign(_in_base=True),
+            on=["case_id", "country_label", "device"],
+            how="left",
+        )
+        gap = gap[gap["_in_base"].isna()].drop(columns=["_in_base"])
+
+        if gap.empty:
+            st.success("All automated cases are covered by the regression baseline. ✓")
+            return
+
+        n_unique = int(gap["case_id"].nunique())
+        st.caption(
+            f"{n_unique} automated case{'s' if n_unique != 1 else ''} "
+            "not tagged with big_regr_desktop / big_regr_mobile"
+        )
+        detail = (
+            gap.merge(
+                raw[["case_id", "title", "url"]].drop_duplicates("case_id"),
+                on="case_id", how="left",
+            )
+            .rename(columns={
+                "case_id": "ID", "country_label": "Country",
+                "device": "Device", "title": "Title", "url": "URL",
+            })
+        )
+        detail["Country"] = detail["Country"].map(lambda c: COUNTRY_NAMES.get(c, c))
+        st.dataframe(
+            detail[["ID", "Title", "Country", "Device", "URL"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "URL":    st.column_config.LinkColumn("Link", display_text="Open ↗"),
+                "ID":     st.column_config.NumberColumn(width="small"),
+                "Title":  st.column_config.TextColumn(width="large"),
+                "Device": st.column_config.TextColumn(width="small"),
+            },
+        )
+
+
 def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
     if scope not in scope_data:
         st.info("No data loaded for this scope.")
@@ -440,6 +557,65 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
         f"**Not Applicable:** `{s['na_pct']:.1f}%`",
         unsafe_allow_html=True,
     )
+
+    # ── Calculation explanation ───────────────────────────────────────────────
+    with st.expander("ℹ️ How are these numbers calculated?", expanded=False):
+        st.markdown(
+            "**Baseline** — all cases tagged with the TestRail label "
+            "`big_regr_desktop` and/or `big_regr_mobile` (non-deprecated, matching the BU's country filter).\n\n"
+            "Each label generates one device row per matched country:\n"
+            "- `big_regr_desktop` → **Desktop** row\n"
+            "- `big_regr_mobile` → **Mobile** row\n"
+            "- Both labels → **Desktop + Mobile** rows (case counted twice)\n\n"
+            "**Categories assigned after expansion:**\n"
+            "| Category | Condition |\n"
+            "|---|---|\n"
+            "| **Automated** | Case appears in the Explorer's automated output (status = Automated / Automated DEV / UAT / Prod) |\n"
+            "| **Backlog** | In baseline, NOT automated, NOT *Automation not applicable* |\n"
+            "| **Not Applicable** | Status = *Automation not applicable* in the device-specific field |\n\n"
+            "**Numbers shown:** large = expanded rows (case × country × device); "
+            "small caption = unique case IDs.\n\n"
+            "**Coverage vs total** = Automated ÷ Total baseline.  \n"
+            "**Coverage vs automatable** = Automated ÷ (Automated + Backlog) — excludes N/A from denominator."
+        )
+
+        # Per-rule table
+        fw_label = {"java": "Java", "testim_desktop": "TestIM Desktop",
+                    "testim_mobile": "TestIM Mobile", "mobile_app": "Mobile App"}
+        tbl = []
+        for r in rules:
+            countries = ", ".join(r.country_labels.get(t, t) for t in r.countries_filter) or "all"
+            tbl.append({
+                "Rule":         r.name,
+                "Framework":    fw_label.get(r.framework, r.framework),
+                "Status field": r.status_field_label,
+                "Countries":    countries,
+            })
+        if tbl:
+            st.markdown("**Rules active for this BU:**")
+            st.dataframe(pd.DataFrame(tbl), use_container_width=True, hide_index=True)
+
+        # Baseline composition — how many cases per label combination
+        if "labels" in raw.columns:
+            has_desk = raw["labels"].apply(
+                lambda ls: _LABEL_DESKTOP in ls if isinstance(ls, list) else False
+            )
+            has_mob = raw["labels"].apply(
+                lambda ls: _LABEL_MOBILE in ls if isinstance(ls, list) else False
+            )
+            n_desk_only = int((has_desk & ~has_mob).sum())
+            n_mob_only  = int((~has_desk & has_mob).sum())
+            n_both      = int((has_desk & has_mob).sum())
+            n_neither   = int((~has_desk & ~has_mob).sum())
+            st.markdown("**Label distribution across all cases in this BU's suite:**")
+            label_df = pd.DataFrame([
+                {"Label(s)": "big_regr_desktop only",        "Cases": n_desk_only},
+                {"Label(s)": "big_regr_mobile only",         "Cases": n_mob_only},
+                {"Label(s)": "Both labels",                  "Cases": n_both},
+                {"Label(s)": "Neither (not in baseline)",    "Cases": n_neither},
+            ])
+            st.dataframe(label_df, use_container_width=True, hide_index=True)
+
     st.divider()
 
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
@@ -464,6 +640,11 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
     # ── Pivot ─────────────────────────────────────────────────────────────────
     bu_key = bu.lower().replace(" ", "_")
     _baseline_pivot(expanded, key_prefix=f"bl_{bu_key}_{scope}")
+
+    st.divider()
+
+    # ── Status detail ─────────────────────────────────────────────────────────
+    _status_detail(raw, auto, expanded, rules, key_prefix=f"sd_{bu_key}_{scope}")
 
 
 # ── render ────────────────────────────────────────────────────────────────────
