@@ -77,7 +77,7 @@ def _testim_pair(
     implicit_country: str | None = None,
     scope: Scope = "website",
     type_filter: list[str] | None = None,
-    country_field_label: str = "multi_countries",
+    country_field_label: str = "Testim Country Coverage",
     country_fallback_field_label: str | None = None,
 ) -> list[Rule]:
 
@@ -292,7 +292,7 @@ def build_rules() -> list[Rule]:
     # ==================================================================== Drogas
     # Java: "Automation Status DRG" → custom_automation_status_wtctr_spr
     #   DEV/UAT labels differ from other BUs: 8=Automated Dev only, 9=Automated UAT only
-    # TestIM: standard TestIM Desktop + Mobile fields + LV/LT in multi_countries
+    # TestIM: standard TestIM Desktop + Mobile fields + LV/LT in Testim Country Coverage
     # Slide labels: "LT", "LV"
     DRG_SUITE     = 16093
     DRG_TOKENS    = ["LV", "LT", "RU"]          # RU = second Latvia locale
