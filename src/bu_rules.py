@@ -279,13 +279,15 @@ def build_rules() -> list[Rule]:
                           country_labels=TPS_LABELS)
 
     # ==================================================================== Watsons
-    # Suite 7544 is shared across BUs — token "WTR" in Testim Country Coverage identifies
-    # Watsons cases.  multi_countries uses both "WTR" and "WTR_SPR" on the same cases,
-    # so "WTR" works for both fields.
-    # Slide label: "TR" (Turkey).
+    # Suite 7544 is shared across BUs.
+    # Token convention is asymmetric across fields:
+    #   - Testim Country Coverage : only "WTR"            → drives automated match
+    #   - multi_countries         : "WTR" and/or "WTR_SPR" → drives backlog baseline
+    # Listing both tokens covers cases that have only WTR_SPR in multi_countries.
+    # Both map to slide label "TR" (Turkey).
     WTR_SUITE  = 7544
-    WTR_TOKENS = ["WTR"]
-    WTR_LABELS = {"WTR": "TR"}
+    WTR_TOKENS = ["WTR", "WTR_SPR"]
+    WTR_LABELS = {"WTR": "TR", "WTR_SPR": "TR"}
     rules += _testim_pair("Watsons", "WTR", WTR_SUITE, WTR_TOKENS,
                           country_labels=WTR_LABELS,
                           implicit_country="TR")
