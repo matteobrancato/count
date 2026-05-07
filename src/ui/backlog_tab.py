@@ -441,64 +441,6 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Calculation explanation ───────────────────────────────────────────────
-    with st.expander("ℹ️ How are these numbers calculated?", expanded=False):
-        st.markdown(
-            "**Baseline** — all cases tagged with the TestRail label "
-            "`big_regr_desktop` and/or `big_regr_mobile` (non-deprecated, matching the BU's country filter).\n\n"
-            "Each label generates one device row per matched country:\n"
-            "- `big_regr_desktop` → **Desktop** row\n"
-            "- `big_regr_mobile` → **Mobile** row\n"
-            "- Both labels → **Desktop + Mobile** rows (case counted twice)\n\n"
-            "**Categories assigned after expansion:**\n"
-            "| Category | Condition |\n"
-            "|---|---|\n"
-            "| **Automated** | Case appears in the Explorer's automated output (status = Automated / Automated DEV / UAT / Prod) |\n"
-            "| **Backlog** | In baseline, NOT automated, NOT *Automation not applicable* |\n"
-            "| **Not Applicable** | Status = *Automation not applicable* in the device-specific field |\n\n"
-            "**Numbers shown:** large = expanded rows (case × country × device); "
-            "small caption = unique case IDs.\n\n"
-            "**Coverage vs total** = Automated ÷ Total baseline.  \n"
-            "**Coverage vs automatable** = Automated ÷ (Automated + Backlog) — excludes N/A from denominator."
-        )
-
-        # Per-rule table
-        fw_label = {"java": "Java", "testim_desktop": "TestIM Desktop",
-                    "testim_mobile": "TestIM Mobile", "mobile_app": "Mobile App"}
-        tbl = []
-        for r in rules:
-            countries = ", ".join(r.country_labels.get(t, t) for t in r.countries_filter) or "all"
-            tbl.append({
-                "Rule":         r.name,
-                "Framework":    fw_label.get(r.framework, r.framework),
-                "Status field": r.status_field_label,
-                "Countries":    countries,
-            })
-        if tbl:
-            st.markdown("**Rules active for this BU:**")
-            st.dataframe(pd.DataFrame(tbl), use_container_width=True, hide_index=True)
-
-        # Baseline composition — how many cases per label combination
-        if "labels" in raw.columns:
-            has_desk = raw["labels"].apply(
-                lambda ls: _LABEL_DESKTOP in ls if isinstance(ls, list) else False
-            )
-            has_mob = raw["labels"].apply(
-                lambda ls: _LABEL_MOBILE in ls if isinstance(ls, list) else False
-            )
-            n_desk_only = int((has_desk & ~has_mob).sum())
-            n_mob_only  = int((~has_desk & has_mob).sum())
-            n_both      = int((has_desk & has_mob).sum())
-            n_neither   = int((~has_desk & ~has_mob).sum())
-            st.markdown("**Label distribution across all cases in this BU's suite:**")
-            label_df = pd.DataFrame([
-                {"Label(s)": "big_regr_desktop only",        "Cases": n_desk_only},
-                {"Label(s)": "big_regr_mobile only",         "Cases": n_mob_only},
-                {"Label(s)": "Both labels",                  "Cases": n_both},
-                {"Label(s)": "Neither (not in baseline)",    "Cases": n_neither},
-            ])
-            st.dataframe(label_df, use_container_width=True, hide_index=True)
-
     st.divider()
 
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
