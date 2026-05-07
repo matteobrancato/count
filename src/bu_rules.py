@@ -235,7 +235,7 @@ def build_rules() -> list[Rule]:
     rules.append(Rule(
         name="SD JAVA", bu="Superdrug", scope="website", framework="java",
         suite_id=SD_SUITE,
-        status_field_label="Automation Status SD",
+        status_field_label="Automation Status",
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=["SD"],
         country_labels={"SD": "GB"},
