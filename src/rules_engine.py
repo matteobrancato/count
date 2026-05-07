@@ -60,7 +60,10 @@ def _get_country_tokens(
     if not meta and field_label == "Country Validation":
         meta = reg.field("custom_country_validation")
     if not meta and field_label == "Testim Country Coverage":
-        meta = reg.field("custom_case_country_coverage_testim")
+        meta = (
+            reg.field("custom_case_country_coverage_testim")
+            or reg.field("custom_case_testim_country_coverage")
+        )
     if not meta:
         return []
     raw = case.get(meta.system_name)
