@@ -85,6 +85,9 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
     """Aggregate and annotate data for the Altair chart, split by regression flag.
 
     One row per (bu, country, device, category) where category ∈ {Regression, Other}.
+    A 'total' column is set on exactly one row per (bu, country, device) so that
+    the text mark renders the count once at the end of each stacked bar (the other
+    rows carry total=0 and are removed via transform_filter).
     """
     if "is_regression" not in auto.columns:
         auto = auto.assign(is_regression=False)
@@ -96,6 +99,11 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
     )
     grp["category"]      = grp["is_regression"].map({True: "Regression", False: "Other"}).fillna("Other")
     grp["category_rank"] = grp["category"].map({"Regression": 0, "Other": 1}).astype(int)
+
+    # One row per group carries the total — used by the text layer.
+    totals_per_group = grp.groupby(["bu", "country_label", "device"])["count"].transform("sum")
+    is_first         = ~grp.duplicated(subset=["bu", "country_label", "device"], keep="first")
+    grp["total"]     = totals_per_group.where(is_first, 0)
 
     # Sort country alphabetically per BU
     grp["ctry_rank"] = (
@@ -127,13 +135,6 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
 
     df = _prepare_chart_data(auto, bus)
 
-    # Pre-aggregate totals per row for the count label at the end of each bar.
-    totals = (
-        df.groupby(["bu", "country", "device", "label", "sort_key"], as_index=False)
-        ["count"].sum()
-        .rename(columns={"count": "total"})
-    )
-
     # Sort y-axis per-facet by sort_key (field-based, no global list).
     y_sort = alt.EncodingSortField(field="sort_key", order="ascending")
 
@@ -146,7 +147,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
                       labelLimit=170, ticks=False, domain=False)
 
     bars = (
-        alt.Chart(df)
+        alt.Chart()
         .mark_bar(size=13, cornerRadiusEnd=3)
         .encode(
             x=alt.X("count:Q",
@@ -171,9 +172,9 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
         )
     )
 
-    # Text labels at end of each stacked bar — uses pre-aggregated totals.
+    # Text label at end of each stacked bar — only the row with total>0 renders.
     text = (
-        alt.Chart(totals)
+        alt.Chart()
         .mark_text(align="left", dx=5, fontSize=9.5, color="#555555")
         .encode(
             x=alt.X("total:Q"),
@@ -184,7 +185,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
     )
 
     chart = (
-        alt.layer(bars, text)
+        alt.layer(bars, text, data=df)
         .properties(height=alt.Step(21))
         .facet(
             facet=alt.Facet(
