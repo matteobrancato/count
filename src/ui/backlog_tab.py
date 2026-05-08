@@ -176,11 +176,14 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     raw = raw.explode("_label_devs").rename(columns={"_label_devs": "device_exp"})
 
     # ── Device-specific re-classification (TestIM) ───────────────────────────
-    # Problem: a case with Desktop="Ready to be automated" + Mobile="Automation not
-    # applicable" gets combined na_mask=True → _cat_base="not_applicable" for BOTH
-    # device rows, which wrongly excludes it from the Desktop backlog.
-    # Fix: after expansion, overwrite _cat_base for Desktop/Mobile rows using only
-    # the device-specific status column so each device is judged independently.
+    # Problem 1: a case with Desktop="Ready" + Mobile="N/A" gets combined na_mask=True
+    # → _cat_base="not_applicable" for BOTH device rows, wrongly excluding it from
+    # the Desktop backlog.
+    # Problem 2: a Java case with Automation Status="Not automated" but TestIM field
+    # empty would be reset to "unknown" and lost from backlog.
+    # Fix: re-classify a device row using its TestIM-specific status field ONLY when
+    # that field is actually populated.  If empty (default / never set), keep the
+    # initial classification based on combined status fields (which captures Java).
     _DEVICE_STATUS_COL = {
         "Desktop": "status_Automation Status Testim Desktop",
         "Mobile":  "status_Automation Status Testim Mobile View",
@@ -191,14 +194,14 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
         dev_mask = raw["device_exp"] == dev
         if not dev_mask.any():
             continue
-        col_vals = raw[scol]  # full column — index-aligned with raw
-        raw.loc[dev_mask, "_cat_base"] = "unknown"
-        raw.loc[dev_mask & col_vals.isin(_STATUS_NA), "_cat_base"] = "not_applicable"
+        col_vals = raw[scol]
+        has_value = col_vals.notna() & (col_vals != "")
+        # Only reclassify rows where the device-specific TestIM field has a value.
+        raw.loc[dev_mask & has_value & col_vals.isin(_STATUS_NA), "_cat_base"] = "not_applicable"
         raw.loc[
             dev_mask
-            & col_vals.notna()
-            & ~col_vals.isin(_STATUS_AUTO | _STATUS_NA)
-            & (col_vals != ""),
+            & has_value
+            & ~col_vals.isin(_STATUS_AUTO | _STATUS_NA),
             "_cat_base",
         ] = "backlog"
 
