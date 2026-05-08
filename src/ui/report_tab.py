@@ -22,8 +22,38 @@ _BU_ORDER = [
 
 
 # ── data loading (shares evaluate_rules cache with other tabs) ────────────────
+def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
+    """Add `is_regression` column based on big_regr_* labels matched to row's device."""
+    if auto.empty:
+        return auto
+    if raw.empty or "labels" not in raw.columns:
+        return auto.assign(is_regression=False)
+
+    case_labels = raw[["case_id", "labels"]].drop_duplicates(subset=["case_id"]).copy()
+    case_labels["has_desk"] = case_labels["labels"].apply(
+        lambda ls: "big_regr_desktop" in ls if isinstance(ls, list) else False
+    )
+    case_labels["has_mob"] = case_labels["labels"].apply(
+        lambda ls: "big_regr_mobile" in ls if isinstance(ls, list) else False
+    )
+    out  = auto.merge(case_labels[["case_id", "has_desk", "has_mob"]],
+                      on="case_id", how="left")
+    desk = out["has_desk"].fillna(False)
+    mob  = out["has_mob"].fillna(False)
+    out["is_regression"] = (
+        ((out["device"] == "Desktop") & desk) |
+        ((out["device"] == "Mobile")  & mob)  |
+        ((out["device"] == "Unspecified") & (desk | mob))
+    )
+    return out.drop(columns=["has_desk", "has_mob"])
+
+
 def _load() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (website_auto, all_auto) deduplicated on (bu, country, device, case_id)."""
+    """Return (website_auto, all_auto) deduplicated on (bu, country, device, case_id).
+
+    Each frame carries an `is_regression` boolean derived from big_regr_* labels,
+    so the chart can stack regression vs other automated cases.
+    """
     frames_all: list[pd.DataFrame] = []
     frames_web: list[pd.DataFrame] = []
 
@@ -34,9 +64,10 @@ def _load() -> tuple[pd.DataFrame, pd.DataFrame]:
         result = evaluate_rules(tuple(r.name for r in rules))
         if result.automated.empty:
             continue
-        frames_all.append(result.automated)
+        auto = _add_regression_flag(result.automated, result.raw_cases)
+        frames_all.append(auto)
         if scope == "website":
-            frames_web.append(result.automated)
+            frames_web.append(auto)
 
     def _dedup(frames: list[pd.DataFrame]) -> pd.DataFrame:
         if not frames:
@@ -51,13 +82,22 @@ def _load() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 # ── chart ─────────────────────────────────────────────────────────────────────
 def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
-    """Aggregate and annotate data for the Altair chart."""
+    """Aggregate and annotate data for the Altair chart, split by regression flag.
+
+    One row per (bu, country, device, category) where category ∈ {Regression, Other}.
+    """
+    if "is_regression" not in auto.columns:
+        auto = auto.assign(is_regression=False)
+
     grp = (
-        auto.groupby(["bu", "country_label", "device"])["case_id"]
+        auto.groupby(["bu", "country_label", "device", "is_regression"])["case_id"]
         .nunique()
         .reset_index(name="count")
     )
-    # Assign sort keys vectorised
+    grp["category"]      = grp["is_regression"].map({True: "Regression", False: "Other"}).fillna("Other")
+    grp["category_rank"] = grp["category"].map({"Regression": 0, "Other": 1}).astype(int)
+
+    # Sort country alphabetically per BU
     grp["ctry_rank"] = (
         grp.groupby("bu")["country_label"]
         .transform(lambda s: s.map({c: i for i, c in enumerate(sorted(s.unique()))}))
@@ -70,22 +110,31 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
         else r["device"].lower() + " " + r["country_label"],
         axis=1,
     )
-    grp["bu_rank"]   = grp["bu"].map({b: i for i, b in enumerate(bus)})
+    grp["bu_rank"] = grp["bu"].map({b: i for i, b in enumerate(bus)})
 
     return grp.rename(columns={"country_label": "country"})
 
 
 def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
-    """Return (faceted Altair chart, ordered BU list)."""
+    """Return (faceted Altair chart, ordered BU list).
+
+    Each bar is stacked: solid segment = regression baseline, faded = other.
+    Total count is shown as text at the end of the stacked bar.
+    """
     present = set(auto["bu"].unique())
     bus = [b for b in _BU_ORDER if b in present]
     bus += sorted(b for b in present if b not in bus)
 
     df = _prepare_chart_data(auto, bus)
 
+    # Pre-aggregate totals per row for the count label at the end of each bar.
+    totals = (
+        df.groupby(["bu", "country", "device", "label", "sort_key"], as_index=False)
+        ["count"].sum()
+        .rename(columns={"count": "total"})
+    )
+
     # Sort y-axis per-facet by sort_key (field-based, no global list).
-    # A global label list would contain duplicates (same country code in multiple BUs)
-    # and cause Altair to bleed data across facet panels.
     y_sort = alt.EncodingSortField(field="sort_key", order="ascending")
 
     color_scale = alt.Scale(
@@ -97,37 +146,45 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
                       labelLimit=170, ticks=False, domain=False)
 
     bars = (
-        alt.Chart()
+        alt.Chart(df)
         .mark_bar(size=13, cornerRadiusEnd=3)
         .encode(
             x=alt.X("count:Q",
+                    stack="zero",
                     axis=alt.Axis(title=None, grid=True, gridColor="#f0f0f0",
                                   tickCount=5, labelFontSize=10, domain=False)),
             y=alt.Y("label:N", sort=y_sort, axis=y_axis),
             color=alt.Color("device:N", scale=color_scale, legend=None),
+            opacity=alt.Opacity(
+                "category:N",
+                scale=alt.Scale(domain=["Regression", "Other"], range=[1.0, 0.40]),
+                legend=None,
+            ),
+            order=alt.Order("category_rank:Q", sort="ascending"),
             tooltip=[
-                alt.Tooltip("bu:N",      title="BU"),
-                alt.Tooltip("country:N", title="Country"),
-                alt.Tooltip("device:N",  title="Device"),
-                alt.Tooltip("count:Q",   title="Automated", format=","),
+                alt.Tooltip("bu:N",       title="BU"),
+                alt.Tooltip("country:N",  title="Country"),
+                alt.Tooltip("device:N",   title="Device"),
+                alt.Tooltip("category:N", title="Type"),
+                alt.Tooltip("count:Q",    title="Count", format=","),
             ],
         )
     )
 
-    # Text labels at end of each bar — transform_filter avoids clutter on zero bars
+    # Text labels at end of each stacked bar — uses pre-aggregated totals.
     text = (
-        alt.Chart()
+        alt.Chart(totals)
         .mark_text(align="left", dx=5, fontSize=9.5, color="#555555")
         .encode(
-            x=alt.X("count:Q"),
+            x=alt.X("total:Q"),
             y=alt.Y("label:N", sort=y_sort),
-            text=alt.Text("count:Q", format=","),
+            text=alt.Text("total:Q", format=","),
         )
-        .transform_filter(alt.datum.count > 0)
+        .transform_filter(alt.datum.total > 0)
     )
 
     chart = (
-        alt.layer(bars, text, data=df)
+        alt.layer(bars, text)
         .properties(height=alt.Step(21))
         .facet(
             facet=alt.Facet(
@@ -227,6 +284,8 @@ def render() -> None:
         f'{_dot(_BLUE)}<span>Mobile</span>'
         f'{_dot(_ORANGE)}<span>Desktop</span>'
         f'{_dot(_GREY)}<span style="color:#888">Unspecified</span>'
+        f'<span style="color:#888;font-size:11px;margin-left:6px;border-left:1px solid #ddd;padding-left:10px">'
+        f'solid = regression&nbsp;·&nbsp;faded = other</span>'
         f'</div>'
     )
     st.markdown(
