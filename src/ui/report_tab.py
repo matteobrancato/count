@@ -7,12 +7,13 @@ import streamlit as st
 from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
+from . import theme
 
 # ── palette ───────────────────────────────────────────────────────────────────
+# Brand chart colors are constant across light/dark — they're readable on both.
 _BLUE   = "#4472C4"   # Mobile
 _ORANGE = "#ED7D31"   # Desktop
 _GREY   = "#A0A0A0"   # Unspecified (Next Gen)
-_RED    = "#C00000"   # metric numbers
 
 _BU_ORDER = [
     "The Perfume Shop", "Savers", "Superdrug",
@@ -134,6 +135,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
     bus += sorted(b for b in present if b not in bus)
 
     df = _prepare_chart_data(auto, bus)
+    tc = theme.colors()
 
     # Sort y-axis per-facet by sort_key (field-based, no global list).
     y_sort = alt.EncodingSortField(field="sort_key", order="ascending")
@@ -144,7 +146,8 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
     )
 
     y_axis = alt.Axis(title=None, labelFontSize=10.5, labelFont="Arial",
-                      labelLimit=170, ticks=False, domain=False)
+                      labelLimit=170, ticks=False, domain=False,
+                      labelColor=tc["axis_label"])
 
     bars = (
         alt.Chart()
@@ -152,8 +155,9 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
         .encode(
             x=alt.X("count:Q",
                     stack="zero",
-                    axis=alt.Axis(title=None, grid=True, gridColor="#f0f0f0",
-                                  tickCount=5, labelFontSize=10, domain=False)),
+                    axis=alt.Axis(title=None, grid=True, gridColor=tc["grid"],
+                                  tickCount=5, labelFontSize=10, domain=False,
+                                  labelColor=tc["axis_label"])),
             y=alt.Y("label:N", sort=y_sort, axis=y_axis),
             color=alt.Color("device:N", scale=color_scale, legend=None),
             opacity=alt.Opacity(
@@ -175,7 +179,8 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
     # Text label at end of each stacked bar — only the row with total>0 renders.
     text = (
         alt.Chart()
-        .mark_text(align="left", dx=5, fontSize=9.5, color="#555555")
+        .mark_text(align="left", dx=5, fontSize=9.5,
+                   color=tc["text_2"])
         .encode(
             x=alt.X("total:Q"),
             y=alt.Y("label:N", sort=y_sort),
@@ -186,7 +191,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
 
     chart = (
         alt.layer(bars, text, data=df)
-        .properties(height=alt.Step(21))
+        .properties(height=alt.Step(21), background=tc["bg"])
         .facet(
             facet=alt.Facet(
                 "bu:N",
@@ -197,7 +202,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
                     labelAlign="left",
                     labelFontSize=13,
                     labelFontWeight="bold",
-                    labelColor="#1a1f36",
+                    labelColor=tc["text"],
                     labelFont="Arial",
                     labelPadding=10,
                 ),
@@ -205,7 +210,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
             columns=2,
         )
         .resolve_scale(y="independent", x="shared")
-        .configure_view(stroke="#e8e8e8", strokeWidth=1)
+        .configure_view(stroke=tc["border_soft"], strokeWidth=1, fill=tc["bg"])
         .configure_axis(labelFont="Arial")
         .configure_legend(labelFont="Arial", padding=4)
     )
@@ -215,13 +220,14 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
 
 # ── UI card helpers ───────────────────────────────────────────────────────────
 def _fw_card(col, icon: str, name: str, subtitle: str, bg: str) -> None:
+    c = theme.colors()
     col.markdown(
-        f"""<div style="background:{bg};border:1px solid #ddd;border-radius:10px;
+        f"""<div style="background:{bg};border:1px solid {c['border']};border-radius:10px;
                     padding:14px 16px;display:flex;align-items:center;gap:12px;min-height:68px">
             <span style="font-size:26px;line-height:1">{icon}</span>
             <div>
-                <div style="font-weight:700;font-size:13.5px;color:#1a1f36">{name}</div>
-                <div style="font-size:11px;color:#5e6677;margin-top:2px">{subtitle}</div>
+                <div style="font-weight:700;font-size:13.5px;color:{c['text']}">{name}</div>
+                <div style="font-size:11px;color:{c['text_2']};margin-top:2px">{subtitle}</div>
             </div>
         </div>""",
         unsafe_allow_html=True,
@@ -229,14 +235,15 @@ def _fw_card(col, icon: str, name: str, subtitle: str, bg: str) -> None:
 
 
 def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
-    sub_html = (f'<div style="font-size:9.5px;color:#888;margin-top:1px">{sub}</div>'
+    c = theme.colors()
+    sub_html = (f'<div style="font-size:9.5px;color:{c["text_muted"]};margin-top:1px">{sub}</div>'
                 if sub else "")
     col.markdown(
-        f"""<div style="background:white;border:1px solid #ddd;border-radius:10px;
+        f"""<div style="background:{c['card_neutral']};border:1px solid {c['border']};border-radius:10px;
                     padding:12px 14px;text-align:center;min-height:68px;
                     display:flex;flex-direction:column;justify-content:center">
-            <div style="font-size:23px;font-weight:800;color:{_RED};line-height:1.1">{value}</div>
-            <div style="font-size:10px;font-weight:600;color:#1a1f36;margin-top:2px">{label}</div>
+            <div style="font-size:23px;font-weight:800;color:{c['accent_red']};line-height:1.1">{value}</div>
+            <div style="font-size:10px;font-weight:600;color:{c['text']};margin-top:2px">{label}</div>
             {sub_html}
         </div>""",
         unsafe_allow_html=True,
@@ -245,10 +252,11 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
 
 # ── render ────────────────────────────────────────────────────────────────────
 def render() -> None:
+    c = theme.colors()
     st.markdown(
-        "<h2 style='text-align:center;font-family:Arial;font-weight:800;"
-        "color:#1a1f36;margin-bottom:20px;letter-spacing:-0.5px'>"
-        "Automation &nbsp;·&nbsp; Frameworks and Status</h2>",
+        f"<h2 style='text-align:center;font-family:Arial;font-weight:800;"
+        f"color:{c['text']};margin-bottom:20px;letter-spacing:-0.5px'>"
+        f"Automation &nbsp;·&nbsp; Frameworks and Status</h2>",
         unsafe_allow_html=True,
     )
 
@@ -265,9 +273,9 @@ def render() -> None:
     # ── Header row: frameworks + metric badges ────────────────────────────────
     c_fw1, c_fw2, _sp, c_m1, c_m2 = st.columns([2.3, 2.3, 0.15, 1.3, 1.3])
     _fw_card(c_fw1, "☕", "Java  /  Selenium  /  Cucumber",
-             "Legacy framework used by aLab", "#FFFBEC")
+             "Legacy framework used by aLab", c["card_java_bg"])
     _fw_card(c_fw2, "🤖", "TestIM",
-             "AI powered test automation platform", "#EBF2FF")
+             "AI powered test automation platform", c["card_testim_bg"])
     _metric_badge(c_m1, f"+{s_tot['total']:,}", "Test Cases", "Smoke Suite")
     _metric_badge(c_m2, f"+{a_tot['total']:,}", "Test Cases", "Total Count")
 
@@ -281,19 +289,20 @@ def render() -> None:
 
     legend_html = (
         f'<div style="display:flex;align-items:center;gap:16px;'
-        f'font-family:Arial;font-size:12px;color:#1a1f36">'
+        f'font-family:Arial;font-size:12px;color:{c["text"]}">'
         f'{_dot(_BLUE)}<span>Mobile</span>'
         f'{_dot(_ORANGE)}<span>Desktop</span>'
-        f'{_dot(_GREY)}<span style="color:#888">Unspecified</span>'
-        f'<span style="color:#888;font-size:11px;margin-left:6px;border-left:1px solid #ddd;padding-left:10px">'
+        f'{_dot(_GREY)}<span style="color:{c["text_muted"]}">Unspecified</span>'
+        f'<span style="color:{c["text_muted"]};font-size:11px;margin-left:6px;'
+        f'border-left:1px solid {c["border"]};padding-left:10px">'
         f'solid = regression&nbsp;·&nbsp;faded = other</span>'
         f'</div>'
     )
     st.markdown(
         f'<div style="display:flex;align-items:center;justify-content:space-between;'
         f'margin-bottom:10px">'
-        f'<div style="font-family:Arial;font-weight:700;font-size:15px;color:#1a1f36;'
-        f'border-left:4px solid #ED7D31;padding-left:10px">'
+        f'<div style="font-family:Arial;font-weight:700;font-size:15px;color:{c["text"]};'
+        f'border-left:4px solid {_ORANGE};padding-left:10px">'
         f'📊 Automated Tests by Business Unit</div>'
         f'{legend_html}'
         f'</div>',
@@ -305,8 +314,8 @@ def render() -> None:
     st.altair_chart(chart, use_container_width=True)
 
     st.markdown(
-        "<div style='font-size:10.5px;color:#888;margin-top:2px'>"
-        "* These numbers are calculated with the same logic of other tabs"
-        "</div>",
+        f"<div style='font-size:10.5px;color:{c['text_muted']};margin-top:2px'>"
+        f"* These numbers are calculated with the same logic of other tabs"
+        f"</div>",
         unsafe_allow_html=True,
     )
