@@ -104,7 +104,13 @@ def inject_css() -> None:
         [data-testid="stMarkdownContainer"] *:not(code):not(pre) {{
             color: {c['text']};
         }}
-        [data-testid="stCaptionContainer"], small {{
+        [data-testid="stCaptionContainer"], [data-testid="stCaption"],
+        [data-testid="stCaptionContainer"] *, small,
+        .stCaption, .stCaption * {{
+            color: {c['text_muted']} !important;
+        }}
+        /* Subheader / section markers under tables */
+        [data-testid="stMarkdownContainer"] small {{
             color: {c['text_muted']} !important;
         }}
 
@@ -131,14 +137,44 @@ def inject_css() -> None:
             color: {c['text']} !important;
         }}
 
-        /* ── dataframe / table ────────────────────────────────────── */
+        /* ── dataframe (Glide Data Grid CSS variables) ────────────── */
         [data-testid="stDataFrame"], [data-testid="stTable"] {{
-            background-color: {c['surface']};
+            background-color: {c['surface']} !important;
             border-radius: 6px;
+            --gdg-bg-cell: {c['surface']};
+            --gdg-bg-cell-medium: {c['surface_alt']};
+            --gdg-bg-header: {c['surface_alt']};
+            --gdg-bg-header-has-focus: {c['border_soft']};
+            --gdg-bg-header-hovered: {c['border_soft']};
+            --gdg-bg-bubble: {c['surface_alt']};
+            --gdg-bg-bubble-selected: {c['border_soft']};
+            --gdg-bg-search-result: #4a3d1a;
+            --gdg-text-dark: {c['text']};
+            --gdg-text-medium: {c['text_2']};
+            --gdg-text-light: {c['text_muted']};
+            --gdg-text-bubble: {c['text']};
+            --gdg-text-header: {c['text']};
+            --gdg-text-group-header: {c['text']};
+            --gdg-text-header-selected: #ffffff;
+            --gdg-accent-color: #ED7D31;
+            --gdg-accent-light: rgba(237,125,49,0.15);
+            --gdg-accent-fg: #ffffff;
+            --gdg-border-color: {c['border']};
+            --gdg-horizontal-border-color: {c['border_soft']};
+            --gdg-drilldown-border: {c['border']};
+            --gdg-link-color: #6FA4FF;
+            --gdg-bg-icon-header: {c['surface_alt']};
+            --gdg-fg-icon-header: {c['text_2']};
         }}
-        [data-testid="stDataFrame"] [role="grid"] {{
+        /* Catch the inner canvas-wrapper that Streamlit/Glide uses */
+        [data-testid="stDataFrame"] > div,
+        [data-testid="stDataFrame"] [data-testid="stElementToolbar"],
+        [data-testid="stTable"] table,
+        [data-testid="stTable"] th,
+        [data-testid="stTable"] td {{
             background-color: {c['surface']};
             color: {c['text']};
+            border-color: {c['border_soft']};
         }}
 
         /* ── tabs ─────────────────────────────────────────────────── */

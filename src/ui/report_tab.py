@@ -191,7 +191,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
 
     chart = (
         alt.layer(bars, text, data=df)
-        .properties(height=alt.Step(21), background=tc["bg"])
+        .properties(height=alt.Step(21))
         .facet(
             facet=alt.Facet(
                 "bu:N",
@@ -210,6 +210,8 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
             columns=2,
         )
         .resolve_scale(y="independent", x="shared")
+        # Background must be set at the top-level FacetChart, not on the inner layer.
+        .configure(background=tc["bg"])
         .configure_view(stroke=tc["border_soft"], strokeWidth=1, fill=tc["bg"])
         .configure_axis(labelFont="Arial")
         .configure_legend(labelFont="Arial", padding=4)
