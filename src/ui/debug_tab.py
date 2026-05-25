@@ -11,8 +11,7 @@ from .. import testrail_client as tr
 from ..bu_rules import ALL_RULES
 from ..field_resolver import get_registry
 from ..rules_engine import (
-    _is_deprecated, _get_multi_countries, _get_prod_sanity,
-    _devices_for, _rule_matches,
+    _is_deprecated, _get_multi_countries, _get_prod_sanity, _devices_for,
 )
 
 
@@ -168,13 +167,16 @@ def render() -> None:
         for case in cases:
             # type — skip if resolution failed (expected_type_ids empty)
             if expected_type_ids and case.get("type_id") not in expected_type_ids:
-                fail_type += 1; continue
+                fail_type += 1
+                continue
             # deprecated
             if _is_deprecated(case, reg):
-                fail_dep += 1; continue
+                fail_dep += 1
+                continue
             # status field
             if not status_meta:
-                no_field += 1; continue
+                no_field += 1
+                continue
             raw_st = case.get(status_meta.system_name)
             passed = False
             if isinstance(raw_st, list):
@@ -184,12 +186,14 @@ def render() -> None:
             elif isinstance(raw_st, str) and raw_st.strip().isdigit():
                 passed = int(raw_st.strip()) in allowed_ids
             if not passed:
-                fail_status += 1; continue
+                fail_status += 1
+                continue
             # country
             if rule.countries_filter:
                 tokens = set(_get_multi_countries(case, reg))
                 if not any(c in tokens for c in rule.countries_filter):
-                    fail_country += 1; continue
+                    fail_country += 1
+                    continue
             ok += 1
             st_lbl = status_meta.values_by_id.get(raw_st) if isinstance(raw_st, int) else str(raw_st)
             matched_rows.append({
@@ -206,7 +210,7 @@ def render() -> None:
         summary.append({
             "Rule":          rule.name,
             "status_field":  rule.status_field_label,
-            "field_found":   "✅" if status_meta else f"❌ NOT FOUND",
+            "field_found":   "✅" if status_meta else "❌ NOT FOUND",
             "allowed_ids":   str(sorted(allowed_ids)),
             "countries":     ", ".join(rule.countries_filter) or "(none)",
             "✅ Match":      ok,

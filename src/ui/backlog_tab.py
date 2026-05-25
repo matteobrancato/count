@@ -274,12 +274,13 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
             )
             m    = auto_exp.merge(keys, on=["case_id", "country_label", "device"], how="left")
             flag = f"_{fw_name}"
+            matched = m[m[flag].fillna(False)]
             if fw_name == "java":
                 n_java   = int(m[flag].sum())
-                u_java   = int(m[m[flag] == True]["case_id"].nunique())
+                u_java   = int(matched["case_id"].nunique())
             else:
                 n_testim = int(m[flag].sum())
-                u_testim = int(m[m[flag] == True]["case_id"].nunique())
+                u_testim = int(matched["case_id"].nunique())
 
     automatable = n_auto + n_back
     scoped      = n_auto + n_back + n_na

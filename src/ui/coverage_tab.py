@@ -1,23 +1,22 @@
 """Coverage tab — automation coverage per functional area (TestRail section).
 
 Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
-  * Section names stripped of the BU root prefix (e.g. "SD > X" → "X")
-  * Columns Desktop / Mobile / Total counted as EXPANDED rows (same convention
-    as Explorer / Report tabs) so a case automated for both devices counts twice
-  * Coverage % uses unique case_ids so it stays a proper "% of cases covered"
+  * Section names normalised by auto-stripping dominant "container roots"
+    (e.g. "SD" or "WTR > Root") so the rows match the Excel "Main Category".
+  * Desktop / Mobile / Unspecified columns count EXPANDED rows (same convention
+    as Explorer / Report) — a case automated for both devices counts twice.
+  * Coverage % uses unique case_ids so it stays a proper "% of cases covered".
 
 Layout
 ──────
   * Scope (radio) + BU (dropdown) on the top row
-  * Headline metrics: Total · Automated unique · Coverage %
-  * Section depth slider (default 1 = Main Category)
-  * Table — Area | Total | Desktop | Mobile | Automated | Coverage %
-  * Pie chart — share of automated cases per area
-  * Bar chart — coverage % per area (sorted, traffic-light colored)
+  * Headline metrics: Total · Automated unique · Automated rows (D+M) · Coverage %
+  * Granularity slider (0 = Main Category, 1 = Secondary, 2-3 = deeper)
+  * Table — Area | Total | Desktop | Mobile [| Unspecified] | Automated | Coverage %
+  * Pie chart — share of automated rows per area
+  * Bar chart — coverage % per area (sorted, traffic-light colored, zero rows last)
 """
 from __future__ import annotations
-
-import re
 
 import altair as alt
 import pandas as pd
@@ -55,82 +54,124 @@ def _load_scope(scope: str):
 
 
 # ── section helpers ──────────────────────────────────────────────────────────
-def _detect_common_prefix(paths: pd.Series) -> str:
-    """If all non-empty paths share a common first component, return it.  Else ''."""
+def _split_path(path: str) -> list[str]:
+    return [p.strip() for p in (path or "").split(">") if p.strip()]
+
+
+def _detect_container_chain(
+    paths: pd.Series, dominance: float = 0.8, max_depth: int = 5,
+) -> list[str]:
+    """Detect the chain of dominant "container" sections at the root.
+
+    A component is a container if it holds more than *dominance* (e.g. 80%) of
+    cases at its depth.  Returns the ordered chain.
+
+    Example: SD suite has 99% of cases under "SD" → ["SD"].  Once stripped, the
+    next level ("Checkout", "Customer", ...) is balanced and we stop.
+
+    WTR suite has level-1 already balanced (Checkout, PIM, ...) → returns [].
+    """
     if paths is None or paths.empty:
-        return ""
-    s = paths.fillna("").str.strip()
-    s = s[s.str.len() > 0]
-    if s.empty:
-        return ""
-    first_parts = s.str.split(">").str[0].str.strip()
-    if first_parts.nunique() != 1:
-        return ""
-    return str(first_parts.iloc[0])
+        return []
+    parts_list = paths.fillna("").map(_split_path)
+    chain: list[str] = []
+    current = parts_list
+    for _ in range(max_depth):
+        first = current.map(lambda p: p[0] if p else None).dropna()
+        if first.empty:
+            break
+        counts = first.value_counts()
+        top, top_n = counts.index[0], counts.iloc[0]
+        if top_n / len(first) < dominance:
+            break
+        chain.append(str(top))
+        current = current.map(
+            lambda p: p[1:] if (p and p[0] == top) else None
+        ).dropna()
+        if current.empty:
+            break
+    return chain
 
 
-def _strip_prefix(path: str, prefix: str) -> str:
-    if not prefix:
-        return path or ""
-    pat = rf"^{re.escape(prefix)}\s*>\s*"
-    out = re.sub(pat, "", path or "")
-    # A case sitting directly under the root → use the prefix itself as section
-    return out if out else prefix
+def _section_for_path(path: str, chain: list[str], offset: int = 0) -> str:
+    """Return the area label for *path*, stripping known container chain.
 
-
-def _take_levels(path: str, n: int) -> str:
-    parts = [p.strip() for p in (path or "").split(">") if p.strip()]
+    *offset* lets the user drill down further (0 = main category, 1 = secondary).
+    Paths that do not start with the chain (e.g. sibling folders like "Test folder")
+    are kept as-is and grouped under their own first component.
+    """
+    parts = _split_path(path)
     if not parts:
         return "(root)"
-    return " > ".join(parts[:n])
+    # Strip matching container prefix only (preserves siblings like "Test folder")
+    i = 0
+    while i < len(chain) and i < len(parts) and parts[i] == chain[i]:
+        i += 1
+    remaining = parts[i:]
+    if not remaining:
+        # Case sat directly at the container — surface the last chain component
+        return chain[-1] if chain else "(root)"
+    take = min(offset + 1, len(remaining))
+    return " > ".join(remaining[:take])
 
 
 # ── coverage table ───────────────────────────────────────────────────────────
 def _coverage_table(
-    raw_bu: pd.DataFrame, auto_bu: pd.DataFrame, level: int,
-) -> tuple[pd.DataFrame, str]:
-    """Aggregate per-section counts.
+    non_dep: pd.DataFrame,
+    auto_bu: pd.DataFrame,
+    auto_ids: set[int],
+    depth_offset: int = 0,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Aggregate per-section counts after smart container-chain stripping.
+
+    Parameters
+    ----------
+    non_dep
+        Non-deprecated cases for the chosen BU (already filtered).
+    auto_bu
+        Expanded automated rows for the chosen BU.
+    auto_ids
+        Pre-computed set of automated case_ids (saves a `set()` build per render).
+    depth_offset
+        0 = main category (first level after the auto-detected container chain),
+        1 = secondary, etc.
 
     Returns
     -------
-    (df, prefix)
-        df columns: section, total, desktop, mobile, automated, coverage_pct
-        prefix    : the BU root that was stripped (for display).
+    (df, container_chain)
+        df columns: section, total, desktop, mobile, unspecified,
+                    automated, auto_unique, coverage_pct
+        container_chain : the auto-stripped roots (for display).
     """
-    if raw_bu.empty:
-        return pd.DataFrame(), ""
+    if non_dep.empty:
+        return pd.DataFrame(), []
 
-    non_dep = raw_bu[raw_bu["deprecated"] == False].copy()  # noqa: E712
-    prefix  = _detect_common_prefix(non_dep["section_path"])
+    chain = _detect_container_chain(non_dep["section_path"])
 
-    non_dep["section"] = (
-        non_dep["section_path"].fillna("")
-        .map(lambda p: _strip_prefix(p, prefix))
-        .map(lambda p: _take_levels(p, level))
+    work = non_dep[["case_id", "section_path"]].copy()
+    work["section"] = work["section_path"].fillna("").map(
+        lambda p: _section_for_path(p, chain, depth_offset)
     )
-
-    auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
-    non_dep["_is_auto"] = non_dep["case_id"].isin(auto_ids)
+    work["_is_auto"] = work["case_id"].isin(auto_ids)
 
     grouped = (
-        non_dep.groupby("section", dropna=False)
+        work.groupby("section", dropna=False)
         .agg(total=("case_id", "nunique"),
              auto_unique=("_is_auto", "sum"))
         .reset_index()
     )
     grouped["auto_unique"] = grouped["auto_unique"].astype(int)
 
-    # Desktop / Mobile / Unspecified EXPANDED row counts (same convention as
-    # other tabs).  Unspecified covers Next Gen rules that don't split by device.
+    # Desktop / Mobile / Unspecified EXPANDED row counts.
+    # Slice to just the 3 columns we need — avoids copying the full auto_bu DataFrame
+    # (which carries ~20 columns) just to add the "section" derived column.
     desktop_map:     dict[str, int] = {}
     mobile_map:      dict[str, int] = {}
     unspecified_map: dict[str, int] = {}
     if not auto_bu.empty and "section_path" in auto_bu.columns:
-        ap = auto_bu.copy()
-        ap["section"] = (
-            ap["section_path"].fillna("")
-            .map(lambda p: _strip_prefix(p, prefix))
-            .map(lambda p: _take_levels(p, level))
+        ap = auto_bu[["section_path", "device"]].copy()
+        ap["section"] = ap["section_path"].fillna("").map(
+            lambda p: _section_for_path(p, chain, depth_offset)
         )
         dev_grp = ap.groupby(["section", "device"]).size().unstack(fill_value=0)
         for dev_name, target in [("Desktop", desktop_map),
@@ -144,15 +185,22 @@ def _coverage_table(
     grouped["unspecified"] = grouped["section"].map(unspecified_map).fillna(0).astype(int)
     grouped["automated"]   = (
         grouped["desktop"] + grouped["mobile"] + grouped["unspecified"]
-    )  # matches Excel "Total"
+    )
     grouped["coverage_pct"] = (
         (grouped["auto_unique"] / grouped["total"] * 100)
         .round(1).fillna(0.0)
     )
 
-    grouped = grouped.sort_values("automated", ascending=False).reset_index(drop=True)
+    # Sort: non-zero automated first (by automated desc), then zero rows at the bottom
+    # (by total desc, so the biggest "empty" areas float to the top of the zero block).
+    grouped["_zero_flag"] = (grouped["automated"] == 0).astype(int)
+    grouped = grouped.sort_values(
+        by=["_zero_flag", "automated", "total"],
+        ascending=[True, False, False],
+    ).drop(columns=["_zero_flag"]).reset_index(drop=True)
+
     return grouped[["section", "total", "desktop", "mobile", "unspecified",
-                    "automated", "auto_unique", "coverage_pct"]], prefix
+                    "automated", "auto_unique", "coverage_pct"]], chain
 
 
 # ── charts ───────────────────────────────────────────────────────────────────
@@ -193,8 +241,10 @@ def _build_coverage_bar(cov: pd.DataFrame) -> alt.Chart:
     data["label"]  = data["coverage_pct"].map(lambda v: f"{v:.1f}%")
 
     def _bucket(v: float) -> str:
-        if v >= 80: return "high"
-        if v >= 50: return "medium"
+        if v >= 80:
+            return "high"
+        if v >= 50:
+            return "medium"
         return "low"
     data["bucket"] = data["coverage_pct"].map(_bucket)
 
@@ -253,25 +303,25 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         st.info("No data loaded for this scope.")
         return
 
-    bu_to_suites: dict[str, set[int]] = {}
-    for r in rules:
-        if r.scope == scope:
-            bu_to_suites.setdefault(r.bu, set()).add(r.suite_id)
+    # `rules` is already filtered to *scope* by _load_scope, so no second scope check.
+    bu_suites = {r.suite_id for r in rules if r.bu == bu_choice}
 
-    raw_bu  = raw[raw["suite_id"].isin(bu_to_suites.get(bu_choice, set()))]
+    raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
     auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
 
     if raw_bu.empty:
         st.info(f"No cases found for **{bu_choice}**.")
         return
 
-    # ── headline metrics ──────────────────────────────────────────────────────
+    # ── shared aggregates (computed once, reused for metrics + table) ─────────
     non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
     auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
-    auto_unique = int(non_dep["case_id"].isin(auto_ids).sum()) if not non_dep.empty else 0
-    total       = int(non_dep["case_id"].nunique()) if not non_dep.empty else 0
-    cov_pct     = (auto_unique / total * 100) if total else 0.0
-    auto_expanded_total = int(len(auto_bu)) if not auto_bu.empty else 0
+
+    # ── headline metrics ──────────────────────────────────────────────────────
+    auto_unique         = int(non_dep["case_id"].isin(auto_ids).sum()) if not non_dep.empty else 0
+    total               = int(non_dep["case_id"].nunique())            if not non_dep.empty else 0
+    cov_pct             = (auto_unique / total * 100)                  if total             else 0.0
+    auto_expanded_total = int(len(auto_bu))
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total cases (non-deprecated)", f"{total:,}")
@@ -280,22 +330,28 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
               help="Expanded rows: Desktop + Mobile. Same convention as Explorer / Report.")
     c4.metric("Coverage", f"{cov_pct:.1f}%")
 
-    # ── section depth ─────────────────────────────────────────────────────────
+    # ── section granularity ───────────────────────────────────────────────────
     st.markdown("")
-    level = st.slider(
-        "Section depth", 1, 4, 1,
+    depth_offset = st.slider(
+        "Granularity", 0, 3, 0,
         key=f"cov_depth_{scope}_{bu_choice}",
-        help=("Depth of section hierarchy (after stripping the BU root). "
-              "Level 1 = Main Category, 2 = Secondary, etc."),
+        help=("0 = Main Category (auto-detected — strips dominant root containers "
+              "like \"SD\" or \"WTR\"); 1 = Secondary; 2-3 = deeper sub-sections."),
     )
 
-    cov, prefix = _coverage_table(raw_bu, auto_bu, level=level)
+    cov, chain = _coverage_table(non_dep, auto_bu, auto_ids, depth_offset=depth_offset)
     if cov.empty:
         st.info("No sections to display.")
         return
 
-    if prefix:
-        st.caption(f"Showing sections under the BU root `{prefix}` (root prefix stripped).")
+    if chain:
+        chain_str = " > ".join(f"`{c}`" for c in chain)
+        st.caption(
+            f"Auto-stripped container chain: {chain_str} "
+            f"(dominant root folders that contain >80% of the cases)."
+        )
+    else:
+        st.caption("No dominant container detected — sections shown at the top level.")
 
     # ── table ─────────────────────────────────────────────────────────────────
     st.markdown("#### 📋 Coverage table")
@@ -328,7 +384,9 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         hide_index=True,
         column_config={
             "section":      st.column_config.TextColumn(
-                "Area" if level == 1 else "Area (depth %d)" % level,
+                "Main Category" if depth_offset == 0
+                else ("Secondary Category" if depth_offset == 1
+                      else f"Area (depth +{depth_offset})"),
                 width="large"),
             "total":        st.column_config.NumberColumn("Total cases"),
             "desktop":      st.column_config.NumberColumn("Desktop"),

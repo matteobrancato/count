@@ -286,28 +286,24 @@ def _pivot_builder(
 
     # Display labels for the selectors
     display_cols = [COL_LABELS.get(c, c) for c in internal_cols]
-    lbl_to_internal = {COL_LABELS.get(c, c): c for c in internal_cols}
 
     # Validate defaults against available columns (avoids Streamlit errors)
-    safe_rows = [l for l in (default_rows or ["Device"]) if l in display_cols]
-    safe_cols = [l for l in (default_cols or [])          if l in display_cols]
+    safe_rows = [lbl for lbl in (default_rows or ["Device"]) if lbl in display_cols]
+    safe_cols = [lbl for lbl in (default_cols or [])          if lbl in display_cols]
 
     c1, c2 = st.columns(2)
     row_sel_lbl = c1.multiselect("Rows", display_cols, default=safe_rows,
                                  key=f"{key_prefix}_pv_rows")
     col_sel_lbl = c2.multiselect(
         "Columns",
-        [l for l in display_cols if l not in row_sel_lbl],
-        default=[l for l in safe_cols if l not in row_sel_lbl],
+        [lbl for lbl in display_cols if lbl not in row_sel_lbl],
+        default=[lbl for lbl in safe_cols if lbl not in row_sel_lbl],
         key=f"{key_prefix}_pv_cols",
     )
 
     if not row_sel_lbl and not col_sel_lbl:
         st.caption("Select at least one row or column field.")
         return
-
-    row_sel = [lbl_to_internal[l] for l in row_sel_lbl]
-    col_sel = [lbl_to_internal[l] for l in col_sel_lbl]
 
     # Build a display copy with readable values (framework codes → labels)
     disp_df = _apply_display_values(df)

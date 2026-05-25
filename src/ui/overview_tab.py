@@ -6,6 +6,7 @@ import streamlit as st
 from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
+from . import theme
 
 
 # --------------------------------------------------------------------- helpers
@@ -66,6 +67,7 @@ def _apply_selection(df: pd.DataFrame, selection: dict[str, list[str]]) -> pd.Da
 
 # --------------------------------------------------------------------- cards
 def _metric_card(title: str, subset: pd.DataFrame, accent: str) -> None:
+    c   = theme.colors()
     tot = metrics.totals(subset)
     st.markdown(
         f"""
@@ -73,12 +75,12 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str) -> None:
             padding:18px 22px;border-radius:14px;
             background:linear-gradient(135deg,{accent}22,{accent}0a);
             border:1px solid {accent}44;margin-bottom:8px">
-            <div style="font-size:13px;color:#5e6677;text-transform:uppercase;
+            <div style="font-size:13px;color:{c['text_2']};text-transform:uppercase;
                         letter-spacing:0.06em;font-weight:600">{title}</div>
-            <div style="font-size:34px;font-weight:700;color:#1a1f36;margin-top:2px">
+            <div style="font-size:34px;font-weight:700;color:{c['text']};margin-top:2px">
                 {tot['total']:,}
             </div>
-            <div style="font-size:13px;color:#5e6677;margin-top:4px">
+            <div style="font-size:13px;color:{c['text_2']};margin-top:4px">
                 🖥 Desktop <b>{tot['desktop']:,}</b>  ·  📱 Mobile <b>{tot['mobile']:,}</b>
             </div>
         </div>
