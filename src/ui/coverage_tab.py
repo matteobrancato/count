@@ -204,7 +204,19 @@ def _coverage_table(
 
 
 # ── charts ───────────────────────────────────────────────────────────────────
-def _build_pie(cov: pd.DataFrame) -> alt.Chart | None:
+def _area_color_map(cov: pd.DataFrame) -> dict[str, str]:
+    """Stable area → palette-color mapping, shared between pie and bar charts.
+
+    Areas are ordered by automated DESC first (so the biggest slice gets the
+    first palette color, then the second-biggest gets the second, etc.).  This
+    keeps colors consistent across both charts even though the bar chart sorts
+    by coverage %.
+    """
+    ordered = cov.sort_values("automated", ascending=False)["section"].tolist()
+    return {area: _PIE_PALETTE[i % len(_PIE_PALETTE)] for i, area in enumerate(ordered)}
+
+
+def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None:
     """Pie of automated case distribution across sections (slice size = automated)."""
     tc   = theme.colors()
     data = cov[cov["automated"] > 0].copy()
@@ -213,7 +225,7 @@ def _build_pie(cov: pd.DataFrame) -> alt.Chart | None:
     sections_order = data.sort_values("automated", ascending=False)["section"].tolist()
     color_scale = alt.Scale(
         domain=sections_order,
-        range=_PIE_PALETTE * (1 + len(sections_order) // len(_PIE_PALETTE)),
+        range=[color_map[s] for s in sections_order],
     )
     base = alt.Chart(data).encode(
         theta=alt.Theta("automated:Q", stack=True),
@@ -234,23 +246,34 @@ def _build_pie(cov: pd.DataFrame) -> alt.Chart | None:
     return arc.properties(height=320).configure(background=tc["bg"])
 
 
-def _build_coverage_bar(cov: pd.DataFrame) -> alt.Chart:
-    """Horizontal bars: coverage % per section, sorted descending."""
+def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart:
+    """Horizontal bars: coverage % per section.
+
+    Sort: zero-automated rows pushed to the bottom (same convention as the table).
+    Colors: same per-area palette as the pie chart, so a colour means the same
+    area in both views.
+    """
     tc   = theme.colors()
     data = cov.copy()
-    data["label"]  = data["coverage_pct"].map(lambda v: f"{v:.1f}%")
-
-    def _bucket(v: float) -> str:
-        if v >= 80:
-            return "high"
-        if v >= 50:
-            return "medium"
-        return "low"
-    data["bucket"] = data["coverage_pct"].map(_bucket)
+    data["label"]     = data["coverage_pct"].map(lambda v: f"{v:.1f}%")
+    # Sort key that mirrors the table: non-zero by coverage DESC, then zero rows
+    # (sorted by total DESC so larger empty areas float to the top of the zero block).
+    data["_sort_key"] = data.apply(
+        lambda r: (0, -float(r["coverage_pct"]), -float(r["total"]))
+        if r["automated"] > 0
+        else (1, -float(r["total"]), 0.0),
+        axis=1,
+    )
+    # Build the ordered list for the Y axis (Altair sorts categorical Y by an
+    # explicit list).  Convert tuples to a deterministic stringified key so
+    # Altair's sort uses the right order.
+    y_order = data.sort_values("_sort_key").apply(
+        lambda r: r["section"], axis=1,
+    ).tolist()
 
     color_scale = alt.Scale(
-        domain=["high", "medium", "low"],
-        range=["#70AD47", "#ED7D31", "#C00000"],
+        domain=list(color_map.keys()),
+        range=[color_map[s] for s in color_map],
     )
 
     bars = (
@@ -262,17 +285,16 @@ def _build_coverage_bar(cov: pd.DataFrame) -> alt.Chart:
                     axis=alt.Axis(title="Coverage %", grid=True,
                                   gridColor=tc["grid"], labelColor=tc["axis_label"],
                                   titleColor=tc["axis_label"], domain=False)),
-            y=alt.Y("section:N",
-                    sort=alt.EncodingSortField(field="coverage_pct", order="descending"),
+            y=alt.Y("section:N", sort=y_order,
                     axis=alt.Axis(title=None, labelLimit=240,
                                   labelColor=tc["axis_label"],
                                   domain=False, ticks=False)),
-            color=alt.Color("bucket:N", scale=color_scale, legend=None),
+            color=alt.Color("section:N", scale=color_scale, legend=None),
             tooltip=[
                 alt.Tooltip("section:N",      title="Area"),
-                alt.Tooltip("total:Q",        title="Total cases", format=","),
+                alt.Tooltip("total:Q",        title="Total cases",        format=","),
                 alt.Tooltip("auto_unique:Q",  title="Automated (unique)", format=","),
-                alt.Tooltip("coverage_pct:Q", title="Coverage %",  format=".1f"),
+                alt.Tooltip("coverage_pct:Q", title="Coverage %",         format=".1f"),
             ],
         )
     )
@@ -281,8 +303,7 @@ def _build_coverage_bar(cov: pd.DataFrame) -> alt.Chart:
         .mark_text(align="left", dx=5, fontSize=10, color=tc["text_2"])
         .encode(
             x=alt.X("coverage_pct:Q"),
-            y=alt.Y("section:N",
-                    sort=alt.EncodingSortField(field="coverage_pct", order="descending")),
+            y=alt.Y("section:N", sort=y_order),
             text=alt.Text("label:N"),
         )
     )
@@ -402,12 +423,16 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     )
 
     # ── charts ────────────────────────────────────────────────────────────────
+    # Build one color map shared by both charts so a given area is always the
+    # same color across pie + bar.
+    color_map = _area_color_map(cov)
+
     st.markdown("")
     left, right = st.columns([1, 1.2], gap="large")
     with left:
         st.markdown("##### 🥧 Automated distribution")
         st.caption("Share of automated rows per area (slice size = Desktop + Mobile)")
-        pie = _build_pie(cov)
+        pie = _build_pie(cov, color_map)
         if pie is None:
             st.info("No automated cases yet.")
         else:
@@ -415,8 +440,9 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 
     with right:
         st.markdown("##### 📊 Coverage % per area")
-        st.caption("Sorted by coverage. Red < 50% · Orange 50-80% · Green ≥ 80%")
-        bar = _build_coverage_bar(cov)
+        st.caption("Sorted by coverage % (zero-automated areas pushed to the bottom). "
+                   "Colors match the pie chart — same color = same area.")
+        bar = _build_coverage_bar(cov, color_map)
         st.altair_chart(bar, use_container_width=True)
 
     # ── mobile-app facet ─────────────────────────────────────────────────────
