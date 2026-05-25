@@ -98,107 +98,13 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str) -> None:
                          use_container_width=True, hide_index=True)
 
 
-# --------------------------------------------------------------------- sub-views
-def _coverage_view(scope: str, label: str, result=None) -> None:
-    """Render coverage for *scope*, broken down by BU.
-
-    Pass *result* to reuse an already-computed ExpansionResult (avoids a
-    redundant evaluate_rules call for website scope).
-    """
-    rules = [r for r in ALL_RULES if r.scope == scope]
-    if not rules:
-        st.info(f"No rules defined for scope {label!r}.")
-        return
-    if result is None:
-        result = evaluate_rules(tuple(r.name for r in rules))
-    raw = result.raw_cases
-    automated = result.automated
-
-    # ── Scope-wide summary metrics ────────────────────────────────────────────
-    non_dep = raw[raw["deprecated"] == False] if not raw.empty else raw  # noqa: E712
-    auto_ids = set(automated["case_id"].unique()) if not automated.empty else set()
-    auto_n = int(non_dep["case_id"].isin(auto_ids).sum()) if not non_dep.empty else 0
-    total = int(len(non_dep))
-    c1, c2 = st.columns(2)
-    c1.metric("Total cases", f"{total:,}")
-    c2.metric("Automated", f"{auto_n:,}")
-
-    st.divider()
-
-    # ── BU selector ───────────────────────────────────────────────────────────
-    # Map BU → its suite IDs (raw_cases has suite_id; automated has bu directly)
-    bu_to_suites: dict[str, set[int]] = {}
-    for r in rules:
-        bu_to_suites.setdefault(r.bu, set()).add(r.suite_id)
-    bus = sorted(bu_to_suites.keys())
-
-    if len(bus) > 1:
-        bu_choice = st.selectbox("Business Unit", bus, key=f"cov_bu_{scope}")
-    elif bus:
-        bu_choice = bus[0]
-        st.markdown(f"**{bu_choice}**")
-    else:
-        return
-
-    # Filter raw by suite_id; filter automated by bu column
-    raw_bu = (
-        raw[raw["suite_id"].isin(bu_to_suites[bu_choice])]
-        if not raw.empty else raw
-    )
-    auto_bu = (
-        automated[automated["bu"] == bu_choice]
-        if not automated.empty else automated
-    )
-
-    # ── Per-BU section depth slider ───────────────────────────────────────────
-    level = st.slider(
-        "Section depth", 1, 4, 1,
-        key=f"cov_depth_{scope}_{bu_choice}",
-        help="How deep to walk the section hierarchy for grouping.",
-    )
-
-    cov = metrics.coverage_by_section(raw_bu, auto_bu, section_level=level)
-    if cov.empty:
-        st.info("No sections to display.")
-        return
-
-    # Add % of Total so the column sums to 100 % within the BU
-    cov_total = int(cov["total"].sum())
-    cov = cov.copy()
-    cov["% of Total"] = (
-        (cov["total"] / cov_total * 100).round(1) if cov_total > 0 else 0.0
-    )
-
-    st.dataframe(
-        cov[["section", "total", "% of Total", "automated"]],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "section":    st.column_config.TextColumn("Section", width="large"),
-            "total":      st.column_config.NumberColumn("Total"),
-            "% of Total": st.column_config.NumberColumn("% of Total", format="%.1f%%"),
-            "automated":  st.column_config.NumberColumn("Automated"),
-        },
-    )
-
-    # ── Scope-specific facets (scoped to the selected BU) ────────────────────
-    if scope == "mobile_app" and not auto_bu.empty and "automation_tool" in auto_bu.columns:
-        st.markdown("##### Automated cases by automation tool")
-        tool = (
-            auto_bu.dropna(subset=["automation_tool"])
-            .drop_duplicates(subset=["case_id"])
-            .groupby("automation_tool").size()
-            .reset_index(name="count")
-        )
-        if not tool.empty:
-            st.dataframe(tool, use_container_width=True, hide_index=True)
-        else:
-            st.caption("No `Automation Tool` values populated on matching cases.")
-
-
 # --------------------------------------------------------------------- render
 def render() -> None:
     st.subheader("🧭 Automation Coverage Overview")
+    st.caption(
+        "Scope-wide automated counts (Smoke · Regression · Production Sanity). "
+        "For coverage broken down by area, see the **📐 Coverage** tab."
+    )
 
     # Build the combined automated frame for the 3 cards (Website scope only — smoke /
     # regression / sanity metrics are about website automation per the PDF).
@@ -225,14 +131,3 @@ def render() -> None:
             _metric_card("No-Regression (All automated)", regr, "#2e5bff")
         with c3:
             _metric_card("Production Sanity", sanity, "#1dbf73")
-
-    st.divider()
-    st.markdown("### Coverage by section")
-    tw, tm, tn = st.tabs(["🌐 Website", "📱 Mobile App", "🧩 Next Gen"])
-    with tw:
-        # Reuse the already-computed website result — no extra API calls
-        _coverage_view("website", "Website", result=result)
-    with tm:
-        _coverage_view("mobile_app", "Mobile App")
-    with tn:
-        _coverage_view("next_gen", "Next Gen")
