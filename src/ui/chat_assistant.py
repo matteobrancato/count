@@ -476,32 +476,32 @@ _FAB_CSS = """
     padding: 0 !important;
 }
 
-/* ── 2. Style the popover trigger to look like a colourful pill FAB ───── */
+/* ── 2. Style the popover trigger to look like a compact pill FAB ─────── */
 .st-key-ai_assistant_fab [data-testid="stPopover"] button,
 .st-key-ai_assistant_fab button[data-testid="stBaseButton-secondary"],
 .st-key-ai_assistant_fab .stPopover > div > button,
 .st-key-ai_assistant_fab button {
-    border-radius: 28px !important;
-    height: 56px !important;
-    padding: 0 22px !important;
-    font-size: 15px !important;
+    border-radius: 20px !important;
+    height: 40px !important;
+    padding: 0 14px !important;
+    font-size: 13px !important;
     font-weight: 600 !important;
     background: linear-gradient(135deg, #ED7D31 0%, #C00000 100%) !important;
     color: #fff !important;
     border: none !important;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14) !important;
     transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
 
 .st-key-ai_assistant_fab button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.20) !important;
     background: linear-gradient(135deg, #F08F4A 0%, #D11A1A 100%) !important;
 }
 
 .st-key-ai_assistant_fab button:active {
     transform: translateY(0);
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18) !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14) !important;
 }
 
 /* ── 3. Size the popover panel that opens above the FAB ───────────────── */
@@ -536,7 +536,15 @@ def _render_chat_panel() -> None:
         )
         return
 
-    st.markdown("### ✨ AI Assistant")
+    # Title row with a "new chat" icon button on the right
+    title_col, new_chat_col = st.columns([5, 1])
+    title_col.markdown("### ✨ AI Assistant")
+    if new_chat_col.button("📝", key="ai_new_chat",
+                           help="Start a new chat",
+                           use_container_width=True):
+        st.session_state.pop("ai_chat_messages", None)
+        st.rerun()
+
     st.caption(
         "Ask anything about automation coverage, runs, bugs, or test stability. "
         "Numbers come live from TestRail — no made-up data."
