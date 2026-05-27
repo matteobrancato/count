@@ -570,6 +570,13 @@ def _send_message(text: str) -> None:
                 cooling[model] = now + _parse_retry_delay(err_str, default=60.0)
                 logger.info("Model %s rate-limited — trying next", model)
                 continue
+            if ("503" in err_str or "UNAVAILABLE" in err_str
+                    or "overload" in err_str.lower()):
+                # Server-side overload (e.g. Gemini's flash model under heavy
+                # demand).  Transient — short cooldown, fallback to next model.
+                cooling[model] = now + 30.0
+                logger.info("Model %s overloaded (503) — trying next", model)
+                continue
             if "404" in err_str or "NOT_FOUND" in err_str:
                 # Model doesn't exist — never retry within this session.
                 cooling[model] = now + 9_999_999
@@ -598,6 +605,14 @@ def _send_message(text: str) -> None:
                 "a minute and try again — RPM resets every 60 seconds, "
                 "RPD resets at midnight UTC."
             )
+        elif ("503" in last_err or "UNAVAILABLE" in last_err
+              or "overload" in last_err.lower()):
+            reply = (
+                "⚠️ **Gemini is temporarily overloaded.**  All fallback "
+                "models reported high demand on the free tier.  Wait "
+                "30-60 seconds and try again — this is server-side and "
+                "usually clears in under a minute."
+            )
         elif "404" in last_err or "NOT_FOUND" in last_err:
             reply = (
                 "⚠️ **No usable Gemini model found.**  Set `GEMINI_MODEL` "
@@ -616,44 +631,39 @@ def _send_message(text: str) -> None:
 # We anchor our CSS on that — far more robust than `:has()` tricks.
 _FAB_CSS = """
 <style>
-/* ── 1. Pin the whole assistant block fixed bottom-left of the viewport ── */
+/* ── 1. The keyed container IS the FAB.  We size IT and let everything
+       inside fill 100%.  This avoids Streamlit's inner layout quirks. ──── */
 .st-key-ai_assistant_fab {
     position: fixed !important;
     bottom: 24px !important;
     left:   24px !important;
     z-index: 9999 !important;
-    width: auto !important;
+    width: 48px !important;
+    height: 48px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transition: width 0.30s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Hover on the container → expand to pill width */
+.st-key-ai_assistant_fab:hover {
+    width: 165px !important;
+}
+
+/* ── 2. Every inner wrapper fills the container ─── */
+.st-key-ai_assistant_fab [data-testid="stPopover"],
+.st-key-ai_assistant_fab .stPopover,
+.st-key-ai_assistant_fab [data-testid="stPopover"] > div,
+.st-key-ai_assistant_fab .stPopover > div {
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
     max-width: none !important;
     margin: 0 !important;
     padding: 0 !important;
 }
 
-/* ── 2. FAB trigger — circle by default, morphs into pill on hover ────── */
-/* Strategy: control the OUTER popover container's width (Streamlit applies
-   inner layout we can't override).  The button fills 100% of that container,
-   and we transition the container's width on hover. */
-.st-key-ai_assistant_fab [data-testid="stPopover"],
-.st-key-ai_assistant_fab .stPopover {
-    width: 48px !important;
-    min-width: 48px !important;
-    max-width: 48px !important;
-    height: 48px !important;
-    transition:
-        width        0.30s cubic-bezier(0.4, 0, 0.2, 1),
-        min-width    0.30s cubic-bezier(0.4, 0, 0.2, 1),
-        max-width    0.30s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.st-key-ai_assistant_fab [data-testid="stPopover"]:hover,
-.st-key-ai_assistant_fab .stPopover:hover {
-    width: 165px !important;
-    min-width: 165px !important;
-    max-width: 165px !important;
-}
-
-/* The button itself fills the container; its shape morphs along with width. */
-.st-key-ai_assistant_fab [data-testid="stPopover"] button,
-.st-key-ai_assistant_fab .stPopover button,
+/* ── 3. The button: fills 100%, round by default, morphs to pill on hover ── */
 .st-key-ai_assistant_fab button {
     width: 100% !important;
     min-width: 100% !important;
@@ -676,7 +686,8 @@ _FAB_CSS = """
         background    0.20s ease;
 }
 
-/* Inner Streamlit markdown — keep it clipped to the container width. */
+/* Streamlit's inner markdown wrapper — must clip horizontally so the label
+   doesn't peek out of the circular form when the container is narrow. */
 .st-key-ai_assistant_fab button > div,
 .st-key-ai_assistant_fab button p {
     overflow: hidden !important;
@@ -685,9 +696,7 @@ _FAB_CSS = """
     margin: 0 !important;
 }
 
-/* When the container is hovered, the button morphs into a pill */
-.st-key-ai_assistant_fab [data-testid="stPopover"]:hover button,
-.st-key-ai_assistant_fab .stPopover:hover button,
+/* Hover on the keyed container — drives the pill morph + colour shift */
 .st-key-ai_assistant_fab:hover button {
     border-radius: 26px !important;
     box-shadow: 0 4px 18px rgba(255, 75, 75, 0.45) !important;
