@@ -607,32 +607,56 @@ _FAB_CSS = """
     padding: 0 !important;
 }
 
-/* ── 2. Style the popover trigger to look like a compact pill FAB ─────── */
+/* ── 2. FAB trigger — circle by default, morphs into pill on hover ────── */
 .st-key-ai_assistant_fab [data-testid="stPopover"] button,
 .st-key-ai_assistant_fab button[data-testid="stBaseButton-secondary"],
 .st-key-ai_assistant_fab .stPopover > div > button,
 .st-key-ai_assistant_fab button {
-    border-radius: 20px !important;
-    height: 40px !important;
+    /* Collapsed state: a tight circle that shows only the leading emoji */
+    width: 48px !important;
+    min-width: 48px !important;
+    height: 48px !important;
     padding: 0 14px !important;
-    font-size: 13px !important;
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    text-align: left !important;
+    font-size: 18px !important;
     font-weight: 600 !important;
-    background: linear-gradient(135deg, #ED7D31 0%, #C00000 100%) !important;
+    line-height: 1 !important;
+    background: #FF4B4B !important;     /* Streamlit's signature red */
     color: #fff !important;
     border: none !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14) !important;
-    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    box-shadow: 0 2px 10px rgba(255, 75, 75, 0.35) !important;
+    transition:
+        width        0.30s cubic-bezier(0.4, 0, 0.2, 1),
+        border-radius 0.30s cubic-bezier(0.4, 0, 0.2, 1),
+        box-shadow   0.20s ease,
+        background   0.20s ease;
+}
+
+/* Inner Streamlit markdown wrapper — keep it clipped so the label only
+   becomes visible as the button width grows. */
+.st-key-ai_assistant_fab button > div,
+.st-key-ai_assistant_fab button p {
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    text-overflow: clip !important;
+    margin: 0 !important;
 }
 
 .st-key-ai_assistant_fab button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.20) !important;
-    background: linear-gradient(135deg, #F08F4A 0%, #D11A1A 100%) !important;
+    /* Expanded state: a pill wide enough to reveal "💬 Ask Dexter" */
+    width: 165px !important;
+    min-width: 165px !important;
+    border-radius: 26px !important;
+    box-shadow: 0 4px 18px rgba(255, 75, 75, 0.45) !important;
+    background: #E63E3E !important;
 }
 
 .st-key-ai_assistant_fab button:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14) !important;
+    background: #D63030 !important;
+    box-shadow: 0 2px 8px rgba(255, 75, 75, 0.35) !important;
 }
 
 /* ── 3. Size the popover panel that opens above the FAB ───────────────── */
@@ -744,7 +768,7 @@ def render_floating_button() -> None:
 
     # Keyed container = CSS hook for fixed positioning (Streamlit ≥1.39).
     with st.container(key="ai_assistant_fab"):
-        # The popover trigger button IS the FAB.  Click → panel opens above it.
-        with st.popover("💬 Ask Dexter", use_container_width=False,
-                        help="Ask Dexter anything about Automation"):
+        # The popover trigger button IS the FAB.  No `help=` so no tooltip
+        # appears — the hover-expand morph speaks for itself.
+        with st.popover("💬 Ask Dexter", use_container_width=False):
             _render_chat_panel()
