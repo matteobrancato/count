@@ -1,14 +1,15 @@
 """Floating AI chat assistant — Gemini-powered Q&A over TestRail data.
 
-A floating button at the bottom-left of every page opens a chat dialog where
-managers and QA leads can ask natural-language questions like
-"How is Superdrug doing?" or "What are the top failing tests in Drogas?".
+A pill-shaped floating button at the bottom-left of every page opens a
+popover-style chat panel (Rovo-like UX) where managers and QA leads can ask
+natural-language questions such as "How is Superdrug doing?" or "What are the
+top failing tests in Drogas?".
 
 Architecture
 ────────────
 We rely on Gemini's automatic function calling: the LLM never sees raw
-TestRail dumps — it calls our Python tool functions, gets exact numbers back,
-and formulates the answer.  This eliminates hallucinations on metrics.
+TestRail dumps — it calls our Python tool functions, gets exact numbers
+back, and formulates the answer.  This eliminates hallucinations on metrics.
 
 Tools exposed to Gemini
 ───────────────────────
@@ -19,10 +20,14 @@ Tools exposed to Gemini
     get_test_stability(bu, …)  — always-pass / always-fail / flaky counts + top
     compare_bus()              — ranking of all BUs by coverage %
 
-Privacy: only the user question + tool results travel to the Gemini API.  Raw
-test-case content and PII never leave the app.
+Privacy
+───────
+Only the user question + tool results travel to the Gemini API.  Raw test-case
+content and PII never leave the app.
 
-Setup: add `GEMINI_API_KEY` to `.streamlit/secrets.toml`.  Get a free key at
+Setup
+─────
+Add `GEMINI_API_KEY` to `.streamlit/secrets.toml`.  Free key:
 https://aistudio.google.com/apikey.
 """
 from __future__ import annotations
@@ -40,7 +45,7 @@ from . import coverage_tab, runs_tab
 logger = logging.getLogger(__name__)
 
 
-# ── Lazy Gemini import (app must boot even without the dep installed) ────────
+# ── Lazy Gemini import — the app must boot even without the dep installed ────
 try:
     from google import genai
     from google.genai import types
@@ -63,8 +68,7 @@ Available BUs:
 Rules:
 - ALWAYS use the provided tools to get exact numbers. Never invent or estimate.
 - Be concise: managers want short answers (3-6 lines, bullets where helpful).
-- Use full Business Unit names in your replies (e.g. "Superdrug", not "SD") —
-  the tools accept both, but the reply should be readable.
+- Use full Business Unit names in your replies (e.g. "Superdrug", not "SD").
 - Format big numbers with commas (e.g. "2,032").
 - Always include context (e.g. "out of 7,234 total cases").
 - For "how are we doing" questions: lead with the headline coverage %, then
@@ -74,13 +78,22 @@ Rules:
 - For comparisons across BUs, use compare_bus().
 """
 
+# Suggestion chips shown in the empty-state of the chat panel.
+# Pairs: (display label, full question sent to Gemini).
+_SUGGESTIONS: list[tuple[str, str]] = [
+    ("📊 How is Superdrug doing?",    "How is Superdrug doing on automation?"),
+    ("🏆 Compare all BUs",            "Compare all BUs by coverage and tell me who is ahead."),
+    ("🐛 Open bugs in Watsons",       "What bugs are currently open for Watsons?"),
+    ("🌀 Flaky tests in Drogas",      "Which tests are flaky for Drogas? Top offenders."),
+]
+
 
 # ── BU resolution ────────────────────────────────────────────────────────────
 def _resolve_bu_name(query: str) -> str | None:
     """Map a user-supplied BU code/name to the canonical display name."""
     if not query:
         return None
-    q = query.lower().strip()
+    q   = query.lower().strip()
     bus = sorted({r.bu for r in ALL_RULES})
 
     for bu in bus:                                          # exact
@@ -228,8 +241,8 @@ def get_active_runs(bu: str) -> dict[str, Any]:
 def get_open_bugs(bu: str) -> dict[str, Any]:
     """List the open JIRA bug keys for a BU, with the test that generated each.
 
-    Useful to answer questions like "What bugs are open for Drogas?" — returns
-    one record per failure event with the test ID/title, run name, and date.
+    Useful to answer "What bugs are open for Drogas?" — returns one record per
+    failure event with the test ID/title, run name, and date.
 
     Args:
         bu: BU name or alias.
@@ -331,7 +344,7 @@ def compare_bus() -> dict[str, Any]:
     for bu in bus:
         try:
             data = get_bu_coverage(bu)
-        except Exception as exc:
+        except Exception as exc:                                        # noqa: BLE001
             logger.warning("compare_bus: %s failed: %s", bu, exc)
             continue
         if "error" in data:
@@ -360,152 +373,200 @@ def _get_api_key() -> str | None:
         return None
 
 
-def _get_chat_session():
-    """Return the cached Gemini chat session, creating it on first call.
+@st.cache_resource(show_spinner=False)
+def _get_gemini_client(api_key: str):
+    """One Gemini Client per app process — its underlying HTTP pool is shared.
 
-    Stored in `st.session_state` so the conversation history persists across
-    Streamlit reruns (without it, every message would be a fresh chat).
+    Using `@st.cache_resource` instead of `st.session_state` avoids the
+    "Cannot send a request, as the client has been closed" error: Streamlit
+    serialises session_state values on each rerun, which closes the client's
+    httpx pool.  `cache_resource` is the documented escape hatch for stateful
+    objects that must outlive a rerun.
     """
-    if "ai_chat_session" in st.session_state:
-        return st.session_state.ai_chat_session
+    return genai.Client(api_key=api_key)
 
+
+def _gemini_ready() -> bool:
+    return _GEMINI_AVAILABLE and _get_api_key() is not None
+
+
+def _clear_chat() -> None:
+    st.session_state.pop("ai_chat_messages", None)
+
+
+def _send_message(text: str) -> None:
+    """Send *text* to Gemini, appending both turns to the conversation log.
+
+    Uses `client.models.generate_content` with the full conversation history as
+    `contents` (no persistent Chat object) — robust against Streamlit reruns.
+    Function calling is auto-handled by the SDK: tool calls happen server-side
+    in a single round-trip, only the final text response comes back to us.
+    """
     if not _GEMINI_AVAILABLE:
-        return None
+        return
     api_key = _get_api_key()
     if not api_key:
-        return None
+        return
 
-    client = genai.Client(api_key=api_key)
+    msgs = st.session_state.setdefault("ai_chat_messages", [])
+    msgs.append({"role": "user", "content": text})
+
+    # Build Gemini-format conversation history from our plain message log.
+    contents = [
+        types.Content(
+            role="user" if m["role"] == "user" else "model",
+            parts=[types.Part(text=m["content"])],
+        )
+        for m in msgs
+    ]
+
     config = types.GenerateContentConfig(
         tools=_TOOLS,
         system_instruction=_SYSTEM_INSTRUCTION.strip(),
     )
-    st.session_state.ai_chat_session  = client.chats.create(model=_MODEL, config=config)
-    st.session_state.ai_chat_messages = []
-    return st.session_state.ai_chat_session
 
+    try:
+        client = _get_gemini_client(api_key)
+        response = client.models.generate_content(
+            model=_MODEL, contents=contents, config=config,
+        )
+        reply = (response.text or "").strip() or "(empty response)"
+    except Exception as exc:                                            # noqa: BLE001
+        reply = f"⚠️ Error from Gemini: `{exc}`"
+        logger.exception("Gemini chat call failed")
 
-def _clear_chat() -> None:
-    st.session_state.pop("ai_chat_session",  None)
-    st.session_state.pop("ai_chat_messages", None)
+    msgs.append({"role": "assistant", "content": reply})
 
 
 # ── UI ───────────────────────────────────────────────────────────────────────
-# Floating Action Button CSS — anchored on a hidden marker so we can find the
-# right element-container even though Streamlit's DOM is heavily nested.
+# Streamlit ≥1.39 adds the class `st-key-{key}` on any element with a custom key.
+# We anchor our CSS on that — far more robust than `:has()` tricks.
 _FAB_CSS = """
 <style>
-/* Hidden marker — pure CSS anchor */
-#ai-fab-marker { display: none; }
-
-/* The element-container that immediately follows the marker = our button */
-div.element-container:has(#ai-fab-marker) + div.element-container {
-    position: fixed;
-    bottom: 24px;
-    left: 24px;
-    z-index: 9999;
+/* ── 1. Pin the whole assistant block fixed bottom-left of the viewport ── */
+.st-key-ai_assistant_fab {
+    position: fixed !important;
+    bottom: 24px !important;
+    left:   24px !important;
+    z-index: 9999 !important;
     width: auto !important;
+    max-width: none !important;
     margin: 0 !important;
     padding: 0 !important;
 }
 
-/* FAB pill button */
-div.element-container:has(#ai-fab-marker) + div.element-container .stButton > button {
-    border-radius: 28px;
-    height: 56px;
-    padding: 0 22px;
-    font-size: 15px;
-    font-weight: 600;
-    background: linear-gradient(135deg, #ED7D31 0%, #C00000 100%);
+/* ── 2. Style the popover trigger to look like a colourful pill FAB ───── */
+.st-key-ai_assistant_fab [data-testid="stPopover"] button,
+.st-key-ai_assistant_fab button[data-testid="stBaseButton-secondary"],
+.st-key-ai_assistant_fab .stPopover > div > button,
+.st-key-ai_assistant_fab button {
+    border-radius: 28px !important;
+    height: 56px !important;
+    padding: 0 22px !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    background: linear-gradient(135deg, #ED7D31 0%, #C00000 100%) !important;
     color: #fff !important;
-    border: none;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    border: none !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18) !important;
     transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
-div.element-container:has(#ai-fab-marker) + div.element-container .stButton > button:hover {
+
+.st-key-ai_assistant_fab button:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-    background: linear-gradient(135deg, #F08F4A 0%, #D11A1A 100%);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
+    background: linear-gradient(135deg, #F08F4A 0%, #D11A1A 100%) !important;
 }
-div.element-container:has(#ai-fab-marker) + div.element-container .stButton > button:active {
+
+.st-key-ai_assistant_fab button:active {
     transform: translateY(0);
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18) !important;
+}
+
+/* ── 3. Size the popover panel that opens above the FAB ───────────────── */
+div[data-baseweb="popover"] {
+    /* Streamlit's popover content lives inside this baseweb wrapper */
+    min-width: 380px;
+}
+.st-key-ai_assistant_fab [data-testid="stPopoverBody"] {
+    min-width: 380px;
+    max-width: min(480px, 92vw);
+    max-height: min(640px, 75vh);
+    overflow-y: auto;
 }
 </style>
 """
 
 
-@st.dialog("✨ AI Assistant", width="large")
-def _chat_dialog() -> None:
-    """The chat modal — opens when the FAB is clicked."""
+def _render_chat_panel() -> None:
+    """The content of the popover — the actual chat UI."""
     # ── prerequisites ─────────────────────────────────────────────────────
     if not _GEMINI_AVAILABLE:
         st.error(
-            "The `google-genai` package isn't installed.  "
-            "Add `google-genai` to `requirements.txt` and reboot the app."
+            "`google-genai` not installed.  Add it to `requirements.txt` and "
+            "reboot the Streamlit Cloud app (Manage app → Reboot)."
         )
         return
     if not _get_api_key():
         st.error(
-            "**`GEMINI_API_KEY`** is missing from `.streamlit/secrets.toml`.  "
-            "Get a free key at "
-            "[aistudio.google.com/apikey](https://aistudio.google.com/apikey) "
-            "and add it to your secrets, then reboot the app."
+            "**`GEMINI_API_KEY`** missing from `secrets`. "
+            "Get a free key at [aistudio.google.com/apikey]"
+            "(https://aistudio.google.com/apikey)."
         )
         return
-    session = _get_chat_session()
-    if session is None:
-        st.error("Could not initialise the Gemini chat session.")
-        return
 
+    st.markdown("### ✨ AI Assistant")
     st.caption(
-        "Ask anything about automation coverage, active runs, bugs, or test "
-        "stability across all BUs.  Numbers come live from TestRail — no "
-        "made-up data."
+        "Ask anything about automation coverage, runs, bugs, or test stability. "
+        "Numbers come live from TestRail — no made-up data."
     )
 
+    msgs = st.session_state.get("ai_chat_messages", [])
+
+    # ── empty-state suggestion chips ──────────────────────────────────────
+    if not msgs:
+        st.markdown("**Try asking:**")
+        cols = st.columns(2)
+        for i, (label, question) in enumerate(_SUGGESTIONS):
+            if cols[i % 2].button(label, key=f"ai_sugg_{i}",
+                                  use_container_width=True):
+                _send_message(question)
+                st.rerun()
+        st.markdown("---")
+
     # ── conversation history ──────────────────────────────────────────────
-    for msg in st.session_state.get("ai_chat_messages", []):
+    for msg in msgs:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     # ── input ─────────────────────────────────────────────────────────────
-    user_input = st.chat_input("e.g. How is Superdrug doing?")
+    user_input = st.chat_input("Ask anything…")
     if user_input:
-        st.session_state.ai_chat_messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking…"):
-                try:
-                    response = session.send_message(user_input)
-                    reply = (response.text or "").strip() or "(empty response)"
-                except Exception as exc:                                # noqa: BLE001
-                    reply = f"⚠️ Error from Gemini: `{exc}`"
-                    logger.exception("Gemini chat call failed")
-            st.markdown(reply)
-        st.session_state.ai_chat_messages.append({"role": "assistant", "content": reply})
+        with st.spinner("Thinking…"):
+            _send_message(user_input)
+        st.rerun()
 
     # ── footer ────────────────────────────────────────────────────────────
-    c1, c2 = st.columns([1, 4])
-    if c1.button("🗑 Clear chat", key="ai_chat_clear"):
+    c1, c2 = st.columns([1, 3])
+    if c1.button("🗑 Clear", key="ai_chat_clear", use_container_width=True):
         _clear_chat()
         st.rerun()
-    c2.caption(
-        f"Model: `{_MODEL}` · Powered by Google Gemini · "
-        f"{len(st.session_state.get('ai_chat_messages', []))} message(s)"
-    )
+    c2.caption(f"✨ {_MODEL} · Uses AI · {len(msgs)} message(s)")
 
 
 def render_floating_button() -> None:
     """Render the floating chat trigger at the bottom-left of the page.
 
-    Idempotent (safe to call once per render).  Even without an API key the
-    button still appears — the missing-key message shows up inside the dialog.
+    Uses a keyed container so we can position it fixed via the
+    `.st-key-ai_assistant_fab` CSS class.  Idempotent — safe to call once per
+    page render.  Even without an API key the button still appears (the
+    missing-key message shows up inside the popover).
     """
     st.markdown(_FAB_CSS, unsafe_allow_html=True)
-    # Hidden marker — anchors the CSS selector for the next element-container.
-    st.markdown('<div id="ai-fab-marker"></div>', unsafe_allow_html=True)
-    if st.button("💬 Ask AI", key="ai_fab_button",
-                 help="Ask anything about coverage, runs and bugs"):
-        _chat_dialog()
+
+    # Keyed container = CSS hook for fixed positioning (Streamlit ≥1.39).
+    with st.container(key="ai_assistant_fab"):
+        # The popover trigger button IS the FAB.  Click → panel opens above it.
+        with st.popover("💬 Ask Dexter", use_container_width=False,
+                        help="Ask Dexter anything about Automation"):
+            _render_chat_panel()

@@ -33,7 +33,6 @@ import streamlit as st
 
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
-from . import theme
 
 # ── brand chart colors (constant across light/dark) ──────────────────────────
 _PIE_PALETTE = [
@@ -227,7 +226,6 @@ def _area_color_map(cov: pd.DataFrame) -> dict[str, str]:
 
 def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None:
     """Pie of automated case distribution across sections (slice size = automated)."""
-    tc   = theme.colors()
     data = cov[cov["automated"] > 0].copy()
     if data.empty:
         return None
@@ -251,8 +249,8 @@ def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None
         ],
     )
     arc = base.mark_arc(innerRadius=55, outerRadius=130,
-                        stroke=tc["bg"], strokeWidth=2)
-    return arc.properties(height=320).configure(background=tc["bg"])
+                        stroke="#ffffff", strokeWidth=2)
+    return arc.properties(height=320)
 
 
 def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart:
@@ -262,7 +260,6 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     Colors: same per-area palette as the pie chart, so a colour means the same
     area in both views.
     """
-    tc   = theme.colors()
     data = cov.copy()
     data["label"]     = data["coverage_pct"].map(lambda v: f"{v:.1f}%")
     # Sort key that mirrors the table: non-zero by coverage DESC, then zero rows
@@ -292,11 +289,9 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
             x=alt.X("coverage_pct:Q",
                     scale=alt.Scale(domain=[0, 100]),
                     axis=alt.Axis(title="Coverage %", grid=True,
-                                  gridColor=tc["grid"], labelColor=tc["axis_label"],
-                                  titleColor=tc["axis_label"], domain=False)),
+                                  gridColor="#f0f0f0", domain=False)),
             y=alt.Y("section:N", sort=y_order,
                     axis=alt.Axis(title=None, labelLimit=240,
-                                  labelColor=tc["axis_label"],
                                   domain=False, ticks=False)),
             color=alt.Color("section:N", scale=color_scale, legend=None),
             tooltip=[
@@ -309,7 +304,7 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     )
     text = (
         alt.Chart(data)
-        .mark_text(align="left", dx=5, fontSize=10, color=tc["text_2"])
+        .mark_text(align="left", dx=5, fontSize=10, color="#555555")
         .encode(
             x=alt.X("coverage_pct:Q"),
             y=alt.Y("section:N", sort=y_order),
@@ -320,8 +315,7 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     return (
         alt.layer(bars, text)
         .properties(height=alt.Step(26))
-        .configure(background=tc["bg"])
-        .configure_view(stroke=tc["border_soft"], strokeWidth=1, fill=tc["bg"])
+        .configure_view(stroke="#e8e8e8", strokeWidth=1)
         .configure_axis(labelFont="Arial")
     )
 
