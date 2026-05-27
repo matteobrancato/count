@@ -117,9 +117,19 @@ You are an automation coverage assistant for AS Watson's testing platform.
 You help managers and QA leads understand the state of test automation across
 Business Units (BUs).
 
-Available BUs:
-  Superdrug, Savers, The Perfume Shop, Kruidvat, Trekpleister, Watsons,
-  ICI Paris XL, Marionnaud, Drogas, Next Gen.
+The complete list of valid Business Units is EXACTLY these 10 — there are NO
+others, do NOT invent variants or combinations:
+
+  - Superdrug
+  - Savers
+  - The Perfume Shop
+  - Kruidvat
+  - Trekpleister
+  - Watsons
+  - ICI Paris XL
+  - Marionnaud
+  - Drogas
+  - Next Gen
 
 Rules
 ─────
@@ -134,8 +144,19 @@ Rules
 7. Call only the tools needed to answer the question.  Do NOT proactively call
    compare_bus() or query other BUs unless the user explicitly asks for a
    comparison or ranking — this is critical for staying within API rate limits.
-8. If a question is ambiguous, ask one short clarifying question.
-9. If the user asks about a BU you don't recognise, call list_bus() first.
+
+CRITICAL — DO NOT ask for clarification when the user names one of the 10 BUs
+above.  "How is Superdrug doing?" is UNAMBIGUOUS → call get_bu_coverage("Superdrug")
+immediately.  Never present invented variants like "Superdrug / Savers" — there
+is no such BU, those are two distinct BUs.
+
+Only ask a clarifying question when:
+  - The user's BU name does NOT match any of the 10 exactly or via known aliases
+    (SD = Superdrug, KV = Kruidvat, WTR = Watsons, TPS = The Perfume Shop, etc.)
+  - The question is genuinely vague (no BU mentioned at all, e.g. "How are we doing?")
+
+Tool error handling: if a tool returns `{"error": "..."}`, share the actual error
+message with the user.  Do NOT make up an explanation or hallucinate alternatives.
 
 Answer format (for "how is X doing" questions)
 ──────────────────────────────────────────────
@@ -608,13 +629,34 @@ _FAB_CSS = """
 }
 
 /* ── 2. FAB trigger — circle by default, morphs into pill on hover ────── */
-.st-key-ai_assistant_fab [data-testid="stPopover"] button,
-.st-key-ai_assistant_fab button[data-testid="stBaseButton-secondary"],
-.st-key-ai_assistant_fab .stPopover > div > button,
-.st-key-ai_assistant_fab button {
-    /* Collapsed state: a tight circle that shows only the leading emoji */
+/* Strategy: control the OUTER popover container's width (Streamlit applies
+   inner layout we can't override).  The button fills 100% of that container,
+   and we transition the container's width on hover. */
+.st-key-ai_assistant_fab [data-testid="stPopover"],
+.st-key-ai_assistant_fab .stPopover {
     width: 48px !important;
     min-width: 48px !important;
+    max-width: 48px !important;
+    height: 48px !important;
+    transition:
+        width        0.30s cubic-bezier(0.4, 0, 0.2, 1),
+        min-width    0.30s cubic-bezier(0.4, 0, 0.2, 1),
+        max-width    0.30s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.st-key-ai_assistant_fab [data-testid="stPopover"]:hover,
+.st-key-ai_assistant_fab .stPopover:hover {
+    width: 165px !important;
+    min-width: 165px !important;
+    max-width: 165px !important;
+}
+
+/* The button itself fills the container; its shape morphs along with width. */
+.st-key-ai_assistant_fab [data-testid="stPopover"] button,
+.st-key-ai_assistant_fab .stPopover button,
+.st-key-ai_assistant_fab button {
+    width: 100% !important;
+    min-width: 100% !important;
     height: 48px !important;
     padding: 0 14px !important;
     border-radius: 50% !important;
@@ -624,19 +666,17 @@ _FAB_CSS = """
     font-size: 18px !important;
     font-weight: 600 !important;
     line-height: 1 !important;
-    background: #FF4B4B !important;     /* Streamlit's signature red */
+    background: #FF4B4B !important;
     color: #fff !important;
     border: none !important;
     box-shadow: 0 2px 10px rgba(255, 75, 75, 0.35) !important;
     transition:
-        width        0.30s cubic-bezier(0.4, 0, 0.2, 1),
         border-radius 0.30s cubic-bezier(0.4, 0, 0.2, 1),
-        box-shadow   0.20s ease,
-        background   0.20s ease;
+        box-shadow    0.20s ease,
+        background    0.20s ease;
 }
 
-/* Inner Streamlit markdown wrapper — keep it clipped so the label only
-   becomes visible as the button width grows. */
+/* Inner Streamlit markdown — keep it clipped to the container width. */
 .st-key-ai_assistant_fab button > div,
 .st-key-ai_assistant_fab button p {
     overflow: hidden !important;
@@ -645,10 +685,10 @@ _FAB_CSS = """
     margin: 0 !important;
 }
 
-.st-key-ai_assistant_fab button:hover {
-    /* Expanded state: a pill wide enough to reveal "💬 Ask Dexter" */
-    width: 165px !important;
-    min-width: 165px !important;
+/* When the container is hovered, the button morphs into a pill */
+.st-key-ai_assistant_fab [data-testid="stPopover"]:hover button,
+.st-key-ai_assistant_fab .stPopover:hover button,
+.st-key-ai_assistant_fab:hover button {
     border-radius: 26px !important;
     box-shadow: 0 4px 18px rgba(255, 75, 75, 0.45) !important;
     background: #E63E3E !important;
