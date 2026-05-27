@@ -73,17 +73,27 @@ Available BUs:
   Superdrug, Savers, The Perfume Shop, Kruidvat, Trekpleister, Watsons,
   ICI Paris XL, Marionnaud, Drogas, Next Gen.
 
-Rules:
-- ALWAYS use the provided tools to get exact numbers. Never invent or estimate.
-- Be concise: managers want short answers (3-6 lines, bullets where helpful).
-- Use full Business Unit names in your replies (e.g. "Superdrug", not "SD").
-- Format big numbers with commas (e.g. "2,032").
-- Always include context (e.g. "out of 7,234 total cases").
-- For "how are we doing" questions: lead with the headline coverage %, then
-  1-2 lines of context, then call out the biggest gap if relevant.
-- If a question is ambiguous, ask one clarifying question instead of guessing.
-- If the user asks about a BU you don't recognise, call list_bus() first.
-- For comparisons across BUs, use compare_bus().
+Rules
+─────
+1. ALWAYS use the provided tools to get exact numbers. Never invent or estimate.
+2. **Reply in the user's language.**  If they write in Italian, reply in Italian.
+   If they write in English, reply in English.  Match their tone.
+3. Be concise and visual.  Lead with the headline number in **bold**, then 1-2
+   short bullets for context.  Skip preamble like "Here is the data:".
+4. Use full BU names in replies (e.g. "Superdrug", not "SD").
+5. Format numbers with thousands separators ("2,032", not "2032").
+6. Always include context ("out of 7,234 total cases", "covers 28.3% of cases").
+7. Call only the tools needed to answer the question.  Do NOT proactively call
+   compare_bus() or query other BUs unless the user explicitly asks for a
+   comparison or ranking — this is critical for staying within API rate limits.
+8. If a question is ambiguous, ask one short clarifying question.
+9. If the user asks about a BU you don't recognise, call list_bus() first.
+
+Answer format (for "how is X doing" questions)
+──────────────────────────────────────────────
+  **28.3%** automation coverage
+  • 1,116 automated cases out of 3,949 total
+  • Regression baseline: 92% covered (X/Y cases)
 """
 
 # Suggestion chips shown in the empty-state of the chat panel.
@@ -441,9 +451,11 @@ def _send_message(text: str) -> None:
         err_str = str(exc)
         if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
             reply = (
-                "⚠️ Gemini API quota reached.  Wait a minute and try again, "
-                "or check the key at "
-                "[aistudio.google.com/apikey](https://aistudio.google.com/apikey)."
+                "⚠️ **Gemini rate limit hit.**  The free tier allows ~10 "
+                "questions per minute — complex queries can use multiple "
+                "internal calls.  Wait ~60 seconds and ask again.  "
+                "Details: [aistudio.google.com/apikey]"
+                "(https://aistudio.google.com/apikey)."
             )
         elif "404" in err_str or "NOT_FOUND" in err_str:
             reply = (
@@ -536,14 +548,22 @@ def _render_chat_panel() -> None:
         )
         return
 
-    # Title row with a "new chat" icon button on the right
+    # Title row with a "new chat" icon button on the right.
+    # The session_id is bumped on every new-chat click so widget keys change,
+    # forcing Streamlit to treat every form/button as brand-new and avoiding
+    # the popover quirk where stale widget state leaks across reruns.
     title_col, new_chat_col = st.columns([5, 1])
     title_col.markdown("### ✨ AI Assistant")
     if new_chat_col.button("📝", key="ai_new_chat",
                            help="Start a new chat",
                            use_container_width=True):
-        st.session_state.pop("ai_chat_messages", None)
+        st.session_state["ai_chat_messages"]   = []
+        st.session_state["ai_chat_session_id"] = (
+            st.session_state.get("ai_chat_session_id", 0) + 1
+        )
         st.rerun()
+
+    sid = st.session_state.get("ai_chat_session_id", 0)
 
     st.caption(
         "Ask anything about automation coverage, runs, bugs, or test stability. "
@@ -557,7 +577,7 @@ def _render_chat_panel() -> None:
         st.markdown("**Try asking:**")
         cols = st.columns(2)
         for i, (label, question) in enumerate(_SUGGESTIONS):
-            if cols[i % 2].button(label, key=f"ai_sugg_{i}",
+            if cols[i % 2].button(label, key=f"ai_sugg_{sid}_{i}",
                                   use_container_width=True):
                 _send_message(question)
                 st.rerun()
@@ -572,12 +592,12 @@ def _render_chat_panel() -> None:
     # A form (instead of `st.chat_input`) lets us keep everything inside the
     # popover cleanly — `chat_input` has known double-render quirks when nested
     # in popovers because it tries to position itself fixed at the container
-    # bottom.  A form with Enter-to-submit gives the same UX without surprises.
-    with st.form(key="ai_chat_form", clear_on_submit=True, border=False):
+    # bottom.  The session_id in the key resets the form on each new chat.
+    with st.form(key=f"ai_chat_form_{sid}", clear_on_submit=True, border=False):
         cols = st.columns([5, 1])
         user_input = cols[0].text_input(
             "Message", placeholder="Ask anything…",
-            label_visibility="collapsed", key="ai_input",
+            label_visibility="collapsed", key=f"ai_input_{sid}",
         )
         submitted = cols[1].form_submit_button("→", use_container_width=True)
     if submitted and user_input.strip():
