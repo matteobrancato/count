@@ -33,6 +33,8 @@ https://aistudio.google.com/apikey.
 from __future__ import annotations
 
 import logging
+import re
+import time
 from typing import Any
 
 import streamlit as st
@@ -56,13 +58,59 @@ except ImportError:
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
 
+# When `GEMINI_MODEL` is NOT explicitly set in secrets, we walk this chain on
+# each request — picking the first model that's not currently rate-limited.
+# Ordered preferred → most-likely-available.  The first one to reply wins.
+_FALLBACK_CHAIN: list[str] = [
+    "gemini-2.5-flash",   # solid free tier in most regions (10 RPM · 250 RPD)
+    "gemini-2.0-flash",   # older, sometimes spare quota (15 RPM · 200 RPD)
+]
 
-def _get_model() -> str:
-    """Resolve the Gemini model name (override via `GEMINI_MODEL` in secrets)."""
+
+def _configured_model() -> str | None:
+    """Return the model from secrets if set, else None (= use fallback chain)."""
     try:
-        return st.secrets.get("GEMINI_MODEL", _DEFAULT_MODEL)
+        v = st.secrets.get("GEMINI_MODEL")
+        return v if v else None
     except Exception:                                                   # noqa: BLE001
-        return _DEFAULT_MODEL
+        return None
+
+
+def _models_to_try() -> list[str]:
+    """Models to attempt in order for the current message.
+
+    - If `GEMINI_MODEL` is set in secrets → use ONLY that (strict, no fallback).
+    - Otherwise → walk the fallback chain.
+    """
+    configured = _configured_model()
+    if configured:
+        return [configured]
+    return list(_FALLBACK_CHAIN)
+
+
+def _display_model() -> str:
+    """Model name shown in the footer caption."""
+    used = st.session_state.get("ai_last_used_model")
+    if used:
+        return used
+    return _configured_model() or _FALLBACK_CHAIN[0]
+
+
+_RETRY_DELAY_RE = re.compile(
+    r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s",
+    re.IGNORECASE,
+)
+
+
+def _parse_retry_delay(err_str: str, default: float = 60.0) -> float:
+    """Pull a `retryDelay: 16s` value out of a Gemini RESOURCE_EXHAUSTED error.
+
+    The SDK exposes the original Google API error payload as the exception
+    string, so a regex over the string body is the easiest way to grab the
+    `RetryInfo` hint without depending on private SDK internals.
+    """
+    m = _RETRY_DELAY_RE.search(err_str)
+    return float(m.group(1)) if m else default
 
 _SYSTEM_INSTRUCTION = """
 You are an automation coverage assistant for AS Watson's testing platform.
@@ -411,8 +459,11 @@ def _gemini_ready() -> bool:
 def _send_message(text: str) -> None:
     """Send *text* to Gemini, appending both turns to the conversation log.
 
-    Uses `client.models.generate_content` with the full conversation history as
-    `contents` (no persistent Chat object) — robust against Streamlit reruns.
+    Tries each model in `_models_to_try()` in order, falling back to the next
+    one if the current model is rate-limited (RESOURCE_EXHAUSTED / 429) or not
+    found (404).  A short cooldown is recorded per-model so we don't keep
+    hitting an exhausted one within the same session.
+
     Function calling is auto-handled by the SDK: tool calls happen server-side
     in a single round-trip, only the final text response comes back to us.
     """
@@ -425,7 +476,6 @@ def _send_message(text: str) -> None:
     msgs = st.session_state.setdefault("ai_chat_messages", [])
     msgs.append({"role": "user", "content": text})
 
-    # Build Gemini-format conversation history from our plain message log.
     contents = [
         types.Content(
             role="user" if m["role"] == "user" else "model",
@@ -433,41 +483,83 @@ def _send_message(text: str) -> None:
         )
         for m in msgs
     ]
-
     config = types.GenerateContentConfig(
         tools=_TOOLS,
         system_instruction=_SYSTEM_INSTRUCTION.strip(),
     )
 
-    model = _get_model()
-    try:
-        client = _get_gemini_client(api_key)
-        response = client.models.generate_content(
-            model=model, contents=contents, config=config,
-        )
-        reply = (response.text or "").strip() or "(empty response)"
-    except Exception as exc:                                            # noqa: BLE001
-        # Trim noisy multi-line API dumps to a single, user-facing message.
-        err_str = str(exc)
-        if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
-            reply = (
-                "⚠️ **Gemini rate limit hit.**  The free tier allows ~10 "
-                "questions per minute — complex queries can use multiple "
-                "internal calls.  Wait ~60 seconds and ask again.  "
-                "Details: [aistudio.google.com/apikey]"
-                "(https://aistudio.google.com/apikey)."
+    candidates = _models_to_try()
+    cooling: dict[str, float] = st.session_state.setdefault("ai_exhausted_models", {})
+    now = time.time()
+
+    reply: str | None = None
+    used_model: str | None = None
+    last_err: str = ""
+
+    for model in candidates:
+        # Skip models still in cooldown (rate-limit or 404 hit recently).
+        if cooling.get(model, 0.0) > now:
+            continue
+        try:
+            client = _get_gemini_client(api_key)
+            response = client.models.generate_content(
+                model=model, contents=contents, config=config,
             )
-        elif "404" in err_str or "NOT_FOUND" in err_str:
+            reply = (response.text or "").strip() or "(empty response)"
+            used_model = model
+            break
+        except Exception as exc:                                        # noqa: BLE001
+            err_str = str(exc)
+            last_err = err_str
+            if "limit: 0" in err_str:
+                # Account-level (no free tier on this model) — long cooldown:
+                # nothing we can do server-side, retry tomorrow.
+                cooling[model] = now + 24 * 3600
+                logger.info("Model %s has no quota (limit: 0) — trying next", model)
+                continue
+            if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
+                # Transient rate limit — honour Gemini's suggested retryDelay.
+                cooling[model] = now + _parse_retry_delay(err_str, default=60.0)
+                logger.info("Model %s rate-limited — trying next", model)
+                continue
+            if "404" in err_str or "NOT_FOUND" in err_str:
+                # Model doesn't exist — never retry within this session.
+                cooling[model] = now + 9_999_999
+                logger.info("Model %s not found — trying next", model)
+                continue
+            # Different error → don't waste fallbacks, break out.
+            logger.exception("Unexpected Gemini error from %s", model)
+            break
+
+    if reply is None:
+        # Every candidate failed.  Compose the most useful message we can.
+        if "limit: 0" in last_err:
             reply = (
-                f"⚠️ Model `{model}` not available on this API key.  "
-                "Set `GEMINI_MODEL` in `secrets.toml` to a valid one — try "
-                "`gemini-2.5-flash` or `gemini-2.0-flash`."
+                "⚠️ **Your Google AI Studio account has no free-tier quota** "
+                "for the available models (`limit: 0` on every fallback).  "
+                "Common for new EU/UK accounts: the free tier exists, but "
+                "needs billing enabled on the Google Cloud project to be "
+                "unlocked.  Linking a card does **NOT** charge you under "
+                "the free tier — it just unlocks the quota.\n\n"
+                "Fix: [console.cloud.google.com/billing]"
+                "(https://console.cloud.google.com/billing)."
+            )
+        elif "RESOURCE_EXHAUSTED" in last_err or "429" in last_err:
+            reply = (
+                "⚠️ **All fallback models hit their rate limit.**  Wait "
+                "a minute and try again — RPM resets every 60 seconds, "
+                "RPD resets at midnight UTC."
+            )
+        elif "404" in last_err or "NOT_FOUND" in last_err:
+            reply = (
+                "⚠️ **No usable Gemini model found.**  Set `GEMINI_MODEL` "
+                "in `secrets.toml` to a valid one (e.g. `gemini-2.5-flash`)."
             )
         else:
-            short = err_str.split("\n", 1)[0][:240]
+            short = (last_err or "no error captured").split("\n", 1)[0][:240]
             reply = f"⚠️ Error from Gemini: `{short}`"
-        logger.exception("Gemini chat call failed")
 
+    st.session_state["ai_last_used_model"] = used_model
     msgs.append({"role": "assistant", "content": reply})
 
 
@@ -608,7 +700,7 @@ def _render_chat_panel() -> None:
     # ── footer ────────────────────────────────────────────────────────────
     st.markdown(
         f"<div style='text-align:right;font-size:10.5px;color:#888;"
-        f"margin-top:6px'>{_get_model()} · Uses AI</div>",
+        f"margin-top:6px'>{_display_model()} · Uses AI</div>",
         unsafe_allow_html=True,
     )
 
