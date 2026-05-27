@@ -155,6 +155,27 @@ _SUGGESTIONS: list[tuple[str, str]] = [
 
 
 # ── BU resolution ────────────────────────────────────────────────────────────
+def _safe_tool(fn):
+    """Decorator: catch any exception in a tool function and return a dict that
+    the LLM can read.  Without this, an uncaught exception inside a tool would
+    be opaquely re-phrased by the LLM as "internal error" with no diagnostic.
+    """
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:                                        # noqa: BLE001
+            logger.exception("Tool %s failed", fn.__name__)
+            return {
+                "error":         f"{type(exc).__name__}: {str(exc)[:200]}",
+                "tool":          fn.__name__,
+                "tool_arguments": {"args": list(args), "kwargs": dict(kwargs)},
+            }
+    return wrapper
+
+
 def _resolve_bu_name(query: str) -> str | None:
     """Map a user-supplied BU code/name to the canonical display name."""
     if not query:
@@ -176,11 +197,13 @@ def _resolve_bu_name(query: str) -> str | None:
 
 
 # ── Tool functions exposed to Gemini ─────────────────────────────────────────
+@_safe_tool
 def list_bus() -> dict[str, Any]:
     """List all Business Units available in the dashboard."""
     return {"business_units": sorted({r.bu for r in ALL_RULES})}
 
 
+@_safe_tool
 def get_bu_coverage(bu: str) -> dict[str, Any]:
     """Get automation coverage for a Business Unit.
 
@@ -248,6 +271,7 @@ def get_bu_coverage(bu: str) -> dict[str, Any]:
     }
 
 
+@_safe_tool
 def get_active_runs(bu: str) -> dict[str, Any]:
     """Get the list of active (open) TestRail runs for a BU.
 
@@ -304,6 +328,7 @@ def get_active_runs(bu: str) -> dict[str, Any]:
     }
 
 
+@_safe_tool
 def get_open_bugs(bu: str) -> dict[str, Any]:
     """List the open JIRA bug keys for a BU, with the test that generated each.
 
@@ -348,6 +373,7 @@ def get_open_bugs(bu: str) -> dict[str, Any]:
     }
 
 
+@_safe_tool
 def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5) -> dict[str, Any]:
     """Analyse test stability over recent completed runs for a BU.
 
@@ -399,6 +425,7 @@ def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5) -> dic
     }
 
 
+@_safe_tool
 def compare_bus() -> dict[str, Any]:
     """Rank all Business Units by overall automation coverage %.
 
@@ -623,8 +650,16 @@ div[data-baseweb="popover"] {
 """
 
 
+@st.fragment
 def _render_chat_panel() -> None:
-    """The content of the popover — the actual chat UI."""
+    """The content of the popover — the actual chat UI.
+
+    Decorated as a Streamlit fragment so reruns triggered inside the popover
+    (form submission, new-chat button) only re-render THIS function, not the
+    whole page.  Side effect we care about: it also dramatically reduces the
+    popover's double-render quirk because Streamlit can diff against a stable
+    fragment scope instead of the whole script.
+    """
     # ── prerequisites ─────────────────────────────────────────────────────
     if not _GEMINI_AVAILABLE:
         st.error(
@@ -653,7 +688,7 @@ def _render_chat_panel() -> None:
         st.session_state["ai_chat_session_id"] = (
             st.session_state.get("ai_chat_session_id", 0) + 1
         )
-        st.rerun()
+        st.rerun(scope="fragment")
 
     sid = st.session_state.get("ai_chat_session_id", 0)
 
@@ -672,7 +707,7 @@ def _render_chat_panel() -> None:
             if cols[i % 2].button(label, key=f"ai_sugg_{sid}_{i}",
                                   use_container_width=True):
                 _send_message(question)
-                st.rerun()
+                st.rerun(scope="fragment")
         st.markdown("---")
 
     # ── conversation history ──────────────────────────────────────────────
@@ -695,7 +730,7 @@ def _render_chat_panel() -> None:
     if submitted and user_input.strip():
         with st.spinner("Thinking…"):
             _send_message(user_input.strip())
-        st.rerun()
+        st.rerun(scope="fragment")
 
     # ── footer ────────────────────────────────────────────────────────────
     st.markdown(
