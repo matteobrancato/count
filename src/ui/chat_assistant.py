@@ -429,20 +429,27 @@ def _send_message(text: str) -> None:
         system_instruction=_SYSTEM_INSTRUCTION.strip(),
     )
 
+    model = _get_model()
     try:
         client = _get_gemini_client(api_key)
         response = client.models.generate_content(
-            model=_get_model(), contents=contents, config=config,
+            model=model, contents=contents, config=config,
         )
         reply = (response.text or "").strip() or "(empty response)"
     except Exception as exc:                                            # noqa: BLE001
-        # Trim noisy multi-line / quota dumps to a single-line user-facing message.
+        # Trim noisy multi-line API dumps to a single, user-facing message.
         err_str = str(exc)
         if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
             reply = (
                 "⚠️ Gemini API quota reached.  Wait a minute and try again, "
                 "or check the key at "
                 "[aistudio.google.com/apikey](https://aistudio.google.com/apikey)."
+            )
+        elif "404" in err_str or "NOT_FOUND" in err_str:
+            reply = (
+                f"⚠️ Model `{model}` not available on this API key.  "
+                "Set `GEMINI_MODEL` in `secrets.toml` to a valid one — try "
+                "`gemini-2.5-flash` or `gemini-2.0-flash`."
             )
         else:
             short = err_str.split("\n", 1)[0][:240]
@@ -554,10 +561,20 @@ def _render_chat_panel() -> None:
             st.markdown(msg["content"])
 
     # ── input ─────────────────────────────────────────────────────────────
-    user_input = st.chat_input("Ask anything…")
-    if user_input:
+    # A form (instead of `st.chat_input`) lets us keep everything inside the
+    # popover cleanly — `chat_input` has known double-render quirks when nested
+    # in popovers because it tries to position itself fixed at the container
+    # bottom.  A form with Enter-to-submit gives the same UX without surprises.
+    with st.form(key="ai_chat_form", clear_on_submit=True, border=False):
+        cols = st.columns([5, 1])
+        user_input = cols[0].text_input(
+            "Message", placeholder="Ask anything…",
+            label_visibility="collapsed", key="ai_input",
+        )
+        submitted = cols[1].form_submit_button("→", use_container_width=True)
+    if submitted and user_input.strip():
         with st.spinner("Thinking…"):
-            _send_message(user_input)
+            _send_message(user_input.strip())
         st.rerun()
 
     # ── footer ────────────────────────────────────────────────────────────
