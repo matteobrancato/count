@@ -45,6 +45,24 @@ ALL_COUNTRY_TOKENS: dict[str, str] = {
 }
 
 
+# --------------------------------------------------------------------- run/plan name aliases
+# BU codes that appear in TestRail run/plan names (case-insensitive).  Used by the
+# Runs tab to associate a run with the right BU.  Longer codes are matched first
+# so "TPS" wins over "TP" when both could apply.
+BU_RUN_ALIASES: dict[str, list[str]] = {
+    "Superdrug":        ["SD"],
+    "Savers":           ["SV"],
+    "The Perfume Shop": ["TPS"],
+    "Kruidvat":         ["KV"],
+    "Trekpleister":     ["TKP", "TP"],
+    "Watsons":          ["WTR"],
+    "ICI Paris XL":     ["IPXL", "EE"],
+    "Marionnaud":       ["MFR", "MRN"],
+    "Drogas":           ["DRG"],
+    "Next Gen":         ["NG", "NEXTGEN"],
+}
+
+
 @dataclass(frozen=True)
 class Rule:
     name: str

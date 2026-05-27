@@ -5,7 +5,7 @@ import traceback
 import streamlit as st
 
 from src import testrail_client as tr
-from src.ui import backlog_tab, coverage_tab, overview_tab, pivot_tab, report_tab, theme
+from src.ui import backlog_tab, coverage_tab, overview_tab, pivot_tab, report_tab, runs_tab, theme
 
 
 st.set_page_config(
@@ -79,8 +79,10 @@ def main() -> None:
     except ImportError:
         pass
 
-    tab_explore, tab_backlog, tab_coverage, tab_overview, tab_report, tab_debug = st.tabs(
-        ["📊 Explorer", "📋 Backlog", "📐 Coverage", "🧭 Overview", "📄 Report", "Debug"]
+    (tab_explore, tab_backlog, tab_coverage, tab_overview, tab_report,
+     tab_runs, tab_debug) = st.tabs(
+        ["📊 Explorer", "📋 Backlog", "📐 Coverage", "🧭 Overview",
+         "📄 Report", "🏃 Runs", "Debug"]
     )
 
     try:
@@ -94,6 +96,8 @@ def main() -> None:
             overview_tab.render()
         with tab_report:
             report_tab.render()
+        with tab_runs:
+            runs_tab.render()
         with tab_debug:
             from src.ui import debug_tab
             debug_tab.render()

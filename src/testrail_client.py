@@ -154,6 +154,60 @@ class TestRailClient:
             offset += BATCH_SIZE * limit
         return cases
 
+    # -------------------------------------------------- runs / plans / results
+    def _get_paginated(self, endpoint: str, key: str, limit: int = 250) -> list[dict]:
+        """Generic paginated fetch — used for runs / plans / tests / results.
+
+        TestRail v2 returns either a bare list (older deployments) or an envelope
+        ``{key: [...], _links: {next: ...}}``.  We follow ``_links.next`` until null.
+
+        TestRail's URL convention uses `&` for all params after the endpoint path
+        (the leading `?` is in the rewrite rule: index.php?/api/v2/<endpoint>).
+        """
+        out: list[dict] = []
+        url = f"{endpoint}&limit={limit}&offset=0"
+        while url:
+            payload = self._get(url)
+            if isinstance(payload, list):
+                return payload   # Old TR — full list, no pagination envelope.
+            out.extend(payload.get(key, []))
+            nxt = (payload.get("_links") or {}).get("next")
+            url = nxt.lstrip("/") if nxt else None
+        return out
+
+    def get_runs(self, project_id: int, is_completed: bool | None = None) -> list[dict]:
+        """List runs for a project (excluding runs that belong to a plan).
+
+        Each run dict already carries summary counts: passed_count, failed_count,
+        blocked_count, untested_count, retest_count, custom_status_*_count.
+        """
+        endpoint = f"get_runs/{project_id}"
+        if is_completed is not None:
+            endpoint += f"&is_completed={1 if is_completed else 0}"
+        return self._get_paginated(endpoint, key="runs")
+
+    def get_plans(self, project_id: int, is_completed: bool | None = None) -> list[dict]:
+        """List test plans for a project (each plan can contain many runs)."""
+        endpoint = f"get_plans/{project_id}"
+        if is_completed is not None:
+            endpoint += f"&is_completed={1 if is_completed else 0}"
+        return self._get_paginated(endpoint, key="plans")
+
+    def get_plan(self, plan_id: int) -> dict:
+        """Plan detail with `entries` → each entry has `runs`."""
+        return self._get(f"get_plan/{plan_id}")
+
+    def get_tests(self, run_id: int) -> list[dict]:
+        """All tests in a run with their current status_id."""
+        return self._get_paginated(f"get_tests/{run_id}", key="tests")
+
+    def get_results_for_run(self, run_id: int, status_id: int | None = None) -> list[dict]:
+        """All results for a run, optionally filtered by status_id (5 = failed)."""
+        endpoint = f"get_results_for_run/{run_id}"
+        if status_id is not None:
+            endpoint += f"&status_id={status_id}"
+        return self._get_paginated(endpoint, key="results")
+
 
 # --------------------------------------------------------------------- caching
 # We cache at the *function* level so Streamlit's cache key includes arguments.
@@ -206,6 +260,34 @@ def fetch_labels(project_id: int) -> dict[int, str]:
     return {int(lbl["id"]): lbl.get("title", lbl.get("name", "")) for lbl in raw}
 
 
+# ── runs / plans / results — shorter TTL because active state changes often ──
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_runs(project_id: int, is_completed: bool | None = None) -> list[dict]:
+    return _get_client().get_runs(project_id, is_completed=is_completed)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_plans(project_id: int, is_completed: bool | None = None) -> list[dict]:
+    return _get_client().get_plans(project_id, is_completed=is_completed)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_plan(plan_id: int) -> dict:
+    return _get_client().get_plan(plan_id)
+
+
+# Completed-run data is immutable → long TTL (6h).
+@st.cache_data(show_spinner=False, ttl=21600)
+def fetch_tests(run_id: int) -> list[dict]:
+    return _get_client().get_tests(run_id)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_failed_results(run_id: int) -> list[dict]:
+    """Failed results only (status_id=5) — used for bug/defect extraction."""
+    return _get_client().get_results_for_run(run_id, status_id=5)
+
+
 def resolve_project_id(suite_id: int) -> int:
     """Get the project_id that owns a given suite (needed for get_cases)."""
     suite = fetch_suite(suite_id)
@@ -214,7 +296,8 @@ def resolve_project_id(suite_id: int) -> int:
 
 def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
-               fetch_suite, fetch_sections, fetch_cases, fetch_labels):
+               fetch_suite, fetch_sections, fetch_cases, fetch_labels,
+               fetch_runs, fetch_plans, fetch_plan, fetch_tests, fetch_failed_results):
         fn.clear()
 
 
