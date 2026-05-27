@@ -118,20 +118,44 @@ def _flatten_active_runs(project_ids: set[int]) -> list[dict]:
     Each output dict carries the run + a synthetic ``plan_name`` and ``project_id``.
     Dedup on run ID so we don't show the same run twice if it ever appears in
     both get_runs and get_plan.entries.
+
+    Plan detail fetches are parallelised because TestRail requires one HTTP
+    call per plan to read its entries.  For projects with many open plans
+    (MVP4 has 100+), serial fetching would take 30-60 seconds on cold start.
     """
     seen: set[int] = set()
     out:  list[dict] = []
     for pid in project_ids:
-        # 1) Standalone runs (not inside a plan)
+        # 1) Standalone runs (not inside a plan) — single paginated call.
         for run in tr.fetch_runs(pid, is_completed=False):
             rid = int(run.get("id"))
             if rid in seen:
                 continue
             seen.add(rid)
             out.append({**run, "plan_name": None, "project_id": pid})
-        # 2) Runs inside active plans
-        for plan in tr.fetch_plans(pid, is_completed=False):
-            plan_detail = tr.fetch_plan(int(plan["id"]))
+
+        # 2) Runs inside active plans — fetch all plan details in parallel.
+        plans = tr.fetch_plans(pid, is_completed=False)
+        if not plans:
+            continue
+        plan_ids = [int(p["id"]) for p in plans]
+        plan_details: dict[int, dict] = {}
+        max_workers = min(len(plan_ids), 10)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(tr.fetch_plan, plan_id): plan_id
+                       for plan_id in plan_ids}
+            for fut in as_completed(futures):
+                plan_id = futures[fut]
+                try:
+                    plan_details[plan_id] = fut.result()
+                except Exception:
+                    # Skip plans we can't fetch — log nothing here to keep
+                    # the UI silent on transient failures.
+                    plan_details[plan_id] = {}
+
+        for plan in plans:
+            plan_id     = int(plan["id"])
+            plan_detail = plan_details.get(plan_id, {})
             plan_name   = plan_detail.get("name") or plan.get("name")
             for entry in (plan_detail.get("entries") or []):
                 for run in (entry.get("runs") or []):
@@ -248,20 +272,41 @@ def _collect_bug_records(runs: list[dict]) -> list[dict]:
 
 # ── stability analysis ──────────────────────────────────────────────────────
 def _completed_runs_for_bu(bu: str, project_ids: set[int], limit: int) -> list[dict]:
-    """Most recent N completed runs that match the BU (standalone + plan-contained)."""
+    """Most recent N completed runs that match the BU (standalone + plan-contained).
+
+    Plan detail fetches are parallelised — same reason as `_flatten_active_runs`:
+    serial fetch_plan calls over a project with many plans is the dominant
+    bottleneck on cold start.
+    """
     candidates: list[dict] = []
     for pid in project_ids:
+        # 1) Standalone completed runs (single paginated call).
         for run in tr.fetch_runs(pid, is_completed=True):
             if bu in _bus_for_run_name(run.get("name")):
                 candidates.append({**run, "project_id": pid})
-        for plan in tr.fetch_plans(pid, is_completed=True):
-            if bu not in _bus_for_run_name(plan.get("name")):
-                continue
-            plan_detail = tr.fetch_plan(int(plan["id"]))
-            for entry in (plan_detail.get("entries") or []):
-                for run in (entry.get("runs") or []):
-                    if run.get("is_completed"):
-                        candidates.append({**run, "project_id": pid})
+
+        # 2) Completed plans matching this BU — parallelise the detail fetches.
+        matching_plans = [
+            p for p in tr.fetch_plans(pid, is_completed=True)
+            if bu in _bus_for_run_name(p.get("name"))
+        ]
+        if not matching_plans:
+            continue
+        plan_ids = [int(p["id"]) for p in matching_plans]
+        max_workers = min(len(plan_ids), 10)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(tr.fetch_plan, plan_id): plan_id
+                       for plan_id in plan_ids}
+            for fut in as_completed(futures):
+                try:
+                    plan_detail = fut.result()
+                except Exception:
+                    continue
+                for entry in (plan_detail.get("entries") or []):
+                    for run in (entry.get("runs") or []):
+                        if run.get("is_completed"):
+                            candidates.append({**run, "project_id": pid})
+
     candidates.sort(key=lambda r: int(r.get("completed_on") or r.get("created_on") or 0),
                     reverse=True)
     return candidates[:limit]
@@ -378,8 +423,14 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
         "Sorted by last activity (most recent first)."
     )
 
-    with st.spinner("Fetching active runs…"):
-        all_active = _flatten_active_runs(project_ids)
+    try:
+        with st.spinner("Fetching active runs from TestRail (parallel fetch — ~5-15s on cold start)…"):
+            all_active = _flatten_active_runs(project_ids)
+    except Exception as exc:                                            # noqa: BLE001
+        st.error(
+            f"⚠️ Could not fetch active runs: `{type(exc).__name__}: {str(exc)[:200]}`"
+        )
+        return
 
     bu_runs = [r for r in all_active
                if bu in _bus_for_run_name(r.get("name"))
@@ -495,12 +546,22 @@ def _render_stability(bu: str, project_ids: set[int]) -> None:
               "classified.  Lower values surface more cases but are noisier."),
     )
 
-    with st.spinner("Fetching completed runs + their tests…"):
-        runs = _completed_runs_for_bu(bu, project_ids, limit=int(n_runs))
-        if not runs:
-            st.info("No completed runs found for this BU.")
-            return
-        stab = _classify_stability(runs, min_executions=int(min_exec))
+    try:
+        with st.spinner(
+            f"Fetching last {n_runs} completed runs + their tests "
+            "(can take 15-45s on cold start)…"
+        ):
+            runs = _completed_runs_for_bu(bu, project_ids, limit=int(n_runs))
+            if not runs:
+                st.info("No completed runs found for this BU.")
+                return
+            stab = _classify_stability(runs, min_executions=int(min_exec))
+    except Exception as exc:                                            # noqa: BLE001
+        st.error(
+            f"⚠️ Could not fetch stability data: "
+            f"`{type(exc).__name__}: {str(exc)[:200]}`"
+        )
+        return
 
     if stab.empty:
         st.info("No test data found in the selected runs.")

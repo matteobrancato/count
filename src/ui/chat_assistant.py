@@ -650,16 +650,8 @@ div[data-baseweb="popover"] {
 """
 
 
-@st.fragment
 def _render_chat_panel() -> None:
-    """The content of the popover — the actual chat UI.
-
-    Decorated as a Streamlit fragment so reruns triggered inside the popover
-    (form submission, new-chat button) only re-render THIS function, not the
-    whole page.  Side effect we care about: it also dramatically reduces the
-    popover's double-render quirk because Streamlit can diff against a stable
-    fragment scope instead of the whole script.
-    """
+    """The content of the popover — the actual chat UI."""
     # ── prerequisites ─────────────────────────────────────────────────────
     if not _GEMINI_AVAILABLE:
         st.error(
@@ -688,7 +680,7 @@ def _render_chat_panel() -> None:
         st.session_state["ai_chat_session_id"] = (
             st.session_state.get("ai_chat_session_id", 0) + 1
         )
-        st.rerun(scope="fragment")
+        st.rerun()
 
     sid = st.session_state.get("ai_chat_session_id", 0)
 
@@ -707,7 +699,7 @@ def _render_chat_panel() -> None:
             if cols[i % 2].button(label, key=f"ai_sugg_{sid}_{i}",
                                   use_container_width=True):
                 _send_message(question)
-                st.rerun(scope="fragment")
+                st.rerun()
         st.markdown("---")
 
     # ── conversation history ──────────────────────────────────────────────
@@ -730,7 +722,7 @@ def _render_chat_panel() -> None:
     if submitted and user_input.strip():
         with st.spinner("Thinking…"):
             _send_message(user_input.strip())
-        st.rerun(scope="fragment")
+        st.rerun()
 
     # ── footer ────────────────────────────────────────────────────────────
     st.markdown(
