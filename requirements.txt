@@ -3,3 +3,4 @@ pandas>=2.2
 requests>=2.32
 tenacity>=8.5
 altair
+google-genai>=0.3

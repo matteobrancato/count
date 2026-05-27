@@ -5,7 +5,10 @@ import traceback
 import streamlit as st
 
 from src import testrail_client as tr
-from src.ui import backlog_tab, coverage_tab, overview_tab, pivot_tab, report_tab, runs_tab, theme
+from src.ui import (
+    backlog_tab, chat_assistant, coverage_tab, overview_tab,
+    pivot_tab, report_tab, runs_tab, theme,
+)
 
 
 st.set_page_config(
@@ -105,6 +108,14 @@ def main() -> None:
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
+
+    # Floating AI chat assistant — always last so it overlays the page.
+    # Safe no-op if GEMINI_API_KEY is missing (shows a friendly message inside
+    # the dialog instead of crashing).
+    try:
+        chat_assistant.render_floating_button()
+    except Exception:  # noqa: BLE001 — never let the chat break the app
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
