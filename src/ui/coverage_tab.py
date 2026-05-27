@@ -7,14 +7,23 @@ Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
     as Explorer / Report) — a case automated for both devices counts twice.
   * Coverage % uses unique case_ids so it stays a proper "% of cases covered".
 
-Layout
-──────
-  * Scope (radio) + BU (dropdown) on the top row
+Two stacked views per BU
+────────────────────────
+  1. **All Automated Cases** — coverage over the full non-deprecated universe.
+  2. **No-Regression Baseline Only** — same layout but restricted to cases
+     tagged with `big_regr_desktop` / `big_regr_mobile` (the regression baseline
+     used by the Backlog tab), with device-specific label matching.
+
+The two views share the same renderer (`_render_coverage_section`) so the
+layout is identical — only the input subset changes.
+
+Layout per view
+───────────────
   * Headline metrics: Total · Automated unique · Automated rows (D+M) · Coverage %
   * Granularity slider (0 = Main Category, 1 = Secondary, 2-3 = deeper)
   * Table — Area | Total | Desktop | Mobile [| Unspecified] | Automated | Coverage %
   * Pie chart — share of automated rows per area
-  * Bar chart — coverage % per area (sorted, traffic-light colored, zero rows last)
+  * Bar chart — coverage % per area (sorted, zero rows pushed to the bottom)
 """
 from __future__ import annotations
 
@@ -317,31 +326,76 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     )
 
 
+# ── regression-baseline filter ───────────────────────────────────────────────
+_LBL_REGR_DESK = "big_regr_desktop"
+_LBL_REGR_MOB  = "big_regr_mobile"
+
+
+def _filter_to_regression_baseline(
+    non_dep: pd.DataFrame, auto_bu: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
+    """Filter both DataFrames to the regression baseline (the same one used by
+    the Backlog tab): cases tagged with `big_regr_desktop` and/or
+    `big_regr_mobile`.
+
+    For `auto_bu`, the device must match the label:
+      - Desktop rows kept only if the case has `big_regr_desktop`
+      - Mobile  rows kept only if the case has `big_regr_mobile`
+      - Unspecified (Next Gen) rows kept if the case has either label
+
+    Returns (non_dep_baseline, auto_bu_baseline, baseline_auto_case_ids).
+    """
+    if non_dep.empty or "labels" not in non_dep.columns:
+        return non_dep.iloc[0:0], auto_bu.iloc[0:0], set()
+
+    has_d = non_dep["labels"].apply(
+        lambda ls: _LBL_REGR_DESK in ls if isinstance(ls, list) else False
+    )
+    has_m = non_dep["labels"].apply(
+        lambda ls: _LBL_REGR_MOB in ls if isinstance(ls, list) else False
+    )
+    nd_base = non_dep[has_d | has_m]
+    if nd_base.empty or auto_bu.empty:
+        return nd_base, auto_bu.iloc[0:0], set()
+
+    base_d_ids = set(non_dep.loc[has_d, "case_id"].astype(int))
+    base_m_ids = set(non_dep.loc[has_m, "case_id"].astype(int))
+    base_all   = base_d_ids | base_m_ids
+
+    ab          = auto_bu.copy()
+    ab["case_id"] = ab["case_id"].astype(int)
+    keep_d = (ab["device"] == "Desktop")     & ab["case_id"].isin(base_d_ids)
+    keep_m = (ab["device"] == "Mobile")      & ab["case_id"].isin(base_m_ids)
+    keep_u = (ab["device"] == "Unspecified") & ab["case_id"].isin(base_all)
+
+    ab_base = ab[keep_d | keep_m | keep_u]
+    return nd_base, ab_base, set(ab_base["case_id"].astype(int).unique())
+
+
 # ── per-BU view ──────────────────────────────────────────────────────────────
-def _coverage_for(scope: str, bu_choice: str) -> None:
-    raw, auto, rules = _load_scope(scope)
-    if raw is None or raw.empty:
-        st.info("No data loaded for this scope.")
+def _render_coverage_section(
+    non_dep: pd.DataFrame,
+    auto_bu: pd.DataFrame,
+    auto_ids: set[int],
+    *,
+    key_prefix: str,
+    scope: str,
+    show_tool_facet: bool = True,
+) -> None:
+    """Render the full coverage block (metrics + table + charts) for a subset.
+
+    Pulled out of `_coverage_for` so the regression-baseline view can reuse the
+    exact same layout without duplicating code.  *key_prefix* must be unique
+    per call so Streamlit widgets don't collide.
+    """
+    if non_dep.empty:
+        st.info("No cases in this subset.")
         return
-
-    # `rules` is already filtered to *scope* by _load_scope, so no second scope check.
-    bu_suites = {r.suite_id for r in rules if r.bu == bu_choice}
-
-    raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
-    auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
-
-    if raw_bu.empty:
-        st.info(f"No cases found for **{bu_choice}**.")
-        return
-
-    # ── shared aggregates (computed once, reused for metrics + table) ─────────
-    non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
-    auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
     # ── headline metrics ──────────────────────────────────────────────────────
-    auto_unique         = int(non_dep["case_id"].isin(auto_ids).sum()) if not non_dep.empty else 0
-    total               = int(non_dep["case_id"].nunique())            if not non_dep.empty else 0
-    cov_pct             = (auto_unique / total * 100)                  if total             else 0.0
+    auto_unique         = int(non_dep["case_id"].isin(auto_ids).sum())
+    total               = int(non_dep["case_id"].nunique())
+    cov_pct             = (auto_unique / total * 100) if total else 0.0
     auto_expanded_total = int(len(auto_bu))
 
     c1, c2, c3, c4 = st.columns(4)
@@ -355,7 +409,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     st.markdown("")
     depth_offset = st.slider(
         "Granularity", 0, 3, 0,
-        key=f"cov_depth_{scope}_{bu_choice}",
+        key=f"{key_prefix}_granularity",
         help=("0 = Main Category (auto-detected — strips dominant root containers "
               "like \"SD\" or \"WTR\"); 1 = Secondary; 2-3 = deeper sub-sections."),
     )
@@ -445,8 +499,9 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         bar = _build_coverage_bar(cov, color_map)
         st.altair_chart(bar, use_container_width=True)
 
-    # ── mobile-app facet ─────────────────────────────────────────────────────
-    if scope == "mobile_app" and not auto_bu.empty and "automation_tool" in auto_bu.columns:
+    # ── mobile-app facet (only shown in the full view to avoid duplication) ──
+    if show_tool_facet and scope == "mobile_app" and not auto_bu.empty \
+            and "automation_tool" in auto_bu.columns:
         st.divider()
         st.markdown("##### 🛠 Automated cases by automation tool")
         tool = (
@@ -459,6 +514,64 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             st.dataframe(tool, use_container_width=True, hide_index=True)
         else:
             st.caption("No `Automation Tool` values populated on matching cases.")
+
+
+def _coverage_for(scope: str, bu_choice: str) -> None:
+    raw, auto, rules = _load_scope(scope)
+    if raw is None or raw.empty:
+        st.info("No data loaded for this scope.")
+        return
+
+    # `rules` is already filtered to *scope* by _load_scope, so no second scope check.
+    bu_suites = {r.suite_id for r in rules if r.bu == bu_choice}
+
+    raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
+    auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
+
+    if raw_bu.empty:
+        st.info(f"No cases found for **{bu_choice}**.")
+        return
+
+    non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
+    auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
+
+    # ── View 1: full universe ────────────────────────────────────────────────
+    st.markdown("### 🌐 All Automated Cases")
+    st.caption(
+        "Coverage over the full universe of non-deprecated cases for this BU. "
+        "Useful for the broadest picture of automation reach."
+    )
+    _render_coverage_section(
+        non_dep, auto_bu, auto_ids,
+        key_prefix=f"cov_full_{scope}_{bu_choice}",
+        scope=scope,
+        show_tool_facet=True,
+    )
+
+    st.divider()
+
+    # ── View 2: regression baseline only ─────────────────────────────────────
+    st.markdown("### 📋 No-Regression Baseline Only")
+    st.caption(
+        "Same breakdown, restricted to cases with the **`big_regr_desktop`** / "
+        "**`big_regr_mobile`** labels — the regression baseline used by the "
+        "Backlog tab.  Desktop / Mobile rows are matched against the label per "
+        "device, so this view tells you the *effective* coverage of what is "
+        "actually scheduled for regression."
+    )
+    nd_base, ab_base, ids_base = _filter_to_regression_baseline(non_dep, auto_bu)
+    if nd_base.empty:
+        st.info(
+            "No cases tagged with `big_regr_desktop` / `big_regr_mobile` for this BU. "
+            "Add the labels in TestRail (or click 🔄 Refresh if you just did)."
+        )
+        return
+    _render_coverage_section(
+        nd_base, ab_base, ids_base,
+        key_prefix=f"cov_regr_{scope}_{bu_choice}",
+        scope=scope,
+        show_tool_facet=False,   # already shown in the full view
+    )
 
 
 # ── render ───────────────────────────────────────────────────────────────────

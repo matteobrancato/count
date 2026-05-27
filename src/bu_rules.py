@@ -47,18 +47,24 @@ ALL_COUNTRY_TOKENS: dict[str, str] = {
 
 # --------------------------------------------------------------------- run/plan name aliases
 # BU codes that appear in TestRail run/plan names (case-insensitive).  Used by the
-# Runs tab to associate a run with the right BU.  Longer codes are matched first
-# so "TPS" wins over "TP" when both could apply.
+# Runs tab to associate a run with the right BU.
+#
+# A single alias CAN belong to multiple BUs (e.g. "EE" = Eastern Europe,
+# which covers Drogas, Watsons and Marionnaud's CEE countries) — in that case
+# the same run will appear under each of them.
+#
+# Word-boundary regex matching means "TPS" doesn't accidentally match "TP",
+# so we can keep overlapping short codes safely.
 BU_RUN_ALIASES: dict[str, list[str]] = {
     "Superdrug":        ["SD"],
     "Savers":           ["SV"],
     "The Perfume Shop": ["TPS"],
     "Kruidvat":         ["KV"],
     "Trekpleister":     ["TKP", "TP"],
-    "Watsons":          ["WTR"],
-    "ICI Paris XL":     ["IPXL", "EE"],
-    "Marionnaud":       ["MFR", "MRN"],
-    "Drogas":           ["DRG"],
+    "Watsons":          ["WTR", "EE"],          # EE = Eastern Europe (shared)
+    "ICI Paris XL":     ["IPXL"],
+    "Marionnaud":       ["MFR", "MRN", "EE"],   # MRN CEE countries
+    "Drogas":           ["DRG", "EE"],          # Baltic — Eastern Europe
     "Next Gen":         ["NG", "NEXTGEN"],
 }
 
