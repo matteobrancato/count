@@ -54,7 +54,15 @@ except ImportError:
     _GEMINI_AVAILABLE = False
 
 
-_MODEL = "gemini-2.0-flash"
+_DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+def _get_model() -> str:
+    """Resolve the Gemini model name (override via `GEMINI_MODEL` in secrets)."""
+    try:
+        return st.secrets.get("GEMINI_MODEL", _DEFAULT_MODEL)
+    except Exception:                                                   # noqa: BLE001
+        return _DEFAULT_MODEL
 
 _SYSTEM_INSTRUCTION = """
 You are an automation coverage assistant for AS Watson's testing platform.
@@ -390,10 +398,6 @@ def _gemini_ready() -> bool:
     return _GEMINI_AVAILABLE and _get_api_key() is not None
 
 
-def _clear_chat() -> None:
-    st.session_state.pop("ai_chat_messages", None)
-
-
 def _send_message(text: str) -> None:
     """Send *text* to Gemini, appending both turns to the conversation log.
 
@@ -428,11 +432,21 @@ def _send_message(text: str) -> None:
     try:
         client = _get_gemini_client(api_key)
         response = client.models.generate_content(
-            model=_MODEL, contents=contents, config=config,
+            model=_get_model(), contents=contents, config=config,
         )
         reply = (response.text or "").strip() or "(empty response)"
     except Exception as exc:                                            # noqa: BLE001
-        reply = f"⚠️ Error from Gemini: `{exc}`"
+        # Trim noisy multi-line / quota dumps to a single-line user-facing message.
+        err_str = str(exc)
+        if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
+            reply = (
+                "⚠️ Gemini API quota reached.  Wait a minute and try again, "
+                "or check the key at "
+                "[aistudio.google.com/apikey](https://aistudio.google.com/apikey)."
+            )
+        else:
+            short = err_str.split("\n", 1)[0][:240]
+            reply = f"⚠️ Error from Gemini: `{short}`"
         logger.exception("Gemini chat call failed")
 
     msgs.append({"role": "assistant", "content": reply})
@@ -547,11 +561,11 @@ def _render_chat_panel() -> None:
         st.rerun()
 
     # ── footer ────────────────────────────────────────────────────────────
-    c1, c2 = st.columns([1, 3])
-    if c1.button("🗑 Clear", key="ai_chat_clear", use_container_width=True):
-        _clear_chat()
-        st.rerun()
-    c2.caption(f"✨ {_MODEL} · Uses AI · {len(msgs)} message(s)")
+    st.markdown(
+        f"<div style='text-align:right;font-size:10.5px;color:#888;"
+        f"margin-top:6px'>{_get_model()} · Uses AI</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_floating_button() -> None:

@@ -67,6 +67,15 @@ def main() -> None:
     if not _creds_ok():
         st.stop()
 
+    # Render the floating chat FIRST — Streamlit renders incrementally, so
+    # placing it here makes the FAB appear immediately, before the (slow)
+    # warmup_cache and the eager tab renders below.  `position: fixed` in the
+    # CSS handles the visual placement, so DOM order doesn't matter.
+    try:
+        chat_assistant.render_floating_button()
+    except Exception:  # noqa: BLE001 — never let the chat break the app
+        traceback.print_exc()
+
     # Pre-fetch all suite data in the background on first load.
     # Uses a module-level flag so it runs only once per process.
     # After this completes, every BU click only needs Python processing.
@@ -103,14 +112,6 @@ def main() -> None:
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
-
-    # Floating AI chat assistant — always last so it overlays the page.
-    # Safe no-op if GEMINI_API_KEY is missing (shows a friendly message inside
-    # the dialog instead of crashing).
-    try:
-        chat_assistant.render_floating_button()
-    except Exception:  # noqa: BLE001 — never let the chat break the app
-        traceback.print_exc()
 
 
 if __name__ == "__main__":
