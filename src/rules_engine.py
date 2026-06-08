@@ -50,13 +50,15 @@ def _get_country_tokens(
 
     Supports any multi-select field by label:
       - "multi_countries"           → the standard field (default)
-      - "Country Validation"        → custom_country_validation  (MRN Java)
+      - "Country Validation"        → custom_country_validation         (MRN legacy)
       - "Testim Country Coverage"   → custom_case_country_coverage_testim  (MRN TestIM)
+      - "Java Country Coverage"     → custom_country_coverage_automation
+                                    / custom_country_coverage             (MRN Java)
 
     *project_id* selects the correct per-project value map so that the same
     integer ID resolves to the right label in each suite.
     """
-    # Try by label first; fall back to known system names for the two MRN fields
+    # Try by label first; fall back to known system names for the named fields.
     meta = reg.field(field_label)
     if not meta and field_label == "Country Validation":
         meta = reg.field("custom_country_validation")
@@ -64,6 +66,12 @@ def _get_country_tokens(
         meta = (
             reg.field("custom_case_country_coverage_testim")
             or reg.field("custom_case_testim_country_coverage")
+        )
+    if not meta and field_label == "Java Country Coverage":
+        meta = (
+            reg.field("custom_country_coverage_automation")
+            or reg.field("custom_country_coverage")
+            or reg.field("country_coverage_automation")
         )
     if not meta:
         return []

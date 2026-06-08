@@ -194,7 +194,7 @@ def build_rules() -> list[Rule]:
     # ==================================================================== Marionnaud
     # BU-specific status fields per country group. No type_filter.
     # Country matching uses dedicated fields (not multi_countries):
-    #   Java  → "Country Validation"       (custom_country_validation)
+    #   Java   → "Java Country Coverage"   (custom_country_coverage_automation)
     #   TestIM → "Testim Country Coverage" (custom_case_country_coverage_testim)
     # Tokens MAT and MAT_SPR both map to "AT" — dedup on (case_id, country_label, device)
     # ensures a case tagged with both counts only once.
@@ -212,7 +212,7 @@ def build_rules() -> list[Rule]:
         "MHU": "HU", "MHU_SPR": "HU",
     }
 
-    # France: Automation Status MFR — country from multi_countries (standard field).
+    # France: Automation Status MFR — country from "Java Country Coverage".
     # TestIM Desktop/Mobile — country from Testim Country Coverage.
     MFR_TOKENS = ["MFR"]
     rules.append(Rule(
@@ -223,6 +223,8 @@ def build_rules() -> list[Rule]:
         countries_filter=MFR_TOKENS,
         country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
         type_filter=[],
+        country_field_label="Java Country Coverage",
+        country_fallback_field_label="multi_countries",
     ))
     rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, MFR_TOKENS,
                           country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
@@ -231,7 +233,7 @@ def build_rules() -> list[Rule]:
                           country_fallback_field_label="Country Validation")
 
     # Other 7 MRN countries (CH, AT, RO, IT, CZ, SK, HU).
-    # Java:  Automation Status MRN SPR — country from multi_countries (bare + _SPR tokens).
+    # Java:  Automation Status MRN SPR — country from "Java Country Coverage" (bare + _SPR tokens).
     # TestIM: TestIM Desktop/Mobile    — country from Testim Country Coverage.
     #         Both bare (MAT) and _SPR (MAT_SPR) tokens are accepted; dedup on
     #         (case_id, country_label, device) ensures a case counts once per country.
@@ -246,6 +248,8 @@ def build_rules() -> list[Rule]:
         countries_filter=MRN_TOKENS,
         country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_TOKENS},
         type_filter=[],
+        country_field_label="Java Country Coverage",
+        country_fallback_field_label="multi_countries",
     ))
     rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_TOKENS,
                           country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_TOKENS},
