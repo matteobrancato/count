@@ -222,8 +222,10 @@ def _summarise_run(run: dict, base_url: str) -> dict:
 def _collect_bug_records(runs: list[dict]) -> list[dict]:
     """One record per (bug, test, run, result) failure event.
 
-    Fetches BOTH failed results AND tests in parallel for each run so we can
-    enrich each JIRA key with the originating case_id / title / failure date.
+    Two-stage fetch for speed: first pull failed results for every run in
+    parallel (cheap-ish), then fetch the test list ONLY for runs that actually
+    have defect-bearing failures.  On shared suites most active runs carry no
+    open bugs, so this skips the bulk of the (expensive) get_tests calls.
 
     Records are sorted by failure date DESC so the most recent bug events surface first.
     """
@@ -233,23 +235,34 @@ def _collect_bug_records(runs: list[dict]) -> list[dict]:
     name_by_rid = {int(r["id"]): r["name"] for r in runs}
     rids = list(name_by_rid.keys())
 
-    tests_by_run:   dict[int, list[dict]] = {}
+    # Stage 1 — failed results for every run, in parallel.
     results_by_run: dict[int, list[dict]] = {}
-    with ThreadPoolExecutor(max_workers=min(len(rids) * 2, 16)) as pool:
-        t_fut = {pool.submit(tr.fetch_tests,          rid): rid for rid in rids}
+    with ThreadPoolExecutor(max_workers=min(len(rids), 12)) as pool:
         r_fut = {pool.submit(tr.fetch_failed_results, rid): rid for rid in rids}
-        for fut in as_completed(t_fut):
-            rid = t_fut[fut]
-            try:
-                tests_by_run[rid] = fut.result()
-            except Exception:
-                tests_by_run[rid] = []
         for fut in as_completed(r_fut):
             rid = r_fut[fut]
             try:
                 results_by_run[rid] = fut.result()
             except Exception:
                 results_by_run[rid] = []
+
+    # Only runs whose failures actually reference a JIRA key need their tests.
+    rids_with_bugs = [
+        rid for rid, results in results_by_run.items()
+        if any(_extract_jira_keys(res.get("defects")) for res in results)
+    ]
+
+    # Stage 2 — fetch tests only for those runs.
+    tests_by_run: dict[int, list[dict]] = {}
+    if rids_with_bugs:
+        with ThreadPoolExecutor(max_workers=min(len(rids_with_bugs), 12)) as pool:
+            t_fut = {pool.submit(tr.fetch_tests, rid): rid for rid in rids_with_bugs}
+            for fut in as_completed(t_fut):
+                rid = t_fut[fut]
+                try:
+                    tests_by_run[rid] = fut.result()
+                except Exception:
+                    tests_by_run[rid] = []
 
     records: list[dict] = []
     for rid in rids:

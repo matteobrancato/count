@@ -111,10 +111,14 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 
 /* ── Tabs — clean underline navigation ────────────────────────────────────── */
+/* Streamlit already draws a full-width grey [tab-border]; we only RECOLOUR it
+   (never add a second border on the tab-list, which produced a doubled line). */
 [data-baseweb="tab-list"] {{
     gap: 2px;
-    border-bottom: 1px solid {c['border']};
     margin-bottom: 8px;
+}}
+[data-baseweb="tab-border"] {{
+    background-color: {c['border']} !important;
 }}
 [data-baseweb="tab"] {{
     border-radius: 9px 9px 0 0;
@@ -131,7 +135,7 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [data-baseweb="tab"][aria-selected="true"] {{
     color: {c['brand']};
 }}
-[data-baseweb="tab-highlight"], [data-baseweb="tab-border"] ~ [data-baseweb="tab-highlight"] {{
+[data-baseweb="tab-highlight"] {{
     background-color: {c['brand']} !important;
     height: 3px !important;
     border-radius: 3px 3px 0 0;

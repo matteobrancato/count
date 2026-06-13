@@ -206,8 +206,9 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
             ),
             columns=2,
         )
+        .properties(background="transparent")   # blend into the page canvas
         .resolve_scale(y="independent", x="shared")
-        .configure_view(stroke=COLORS["border"], strokeWidth=1)
+        .configure_view(stroke=COLORS["border"], strokeWidth=1, fill="transparent")
         .configure_axis(labelFont="Inter")
         .configure_legend(labelFont="Inter", padding=4)
     )

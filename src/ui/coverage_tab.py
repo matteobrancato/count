@@ -247,8 +247,8 @@ def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None
         ],
     )
     arc = base.mark_arc(innerRadius=58, outerRadius=130, cornerRadius=3,
-                        stroke=COLORS["surface"], strokeWidth=3)
-    return arc.properties(height=320)
+                        stroke=COLORS["canvas"], strokeWidth=3)
+    return arc.properties(height=320, background="transparent")
 
 
 def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart:
@@ -314,8 +314,8 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
 
     return (
         alt.layer(bars, text)
-        .properties(height=alt.Step(26))
-        .configure_view(stroke=COLORS["border"], strokeWidth=1)
+        .properties(height=alt.Step(26), background="transparent")
+        .configure_view(stroke="transparent", strokeWidth=0, fill="transparent")
         .configure_axis(labelFont="Inter")
     )
 

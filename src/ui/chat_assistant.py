@@ -220,13 +220,13 @@ def _resolve_bu_name(query: str) -> str | None:
 
 # ── Tool functions exposed to Gemini ─────────────────────────────────────────
 @_safe_tool
-def list_bus() -> dict[str, Any]:
+def list_bus() -> dict:
     """List all Business Units available in the dashboard."""
     return {"business_units": sorted({r.bu for r in ALL_RULES})}
 
 
 @_safe_tool
-def get_bu_coverage(bu: str) -> dict[str, Any]:
+def get_bu_coverage(bu: str) -> dict:
     """Get automation coverage for a Business Unit.
 
     Returns total non-deprecated cases, automated count, coverage percentage,
@@ -294,7 +294,7 @@ def get_bu_coverage(bu: str) -> dict[str, Any]:
 
 
 @_safe_tool
-def get_active_runs(bu: str) -> dict[str, Any]:
+def get_active_runs(bu: str) -> dict:
     """Get the list of active (open) TestRail runs for a BU.
 
     Each run summary includes pass/fail/blocked counts, completion %,
@@ -351,7 +351,7 @@ def get_active_runs(bu: str) -> dict[str, Any]:
 
 
 @_safe_tool
-def get_open_bugs(bu: str) -> dict[str, Any]:
+def get_open_bugs(bu: str) -> dict:
     """List the open JIRA bug keys for a BU, with the test that generated each.
 
     Useful to answer "What bugs are open for Drogas?" — returns one record per
@@ -396,7 +396,7 @@ def get_open_bugs(bu: str) -> dict[str, Any]:
 
 
 @_safe_tool
-def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5) -> dict[str, Any]:
+def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5) -> dict:
     """Analyse test stability over recent completed runs for a BU.
 
     Classifies each case as: Always pass, Always fail, Flaky, or Insufficient
@@ -448,7 +448,7 @@ def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5) -> dic
 
 
 @_safe_tool
-def compare_bus() -> dict[str, Any]:
+def compare_bus() -> dict:
     """Rank all Business Units by overall automation coverage %.
 
     Returns a list sorted from highest to lowest coverage, so the user can see
