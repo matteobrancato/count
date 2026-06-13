@@ -43,6 +43,7 @@ from .. import testrail_client as tr
 from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
 from ..rules_engine import evaluate_rules
 from . import coverage_tab, runs_tab
+from .styles import COLORS
 
 logger = logging.getLogger(__name__)
 
@@ -799,7 +800,7 @@ def _render_chat_panel() -> None:
 
     # ── footer ────────────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='text-align:right;font-size:10.5px;color:#888;"
+        f"<div style='text-align:right;font-size:10.5px;color:{COLORS['muted']};"
         f"margin-top:6px'>{_display_model()} · Uses AI</div>",
         unsafe_allow_html=True,
     )

@@ -38,6 +38,7 @@ import streamlit as st
 
 from ..bu_rules import ALL_RULES, WEBSITE_BUS
 from ..rules_engine import evaluate_rules
+from .styles import COLORS
 
 # ── constants ─────────────────────────────────────────────────────────────────
 _LABEL_DESKTOP = "big_regr_desktop"
@@ -456,10 +457,10 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
     java_pct   = s["java"]   / s["automated"] * 100 if s["automated"] else 0.0
     testim_pct = s["testim"] / s["automated"] * 100 if s["automated"] else 0.0
     f3.markdown(
-        f"<div style='padding-top:8px;font-size:13px;color:#5e6677'>"
+        f"<div style='padding-top:8px;font-size:13px;color:{COLORS['text']}'>"
         f"Java &nbsp;<b>{java_pct:.1f}%</b><br>"
         f"TestIM &nbsp;<b>{testim_pct:.1f}%</b><br>"
-        f"<span style='font-size:11px'>"
+        f"<span style='font-size:11px;color:{COLORS['muted']}'>"
         f"(% of automated rows — may sum &gt;100% if both frameworks cover the same row)"
         f"</span></div>",
         unsafe_allow_html=True,

@@ -33,13 +33,11 @@ import streamlit as st
 
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
+from .styles import COLORS, PIE_PALETTE
 
-# ── brand chart colors (constant across light/dark) ──────────────────────────
-_PIE_PALETTE = [
-    "#ED7D31", "#4472C4", "#70AD47", "#FFC000", "#7030A0",
-    "#C00000", "#00B0F0", "#A5A5A5", "#264478", "#9E480E",
-    "#636363", "#997300", "#43682B", "#255E91", "#698ED0",
-]
+# ── categorical palette for area breakdowns (sourced from design tokens) ──────
+# Repeated so very granular BUs (>12 areas) still get a colour for every slice.
+_PIE_PALETTE = PIE_PALETTE * 2
 
 
 # ── data loading ─────────────────────────────────────────────────────────────
@@ -248,8 +246,8 @@ def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None
             alt.Tooltip("coverage_pct:Q", title="Coverage %",  format=".1f"),
         ],
     )
-    arc = base.mark_arc(innerRadius=55, outerRadius=130,
-                        stroke="#ffffff", strokeWidth=2)
+    arc = base.mark_arc(innerRadius=58, outerRadius=130, cornerRadius=3,
+                        stroke=COLORS["surface"], strokeWidth=3)
     return arc.properties(height=320)
 
 
@@ -289,10 +287,12 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
             x=alt.X("coverage_pct:Q",
                     scale=alt.Scale(domain=[0, 100]),
                     axis=alt.Axis(title="Coverage %", grid=True,
-                                  gridColor="#f0f0f0", domain=False)),
+                                  gridColor=COLORS["grid"], domain=False,
+                                  labelColor=COLORS["muted"], titleColor=COLORS["muted"])),
             y=alt.Y("section:N", sort=y_order,
                     axis=alt.Axis(title=None, labelLimit=240,
-                                  domain=False, ticks=False)),
+                                  domain=False, ticks=False,
+                                  labelColor=COLORS["text"])),
             color=alt.Color("section:N", scale=color_scale, legend=None),
             tooltip=[
                 alt.Tooltip("section:N",      title="Area"),
@@ -304,7 +304,7 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     )
     text = (
         alt.Chart(data)
-        .mark_text(align="left", dx=5, fontSize=10, color="#555555")
+        .mark_text(align="left", dx=5, fontSize=10, color=COLORS["muted"])
         .encode(
             x=alt.X("coverage_pct:Q"),
             y=alt.Y("section:N", sort=y_order),
@@ -315,8 +315,8 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     return (
         alt.layer(bars, text)
         .properties(height=alt.Step(26))
-        .configure_view(stroke="#e8e8e8", strokeWidth=1)
-        .configure_axis(labelFont="Arial")
+        .configure_view(stroke=COLORS["border"], strokeWidth=1)
+        .configure_axis(labelFont="Inter")
     )
 
 

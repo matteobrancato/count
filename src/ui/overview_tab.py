@@ -6,6 +6,7 @@ import streamlit as st
 from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
+from .styles import COLORS
 
 
 # --------------------------------------------------------------------- helpers
@@ -70,16 +71,19 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str) -> None:
     st.markdown(
         f"""
         <div style="
-            padding:18px 22px;border-radius:14px;
-            background:linear-gradient(135deg,{accent}22,{accent}0a);
-            border:1px solid {accent}44;margin-bottom:8px">
-            <div style="font-size:13px;color:#5e6677;text-transform:uppercase;
-                        letter-spacing:0.06em;font-weight:600">{title}</div>
-            <div style="font-size:34px;font-weight:700;color:#1a1f36;margin-top:2px">
+            padding:18px 22px;border-radius:16px;
+            background:linear-gradient(135deg,{accent}1f,{accent}08);
+            border:1px solid {accent}3a;margin-bottom:8px;
+            box-shadow:0 1px 3px rgba(15,23,42,0.05)">
+            <div style="font-size:12.5px;color:{COLORS['muted']};text-transform:uppercase;
+                        letter-spacing:0.07em;font-weight:700">{title}</div>
+            <div style="font-size:36px;font-weight:800;color:{COLORS['ink']};margin-top:4px;
+                        letter-spacing:-0.02em;line-height:1.05">
                 {tot['total']:,}
             </div>
-            <div style="font-size:13px;color:#5e6677;margin-top:4px">
-                🖥 Desktop <b>{tot['desktop']:,}</b>  ·  📱 Mobile <b>{tot['mobile']:,}</b>
+            <div style="font-size:13px;color:{COLORS['muted']};margin-top:6px">
+                🖥 Desktop <b style="color:{COLORS['text']}">{tot['desktop']:,}</b>
+                &nbsp;·&nbsp; 📱 Mobile <b style="color:{COLORS['text']}">{tot['mobile']:,}</b>
             </div>
         </div>
         """,
@@ -126,8 +130,8 @@ def render() -> None:
         sanity = metrics.select_prod_sanity(automated)
         c1, c2, c3 = st.columns(3)
         with c1:
-            _metric_card("Smoke (Highest automated)", smoke, "#ff6b35")
+            _metric_card("Smoke (Highest automated)", smoke, COLORS["warning"])
         with c2:
-            _metric_card("No-Regression (All automated)", regr, "#2e5bff")
+            _metric_card("No-Regression (All automated)", regr, COLORS["brand"])
         with c3:
-            _metric_card("Production Sanity", sanity, "#1dbf73")
+            _metric_card("Production Sanity", sanity, COLORS["success"])

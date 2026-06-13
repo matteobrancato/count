@@ -7,8 +7,9 @@ import streamlit as st
 from src import testrail_client as tr
 from src.ui import (
     backlog_tab, chat_assistant, coverage_tab, overview_tab,
-    pivot_tab, report_tab, runs_tab,
+    pivot_tab, report_tab, runs_tab, styles,
 )
+from src.ui.styles import COLORS
 
 
 st.set_page_config(
@@ -21,19 +22,24 @@ st.set_page_config(
 
 # -------------------------------------------------------------------- header
 def _header() -> None:
-    left, right = st.columns([4, 1])
+    left, right = st.columns([4, 1], vertical_alignment="center")
     with left:
         st.markdown(
-            "<h1 style='margin:0;padding:6px 0 2px;white-space:nowrap'>"
-            "🧪 Automation Coverage</h1>"
-            "<div style='color:#5e6677;font-size:14px;padding-bottom:6px'>"
-            "Live view of TestRail's automation coverage across Business Units."
-            "</div>",
+            f"<div style='display:flex;align-items:center;gap:14px'>"
+            f"<div style='width:46px;height:46px;border-radius:13px;flex:0 0 auto;"
+            f"display:flex;align-items:center;justify-content:center;font-size:24px;"
+            f"background:linear-gradient(135deg,{COLORS['brand']} 0%,{COLORS['brand_strong']} 100%);"
+            f"box-shadow:0 4px 14px rgba(46,91,255,0.30)'>🧪</div>"
+            f"<div>"
+            f"<h1 style='margin:0;padding:0;line-height:1.05;white-space:nowrap;"
+            f"font-size:30px'>Automation Coverage</h1>"
+            f"<div style='color:{COLORS['muted']};font-size:13.5px;margin-top:3px'>"
+            f"Live view of TestRail&rsquo;s automation coverage across Business Units."
+            f"</div></div></div>",
             unsafe_allow_html=True,
         )
     with right:
-        st.write("")
-        if st.button("🔄 Refresh Numbers", use_container_width=True,
+        if st.button("🔄  Refresh Numbers", use_container_width=True,
                      help="Clear all caches and re-fetch from TestRail."):
             tr.clear_all_caches()
             try:
@@ -63,6 +69,7 @@ def _creds_ok() -> bool:
 
 # -------------------------------------------------------------------- main
 def main() -> None:
+    styles.inject()   # global design system — purely cosmetic, must run first.
     _header()
     if not _creds_ok():
         st.stop()
