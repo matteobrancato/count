@@ -188,7 +188,8 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
 
     chart = (
         alt.layer(bars, text, data=df)
-        .properties(height=alt.Step(21))
+        # Widen each panel so the two-column grid fills the page (no right gap).
+        .properties(width=560, height=alt.Step(21))
         .facet(
             facet=alt.Facet(
                 "bu:N",

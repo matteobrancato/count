@@ -535,6 +535,15 @@ def _send_message(text: str) -> None:
     config = types.GenerateContentConfig(
         tools=_TOOLS,
         system_instruction=_SYSTEM_INSTRUCTION.strip(),
+        # Automatic function calling: the SDK executes our Python tools in-process
+        # and feeds the results back to the model in a single round-trip.  Allow
+        # enough hops for multi-step answers (e.g. list_bus → get_bu_coverage,
+        # or a compare across BUs).
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            maximum_remote_calls=8,
+        ),
+        # Low temperature: this is a factual data assistant, not a creative one.
+        temperature=0.2,
     )
 
     candidates = _models_to_try()
@@ -688,9 +697,14 @@ _FAB_CSS = """
 }
 
 /* Streamlit's inner markdown wrapper — must clip horizontally so the label
-   doesn't peek out of the circular form when the container is narrow. */
+   doesn't peek out of the circular form when the container is narrow.  Also
+   force WHITE text on every inner node: the global markdown rules would
+   otherwise colour the label dark slate on the red pill. */
 .st-key-ai_assistant_fab button > div,
-.st-key-ai_assistant_fab button p {
+.st-key-ai_assistant_fab button p,
+.st-key-ai_assistant_fab button span,
+.st-key-ai_assistant_fab button * {
+    color: #fff !important;
     overflow: hidden !important;
     white-space: nowrap !important;
     text-overflow: clip !important;

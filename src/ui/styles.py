@@ -111,14 +111,15 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 
 /* ── Tabs — clean underline navigation ────────────────────────────────────── */
-/* Streamlit already draws a full-width grey [tab-border]; we only RECOLOUR it
-   (never add a second border on the tab-list, which produced a doubled line). */
+/* Hide Streamlit's native grey baseline and draw a single one on the tab-list
+   itself, so the coloured active-highlight sits flush on the same line. */
 [data-baseweb="tab-list"] {{
     gap: 2px;
     margin-bottom: 8px;
+    border-bottom: 1px solid {c['border']};
 }}
 [data-baseweb="tab-border"] {{
-    background-color: {c['border']} !important;
+    display: none !important;
 }}
 [data-baseweb="tab"] {{
     border-radius: 9px 9px 0 0;
@@ -239,6 +240,31 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     background: {c['brand']} !important;
     border-color: {c['brand']} !important;
 }}
+
+/* ── Dropdown menus (selectbox / multiselect option panels) ───────────────── */
+/* Scoped to the menu/listbox inside a baseweb popover, so it never touches the
+   AI-assistant popover (which contains no menu/listbox). */
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] ul[role="listbox"] {{
+    background: {c['surface']} !important;
+    border: 1px solid {c['border']} !important;
+    border-radius: 10px !important;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14) !important;
+    padding: 4px !important;
+}}
+[data-baseweb="popover"] li[role="option"] {{
+    border-radius: 7px !important;
+    color: {c['text']} !important;
+}}
+[data-baseweb="popover"] li[role="option"]:hover,
+[data-baseweb="popover"] li[aria-selected="true"] {{
+    background: {c['brand_soft']} !important;
+    color: {c['brand_strong']} !important;
+}}
+
+/* ── Spinner — transparent so it blends into the canvas (no white block) ───── */
+[data-testid="stSpinner"] {{ background: transparent !important; }}
+[data-testid="stSpinner"] > div {{ background: transparent !important; }}
 
 /* ── Radio / checkbox accents ─────────────────────────────────────────────── */
 [data-testid="stRadio"] label[data-baseweb="radio"] div:first-child,
