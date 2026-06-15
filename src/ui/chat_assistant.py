@@ -678,15 +678,16 @@ _FAB_CSS = """
     width: 100% !important;
     min-width: 100% !important;
     height: 48px !important;
-    padding: 0 14px !important;
+    /* Left-pad of 15px lands the ~18px emoji dead-centre of the 48px circle
+       (15 + 9 = 24).  Content stays left-aligned, so the "Ask Dexter" label
+       simply reveals to the right as the pill widens — no re-centring needed. */
+    padding: 0 0 0 15px !important;
     border-radius: 50% !important;
     overflow: hidden !important;
     white-space: nowrap !important;
-    /* Centre the icon while collapsed; we switch to flex-start on hover so the
-       "Ask Dexter" label reads left-to-right once the pill expands. */
     display: flex !important;
     align-items: center !important;
-    justify-content: center !important;
+    justify-content: flex-start !important;
     font-size: 18px !important;
     font-weight: 600 !important;
     line-height: 1 !important;
@@ -700,16 +701,21 @@ _FAB_CSS = """
         background    0.20s ease;
 }
 
-/* Streamlit's inner markdown wrapper — must clip horizontally so the label
-   doesn't peek out of the circular form when the container is narrow.  Also
-   force WHITE text on every inner node: the global markdown rules would
-   otherwise colour the label dark slate on the red pill. */
+/* Inner markdown wrapper: vertically centre the label, keep it on one line,
+   and force WHITE text (the global markdown rules would otherwise colour it
+   dark slate on the red pill). */
+.st-key-ai_assistant_fab button > div[data-testid="stMarkdownContainer"] {
+    display: flex !important;
+    align-items: center !important;
+    width: auto !important;
+}
 .st-key-ai_assistant_fab button > div,
 .st-key-ai_assistant_fab button p,
 .st-key-ai_assistant_fab button span,
 .st-key-ai_assistant_fab button * {
     color: #fff !important;
-    overflow: hidden !important;
+    line-height: 1 !important;
+    padding: 0 !important;
     white-space: nowrap !important;
     text-overflow: clip !important;
     margin: 0 !important;
@@ -718,7 +724,6 @@ _FAB_CSS = """
 /* Hover on the keyed container — drives the pill morph + colour shift */
 .st-key-ai_assistant_fab:hover button {
     border-radius: 26px !important;
-    justify-content: flex-start !important;   /* label reads left-to-right */
     box-shadow: 0 4px 18px rgba(255, 75, 75, 0.45) !important;
     background: #E63E3E !important;
 }
