@@ -183,10 +183,14 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     border-radius: 12px !important;
     color: {c['ink']} !important;
     font-weight: 600 !important;
-    font-size: 13.5px !important;
+    font-size: 13px !important;
+    line-height: 1.25 !important;
     text-align: left !important;
     justify-content: flex-start !important;
-    padding: 11px 15px !important;
+    align-items: center !important;     /* uniform vertical centring */
+    white-space: normal !important;     /* wrap instead of clipping */
+    min-height: 52px !important;        /* all four chips the same height */
+    padding: 10px 14px !important;
     box-shadow: none !important;
     transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease !important;
 }}
@@ -213,20 +217,27 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 [class*="st-key-ai_chat_form_"] [data-testid="stFormSubmitButton"] button p {{ color: #fff !important; }}
 
-/* New-chat icon button (📝) — a clean rounded brand-tinted icon button. */
-[class*="st-key-ai_new_chat"] button {{
-    background: {c['brand_soft']} !important;
-    border: 1px solid {c['border']} !important;
-    border-radius: 11px !important;
-    color: {c['brand_strong']} !important;
+/* "Delete chat" — a quiet text link (not a chunky button), destructive-red on
+   hover.  Sits in the chat header, right-aligned. */
+[class*="st-key-ai_delete_chat"] button {{
+    background: transparent !important;
+    border: none !important;
     box-shadow: none !important;
-    transition: background .15s ease, border-color .15s ease, transform .12s ease !important;
+    color: {c['muted']} !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    min-height: 0 !important;
+    padding: 2px 4px !important;
+    justify-content: flex-end !important;
+    transition: color .15s ease !important;
 }}
-[class*="st-key-ai_new_chat"] button:hover {{
-    background: #fff !important;
-    border-color: {c['brand']} !important;
-    transform: translateY(-1px) !important;
+[class*="st-key-ai_delete_chat"] button:hover {{
+    background: transparent !important;
+    color: {c['danger']} !important;
+    transform: none !important;
 }}
+[class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
+[class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
 /* ── Header "Refresh Numbers" — modern brand-gradient pill ─────────────────── */
 [class*="st-key-refresh_numbers"] button {{

@@ -169,10 +169,10 @@ Answer format (for "how is X doing" questions)
 # Suggestion chips shown in the empty-state of the chat panel.
 # Pairs: (display label, full question sent to Gemini).
 _SUGGESTIONS: list[tuple[str, str]] = [
-    ("📊 How is Superdrug doing?",    "How is Superdrug doing on automation?"),
-    ("🏆 Compare all BUs",            "Compare all BUs by coverage and tell me who is ahead."),
-    ("🐛 Open bugs in Watsons",       "What bugs are currently open for Watsons?"),
-    ("🌀 Flaky tests in Drogas",      "Which tests are flaky for Drogas? Top offenders."),
+    ("📊  Superdrug status",   "How is Superdrug doing on automation?"),
+    ("🏆  Compare all BUs",    "Compare all BUs by coverage and tell me who is ahead."),
+    ("🐛  Bugs · Watsons",     "What bugs are currently open for Watsons?"),
+    ("🌀  Flaky · Drogas",     "Which tests are flaky for Drogas? Top offenders."),
 ]
 
 
@@ -683,26 +683,22 @@ def _generate_pending_response() -> None:
 # We anchor our CSS on that — far more robust than `:has()` tricks.
 _FAB_CSS = """
 <style>
-/* ── 1. The keyed container IS the FAB.  We size IT and let everything
-       inside fill 100%.  This avoids Streamlit's inner layout quirks. ──── */
+/* ── 1. The keyed container IS the FAB — a fixed, perfectly round chat
+       button (the industry-standard widget pattern: Intercom / Crisp / Drift).
+       No width-morph, no pseudo-element label → it can never go oval or clip.
+       The "Ask Dexter" identity lives in the panel header + the native tooltip. */
 .st-key-ai_assistant_fab {
     position: fixed !important;
     bottom: 24px !important;
     left:   24px !important;
     z-index: 9999 !important;
-    width: 48px !important;
-    height: 48px !important;
+    width: 56px !important;
+    height: 56px !important;
     margin: 0 !important;
     padding: 0 !important;
-    transition: width 0.30s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Hover on the container → expand to a pill that snugly fits "💬 Ask Dexter" */
-.st-key-ai_assistant_fab:hover {
-    width: 158px !important;
-}
-
-/* ── 2. Every inner wrapper fills the container ─── */
+/* ── 2. Every inner wrapper fills the 56×56 container ─── */
 .st-key-ai_assistant_fab [data-testid="stPopover"],
 .st-key-ai_assistant_fab .stPopover,
 .st-key-ai_assistant_fab [data-testid="stPopover"] > div,
@@ -721,42 +717,46 @@ _FAB_CSS = """
     display: none !important;
 }
 
-/* ── 3. The button: fills 100%, round by default, morphs to pill on hover ── */
+/* ── 3. The button: a fixed 56×56 circle.  max-width == min-width == 56 means
+       it is GUARANTEED round — no content can stretch it into an oval. ─────── */
 .st-key-ai_assistant_fab button {
-    width: 100% !important;
-    min-width: 100% !important;
-    height: 48px !important;
-    /* The content group is CENTRED.  Collapsed: only the emoji (label is
-       zero-width) → emoji centred in the circle.  Expanded: the [emoji + label]
-       group is centred in the pill. */
+    width: 56px !important;
+    min-width: 56px !important;
+    max-width: 56px !important;
+    height: 56px !important;
     padding: 0 !important;
     border-radius: 50% !important;
     overflow: hidden !important;
-    white-space: nowrap !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    font-size: 18px !important;
-    font-weight: 600 !important;
+    font-size: 24px !important;
     line-height: 1 !important;
     background: #FF4B4B !important;
     color: #fff !important;
     border: none !important;
-    box-shadow: 0 2px 10px rgba(255, 75, 75, 0.35) !important;
-    transition:
-        border-radius 0.30s cubic-bezier(0.4, 0, 0.2, 1),
-        box-shadow    0.20s ease,
-        background    0.20s ease;
+    box-shadow: 0 4px 14px rgba(255, 75, 75, 0.42) !important;
+    transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease !important;
 }
 
-/* Inner markdown wrapper: vertically centre the label, keep it on one line,
-   and force WHITE text (the global markdown rules would otherwise colour it
-   dark slate on the red pill). */
+/* A subtle lift on hover — the only animation, and it can't break layout. */
+.st-key-ai_assistant_fab button:hover {
+    transform: scale(1.09) !important;
+    background: #E63E3E !important;
+    box-shadow: 0 6px 22px rgba(255, 75, 75, 0.55) !important;
+}
+.st-key-ai_assistant_fab button:active {
+    transform: scale(1.0) !important;
+    background: #D63030 !important;
+    box-shadow: 0 2px 8px rgba(255, 75, 75, 0.35) !important;
+}
+
+/* Centre the emoji and force it WHITE (global markdown rules would otherwise
+   tint it dark slate on the red circle). */
 .st-key-ai_assistant_fab button > div[data-testid="stMarkdownContainer"] {
     display: flex !important;
     align-items: center !important;
-    width: auto !important;
-    flex: 0 0 auto !important;   /* emoji keeps its natural width (pinned left) */
+    justify-content: center !important;
 }
 .st-key-ai_assistant_fab button > div,
 .st-key-ai_assistant_fab button p,
@@ -765,46 +765,7 @@ _FAB_CSS = """
     color: #fff !important;
     line-height: 1 !important;
     padding: 0 !important;
-    white-space: nowrap !important;
-    text-overflow: clip !important;
     margin: 0 !important;
-}
-
-/* "Ask Dexter" label — a pseudo-element so the collapsed circle shows ONLY the
-   emoji (no clipped letter peeking past the round edge).  It fades + slides in
-   as the pill expands on hover. */
-.st-key-ai_assistant_fab button::after {
-    content: "Ask Dexter";
-    color: #fff;
-    font-size: 14px;
-    font-weight: 600;
-    white-space: nowrap;
-    /* A natural-width item placed AFTER the emoji.  Collapsed: zero-width &
-       invisible (so the lone emoji centres in the circle).  Expanded: its real
-       width + a gap appears, and the whole [emoji + label] group stays centred
-       in the pill via the button's justify-content:center. */
-    flex: 0 0 auto;
-    max-width: 0;
-    opacity: 0;
-    overflow: hidden;
-    transition: max-width 0.30s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, margin-left 0.30s ease;
-}
-.st-key-ai_assistant_fab:hover button::after {
-    max-width: 92px;
-    opacity: 1;
-    margin-left: 9px;
-}
-
-/* Hover on the keyed container — drives the pill morph + colour shift */
-.st-key-ai_assistant_fab:hover button {
-    border-radius: 26px !important;
-    box-shadow: 0 4px 18px rgba(255, 75, 75, 0.45) !important;
-    background: #E63E3E !important;
-}
-
-.st-key-ai_assistant_fab button:active {
-    background: #D63030 !important;
-    box-shadow: 0 2px 8px rgba(255, 75, 75, 0.35) !important;
 }
 
 /* ── 3. Size the chat panel that opens above the FAB ──────────────────── */
@@ -839,42 +800,51 @@ def _render_chat_panel() -> None:
         )
         return
 
-    # Title row with a "new chat" icon button on the right.
-    # The session_id is bumped on every new-chat click so widget keys change,
-    # forcing Streamlit to treat every form/button as brand-new and avoiding
-    # the popover quirk where stale widget state leaks across reruns.
-    title_col, new_chat_col = st.columns([5, 1])
-    title_col.markdown("### ✨ AI Assistant")
-    if new_chat_col.button("📝", key="ai_new_chat",
-                           help="Start a new chat",
-                           use_container_width=True):
-        st.session_state["ai_chat_messages"]   = []
-        st.session_state["ai_chat_session_id"] = (
-            st.session_state.get("ai_chat_session_id", 0) + 1
-        )
-        st.rerun()
+    msgs = st.session_state.get("ai_chat_messages", [])
+    sid  = st.session_state.get("ai_chat_session_id", 0)
 
-    sid = st.session_state.get("ai_chat_session_id", 0)
+    # ── header: identity on the left, a quiet "Delete chat" link on the right.
+    # The link only appears once there's a conversation to delete.  Deleting
+    # bumps the session_id so widget keys change, forcing Streamlit to treat
+    # every form/button as brand-new (avoids stale widget state leaking across
+    # reruns inside the popover).
+    head_l, head_r = st.columns([3, 2], vertical_alignment="center")
+    head_l.markdown(
+        f"<div style='font-size:19px;font-weight:800;color:{COLORS['ink']};"
+        f"letter-spacing:-0.01em'>✨ Dexter</div>"
+        f"<div style='font-size:11.5px;color:{COLORS['muted']};margin-top:1px'>"
+        f"AI coverage assistant</div>",
+        unsafe_allow_html=True,
+    )
+    if msgs:
+        if head_r.button("🗑 Delete chat", key="ai_delete_chat",
+                         use_container_width=True):
+            st.session_state["ai_chat_messages"]   = []
+            st.session_state["ai_chat_session_id"] = sid + 1
+            st.rerun()
 
     st.caption(
-        "Ask anything about automation coverage, runs, bugs, or test stability. "
-        "Numbers come live from TestRail — no made-up data."
+        "Ask about automation coverage, runs, bugs, or test stability — "
+        "numbers come live from TestRail, never made up."
     )
-
-    msgs = st.session_state.get("ai_chat_messages", [])
 
     # ── empty-state suggestion chips ──────────────────────────────────────
     # Clicking a chip only QUEUES the message and reruns — the chips vanish
     # immediately (conversation no longer empty), so no sibling ever greys out.
     if not msgs:
-        st.markdown("**Try asking:**")
+        st.markdown(
+            f"<div style='font-size:12px;font-weight:700;color:{COLORS['muted']};"
+            f"text-transform:uppercase;letter-spacing:0.06em;margin:2px 0 8px'>"
+            f"Try asking</div>",
+            unsafe_allow_html=True,
+        )
         cols = st.columns(2)
         for i, (label, question) in enumerate(_SUGGESTIONS):
             if cols[i % 2].button(label, key=f"ai_sugg_{sid}_{i}",
                                   use_container_width=True):
                 _queue_user_message(question)
                 st.rerun()
-        st.markdown("---")
+        st.markdown("")
 
     # ── conversation history ──────────────────────────────────────────────
     for msg in msgs:
@@ -927,9 +897,9 @@ def render_floating_button() -> None:
 
     # Keyed container = CSS hook for fixed positioning (Streamlit ≥1.39).
     with st.container(key="ai_assistant_fab"):
-        # The popover trigger button IS the FAB.  No `help=` so no tooltip
-        # appears — the hover-expand morph speaks for itself.
-        # Label is the emoji only; "Ask Dexter" is revealed via CSS ::after on
-        # hover, so the collapsed circle never shows a clipped letter.
-        with st.popover("💬", use_container_width=False):
+        # The popover trigger button IS the FAB — a clean round chat circle.
+        # `help=` gives a native hover tooltip so the "Ask Dexter" identity is
+        # still discoverable without any fragile CSS label-morph.
+        with st.popover("💬", help="Ask Dexter — your AI coverage assistant",
+                        use_container_width=False):
             _render_chat_panel()
