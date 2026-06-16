@@ -726,16 +726,16 @@ _FAB_CSS = """
     width: 100% !important;
     min-width: 100% !important;
     height: 48px !important;
-    /* Left-pad of 15px lands the ~18px emoji dead-centre of the 48px circle
-       (15 + 9 = 24).  Content stays left-aligned, so the "Ask Dexter" label
-       simply reveals to the right as the pill widens — no re-centring needed. */
-    padding: 0 0 0 15px !important;
+    /* Content is CENTRED both axes.  Collapsed: the "Ask Dexter" pseudo-element
+       has zero width, so only the emoji shows — centred in the circle.
+       Expanded: the emoji + label group centres in the pill. */
+    padding: 0 !important;
     border-radius: 50% !important;
     overflow: hidden !important;
     white-space: nowrap !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: flex-start !important;
+    justify-content: center !important;
     font-size: 18px !important;
     font-weight: 600 !important;
     line-height: 1 !important;
