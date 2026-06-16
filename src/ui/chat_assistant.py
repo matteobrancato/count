@@ -683,22 +683,21 @@ def _generate_pending_response() -> None:
 # We anchor our CSS on that — far more robust than `:has()` tricks.
 _FAB_CSS = """
 <style>
-/* ── 1. The keyed container IS the FAB — a fixed, perfectly round chat
-       button (the industry-standard widget pattern: Intercom / Crisp / Drift).
-       No width-morph, no pseudo-element label → it can never go oval or clip.
-       The "Ask Dexter" identity lives in the panel header + the native tooltip. */
+/* ── 1. The keyed container IS the FAB — a fixed, ALWAYS-EXPANDED chat pill.
+       No animation, no morph: the "💬 Ask Dexter" label is the button text,
+       centred in a fixed-width pill.  Nothing can clip, go oval, or drift. ─── */
 .st-key-ai_assistant_fab {
     position: fixed !important;
     bottom: 24px !important;
     left:   24px !important;
     z-index: 9999 !important;
-    width: 56px !important;
-    height: 56px !important;
+    width: 158px !important;
+    height: 48px !important;
     margin: 0 !important;
     padding: 0 !important;
 }
 
-/* ── 2. Every inner wrapper fills the 56×56 container ─── */
+/* ── 2. Every inner wrapper fills the pill ─── */
 .st-key-ai_assistant_fab [data-testid="stPopover"],
 .st-key-ai_assistant_fab .stPopover,
 .st-key-ai_assistant_fab [data-testid="stPopover"] > div,
@@ -711,52 +710,52 @@ _FAB_CSS = """
     padding: 0 !important;
 }
 
-/* Hide Streamlit's popover chevron/caret icon — the emoji is the only mark. */
+/* Hide Streamlit's popover chevron/caret icon — only the icon + label show. */
 .st-key-ai_assistant_fab button [data-testid="stIconMaterial"],
 .st-key-ai_assistant_fab button svg {
     display: none !important;
 }
 
-/* ── 3. The button: a fixed 56×56 circle.  max-width == min-width == 56 means
-       it is GUARANTEED round — no content can stretch it into an oval. ─────── */
+/* ── 3. The button: a fixed-width pill, content perfectly centred. ───────── */
 .st-key-ai_assistant_fab button {
-    width: 56px !important;
-    min-width: 56px !important;
-    max-width: 56px !important;
-    height: 56px !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: 48px !important;
+    padding: 0 16px !important;
+    border-radius: 24px !important;
     overflow: hidden !important;
+    white-space: nowrap !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    font-size: 24px !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
     line-height: 1 !important;
     background: #FF4B4B !important;
     color: #fff !important;
     border: none !important;
     box-shadow: 0 4px 14px rgba(255, 75, 75, 0.42) !important;
-    transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease !important;
+    transition: box-shadow 0.16s ease, background 0.16s ease !important;
 }
 
-/* A subtle lift on hover — the only animation, and it can't break layout. */
+/* Hover/active only change colour + shadow — never size or position. */
 .st-key-ai_assistant_fab button:hover {
-    transform: scale(1.09) !important;
     background: #E63E3E !important;
     box-shadow: 0 6px 22px rgba(255, 75, 75, 0.55) !important;
 }
 .st-key-ai_assistant_fab button:active {
-    transform: scale(1.0) !important;
     background: #D63030 !important;
     box-shadow: 0 2px 8px rgba(255, 75, 75, 0.35) !important;
 }
 
-/* Centre the emoji and force it WHITE (global markdown rules would otherwise
-   tint it dark slate on the red circle). */
+/* Centre the "💬 Ask Dexter" label and force it WHITE (global markdown rules
+   would otherwise tint it dark slate on the red pill). */
 .st-key-ai_assistant_fab button > div[data-testid="stMarkdownContainer"] {
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
+    width: auto !important;
 }
 .st-key-ai_assistant_fab button > div,
 .st-key-ai_assistant_fab button p,
@@ -766,6 +765,7 @@ _FAB_CSS = """
     line-height: 1 !important;
     padding: 0 !important;
     margin: 0 !important;
+    white-space: nowrap !important;
 }
 
 /* ── 3. Size the chat panel that opens above the FAB ──────────────────── */
@@ -897,9 +897,8 @@ def render_floating_button() -> None:
 
     # Keyed container = CSS hook for fixed positioning (Streamlit ≥1.39).
     with st.container(key="ai_assistant_fab"):
-        # The popover trigger button IS the FAB — a clean round chat circle.
-        # `help=` gives a native hover tooltip so the "Ask Dexter" identity is
-        # still discoverable without any fragile CSS label-morph.
-        with st.popover("💬", help="Ask Dexter — your AI coverage assistant",
-                        use_container_width=False):
+        # The popover trigger button IS the FAB — an always-expanded pill whose
+        # label ("💬 Ask Dexter") is the button text, centred via CSS.  No
+        # animation, nothing to clip or drift.
+        with st.popover("💬 Ask Dexter", use_container_width=False):
             _render_chat_panel()
