@@ -726,16 +726,17 @@ _FAB_CSS = """
     width: 100% !important;
     min-width: 100% !important;
     height: 48px !important;
-    /* Content is CENTRED both axes.  Collapsed: the "Ask Dexter" pseudo-element
-       has zero width, so only the emoji shows — centred in the circle.
-       Expanded: the emoji + label group centres in the pill. */
-    padding: 0 !important;
+    /* The icon is PINNED at the left (15px pad → centred in the 48px circle:
+       15 + ~9 = 24).  Because the container's left edge is fixed and it only
+       grows rightward, the icon never moves between collapsed and expanded —
+       the "Ask Dexter" label simply reveals to its right. */
+    padding: 0 0 0 15px !important;
     border-radius: 50% !important;
     overflow: hidden !important;
     white-space: nowrap !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: center !important;
+    justify-content: flex-start !important;
     font-size: 18px !important;
     font-weight: 600 !important;
     line-height: 1 !important;
@@ -778,15 +779,17 @@ _FAB_CSS = """
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
+    /* Fill the space to the right of the pinned icon and centre the label in it. */
+    flex: 1 1 0;
+    text-align: center;
     max-width: 0;
     opacity: 0;
     overflow: hidden;
-    transition: max-width 0.30s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, margin-left 0.30s ease;
+    transition: max-width 0.30s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
 }
 .st-key-ai_assistant_fab:hover button::after {
-    max-width: 110px;
+    max-width: 120px;
     opacity: 1;
-    margin-left: 9px;
 }
 
 /* Hover on the keyed container — drives the pill morph + colour shift */
