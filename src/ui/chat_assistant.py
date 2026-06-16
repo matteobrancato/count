@@ -697,9 +697,9 @@ _FAB_CSS = """
     transition: width 0.30s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Hover on the container → expand to pill width */
+/* Hover on the container → expand to a pill that snugly fits "💬 Ask Dexter" */
 .st-key-ai_assistant_fab:hover {
-    width: 165px !important;
+    width: 158px !important;
 }
 
 /* ── 2. Every inner wrapper fills the container ─── */
@@ -779,17 +779,18 @@ _FAB_CSS = """
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
-    /* Fill the space to the right of the pinned icon and centre the label in it. */
-    flex: 1 1 0;
-    text-align: center;
+    /* Flows right after the pinned icon (no flex-grow / centring — that pushed
+       the label past the pill edge).  Reveals via max-width + a small gap. */
+    flex: 0 0 auto;
     max-width: 0;
     opacity: 0;
     overflow: hidden;
-    transition: max-width 0.30s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
+    transition: max-width 0.30s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, margin-left 0.30s ease;
 }
 .st-key-ai_assistant_fab:hover button::after {
-    max-width: 120px;
+    max-width: 92px;
     opacity: 1;
+    margin-left: 9px;
 }
 
 /* Hover on the keyed container — drives the pill morph + colour shift */

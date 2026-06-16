@@ -7,14 +7,16 @@ Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
     as Explorer / Report) — a case automated for both devices counts twice.
   * Coverage % uses unique case_ids so it stays a proper "% of cases covered".
 
-Two stacked views per BU
-────────────────────────
+Three stacked views per BU
+──────────────────────────
   1. **All Automated Cases** — coverage over the full non-deprecated universe.
-  2. **No-Regression Baseline Only** — same layout but restricted to cases
-     tagged with `big_regr_desktop` / `big_regr_mobile` (the regression baseline
-     used by the Backlog tab), with device-specific label matching.
+  2. **No-Regression Baseline Only** — restricted to cases tagged with
+     `big_regr_desktop` / `big_regr_mobile` (the regression baseline used by the
+     Backlog tab), with device-specific label matching.
+  3. **Production Sanity Only** — restricted to cases flagged for production
+     sanity (`prod_sanity` / `is_prod_sanity`), same convention as Overview.
 
-The two views share the same renderer (`_render_coverage_section`) so the
+All three views share the same renderer (`_render_coverage_section`) so the
 layout is identical — only the input subset changes.
 
 Layout per view
@@ -366,6 +368,26 @@ def _filter_to_regression_baseline(
     return nd_base, ab_base, set(ab_base["case_id"].astype(int).unique())
 
 
+def _filter_to_prod_sanity(
+    non_dep: pd.DataFrame, auto_bu: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
+    """Filter both DataFrames to Production Sanity cases — tests executed only in
+    production (the `prod_sanity` checkbox → `is_prod_sanity` flag).  Same
+    convention as the Overview tab's "Production Sanity" card.
+
+    Returns (non_dep_prod_sanity, auto_bu_prod_sanity, prod_sanity_auto_case_ids).
+    """
+    if non_dep.empty or "prod_sanity" not in non_dep.columns:
+        return non_dep.iloc[0:0], auto_bu.iloc[0:0], set()
+
+    nd_ps = non_dep[non_dep["prod_sanity"] == True]  # noqa: E712
+    if nd_ps.empty or auto_bu.empty or "is_prod_sanity" not in auto_bu.columns:
+        return nd_ps, auto_bu.iloc[0:0], set()
+
+    ab_ps = auto_bu[auto_bu["is_prod_sanity"] == True]  # noqa: E712
+    return nd_ps, ab_ps, set(ab_ps["case_id"].astype(int).unique())
+
+
 # ── per-BU view ──────────────────────────────────────────────────────────────
 def _render_coverage_section(
     non_dep: pd.DataFrame,
@@ -559,16 +581,41 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             "No cases tagged with `big_regr_desktop` / `big_regr_mobile` for this BU. "
             "Add the labels in TestRail (or click 🔄 Refresh if you just did)."
         )
-        return
-    _render_coverage_section(
-        nd_base, ab_base, ids_base,
-        key_prefix=f"cov_regr_{scope}_{bu_choice}",
-        scope=scope,
-        show_tool_facet=False,   # already shown in the full view
+    else:
+        _render_coverage_section(
+            nd_base, ab_base, ids_base,
+            key_prefix=f"cov_regr_{scope}_{bu_choice}",
+            scope=scope,
+            show_tool_facet=False,   # already shown in the full view
+        )
+
+    st.divider()
+
+    # ── View 3: production sanity only ───────────────────────────────────────
+    st.markdown("### 🚀 Production Sanity Only")
+    st.caption(
+        "Same breakdown, restricted to **Production Sanity** cases — tests run "
+        "only in production (the `Test Automation PRD Run` checkbox).  Tells you "
+        "the automation coverage of the prod-sanity scope specifically."
     )
+    nd_ps, ab_ps, ids_ps = _filter_to_prod_sanity(non_dep, auto_bu)
+    if nd_ps.empty:
+        st.info(
+            "No Production Sanity cases found for this BU. "
+            "Mark cases with the `Test Automation PRD Run` checkbox in TestRail "
+            "(or click 🔄 Refresh if you just did)."
+        )
+    else:
+        _render_coverage_section(
+            nd_ps, ab_ps, ids_ps,
+            key_prefix=f"cov_ps_{scope}_{bu_choice}",
+            scope=scope,
+            show_tool_facet=False,   # already shown in the full view
+        )
 
 
 # ── render ───────────────────────────────────────────────────────────────────
+@st.fragment
 def render() -> None:
     st.subheader("📐 Coverage by Area")
     st.caption(

@@ -669,6 +669,7 @@ def _render_stability(bu: str, project_ids: set[int]) -> None:
 
 
 # ── render ──────────────────────────────────────────────────────────────────
+@st.fragment
 def render() -> None:
     st.subheader("🏃 Runs & Stability")
     st.caption(

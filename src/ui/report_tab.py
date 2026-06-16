@@ -251,6 +251,7 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
 
 
 # ── render ────────────────────────────────────────────────────────────────────
+@st.fragment
 def render() -> None:
     st.markdown(
         f"<h2 style='text-align:center;font-weight:800;"

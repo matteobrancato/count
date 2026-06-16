@@ -24,6 +24,7 @@ def _parse_items(raw_items: str) -> list[dict]:
     return out
 
 
+@st.fragment
 def render() -> None:
     st.subheader("🔧 Debug — TestRail Inspector")
 

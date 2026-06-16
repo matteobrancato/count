@@ -474,6 +474,7 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
 
 
 # ── render ────────────────────────────────────────────────────────────────────
+@st.fragment
 def render() -> None:
     st.subheader("📋 Backlog & Coverage")
     st.caption(

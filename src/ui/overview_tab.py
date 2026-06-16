@@ -103,6 +103,7 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str) -> None:
 
 
 # --------------------------------------------------------------------- render
+@st.fragment
 def render() -> None:
     st.subheader("🧭 Automation Coverage Overview")
     st.caption(

@@ -427,6 +427,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
 
 
 # ------------------------------------------------------------------ render
+@st.fragment
 def render() -> None:
     st.subheader("📊 Business Units")
 
