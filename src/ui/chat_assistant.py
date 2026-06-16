@@ -715,6 +715,12 @@ _FAB_CSS = """
     padding: 0 !important;
 }
 
+/* Hide Streamlit's popover chevron/caret icon — the emoji is the only mark. */
+.st-key-ai_assistant_fab button [data-testid="stIconMaterial"],
+.st-key-ai_assistant_fab button svg {
+    display: none !important;
+}
+
 /* ── 3. The button: fills 100%, round by default, morphs to pill on hover ── */
 .st-key-ai_assistant_fab button {
     width: 100% !important;
