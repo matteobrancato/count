@@ -726,17 +726,16 @@ _FAB_CSS = """
     width: 100% !important;
     min-width: 100% !important;
     height: 48px !important;
-    /* The icon is PINNED at the left (15px pad → centred in the 48px circle:
-       15 + ~9 = 24).  Because the container's left edge is fixed and it only
-       grows rightward, the icon never moves between collapsed and expanded —
-       the "Ask Dexter" label simply reveals to its right. */
-    padding: 0 0 0 15px !important;
+    /* The content group is CENTRED.  Collapsed: only the emoji (label is
+       zero-width) → emoji centred in the circle.  Expanded: the [emoji + label]
+       group is centred in the pill. */
+    padding: 0 !important;
     border-radius: 50% !important;
     overflow: hidden !important;
     white-space: nowrap !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: flex-start !important;
+    justify-content: center !important;
     font-size: 18px !important;
     font-weight: 600 !important;
     line-height: 1 !important;
@@ -757,6 +756,7 @@ _FAB_CSS = """
     display: flex !important;
     align-items: center !important;
     width: auto !important;
+    flex: 0 0 auto !important;   /* emoji keeps its natural width (pinned left) */
 }
 .st-key-ai_assistant_fab button > div,
 .st-key-ai_assistant_fab button p,
@@ -779,8 +779,10 @@ _FAB_CSS = """
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
-    /* Flows right after the pinned icon (no flex-grow / centring — that pushed
-       the label past the pill edge).  Reveals via max-width + a small gap. */
+    /* A natural-width item placed AFTER the emoji.  Collapsed: zero-width &
+       invisible (so the lone emoji centres in the circle).  Expanded: its real
+       width + a gap appears, and the whole [emoji + label] group stays centred
+       in the pill via the button's justify-content:center. */
     flex: 0 0 auto;
     max-width: 0;
     opacity: 0;
