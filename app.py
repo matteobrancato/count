@@ -40,6 +40,7 @@ def _header() -> None:
         )
     with right:
         if st.button("🔄  Refresh Numbers", use_container_width=True,
+                     key="refresh_numbers", type="primary",
                      help="Clear all caches and re-fetch from TestRail."):
             tr.clear_all_caches()
             try:

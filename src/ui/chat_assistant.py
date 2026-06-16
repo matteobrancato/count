@@ -178,11 +178,23 @@ _SUGGESTIONS: list[tuple[str, str]] = [
 
 # ── BU resolution ────────────────────────────────────────────────────────────
 def _safe_tool(fn):
-    """Decorator: catch any exception in a tool function and return a dict that
-    the LLM can read.  Without this, an uncaught exception inside a tool would
-    be opaquely re-phrased by the LLM as "internal error" with no diagnostic.
+    """Decorator: catch any exception in a tool function and return a dict the
+    LLM can read, AND expose a signature with *resolved* type annotations.
+
+    The resolved signature is critical for Gemini's automatic function calling.
+    This module uses ``from __future__ import annotations`` (PEP 563), so a
+    function's parameter annotations are stored as STRINGS ("str", "int").  The
+    SDK's argument converter calls ``inspect.signature(fn)`` and then runs
+    ``isinstance(value, param.annotation)`` — with a string annotation that
+    raises *"isinstance() arg 2 must be a type"*, crashing every tool the model
+    calls WITH arguments (parameterless tools slipped through).  By setting
+    ``__signature__`` to a version whose annotations are the real types
+    (via ``get_type_hints``), ``inspect.signature`` returns ``str``/``int`` and
+    the SDK's isinstance check works.
     """
     import functools
+    import inspect
+    import typing
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -195,6 +207,21 @@ def _safe_tool(fn):
                 "tool":          fn.__name__,
                 "tool_arguments": {"args": list(args), "kwargs": dict(kwargs)},
             }
+
+    # Rebuild the signature with resolved (real-type) annotations.
+    try:
+        hints = typing.get_type_hints(fn)
+        sig = inspect.signature(fn)
+        params = [
+            p.replace(annotation=hints.get(name, p.annotation))
+            for name, p in sig.parameters.items()
+        ]
+        wrapper.__signature__ = sig.replace(
+            parameters=params,
+            return_annotation=hints.get("return", sig.return_annotation),
+        )
+    except Exception:                                                   # noqa: BLE001
+        pass  # fall back to the copied annotations if resolution fails
     return wrapper
 
 
@@ -505,8 +532,22 @@ def _gemini_ready() -> bool:
     return _GEMINI_AVAILABLE and _get_api_key() is not None
 
 
-def _send_message(text: str) -> None:
-    """Send *text* to Gemini, appending both turns to the conversation log.
+def _queue_user_message(text: str) -> None:
+    """Append the user's message so the next rerun can show it + generate a reply.
+
+    Splitting "queue" from "generate" is what makes the UI clean: a chip click
+    or form submit only queues + reruns (instant — the empty-state chips vanish
+    because the conversation is no longer empty), and the slow Gemini call then
+    runs on the FOLLOWING render with a spinner.  Without this split, the call
+    blocked while the chips were still on screen, greying the siblings.
+    """
+    st.session_state.setdefault("ai_chat_messages", []).append(
+        {"role": "user", "content": text}
+    )
+
+
+def _generate_pending_response() -> None:
+    """Generate Gemini's reply for the trailing (unanswered) user message.
 
     Tries each model in `_models_to_try()` in order, falling back to the next
     one if the current model is rate-limited (RESOURCE_EXHAUSTED / 429) or not
@@ -522,8 +563,9 @@ def _send_message(text: str) -> None:
     if not api_key:
         return
 
-    msgs = st.session_state.setdefault("ai_chat_messages", [])
-    msgs.append({"role": "user", "content": text})
+    msgs = st.session_state.get("ai_chat_messages", [])
+    if not msgs or msgs[-1]["role"] != "user":
+        return  # nothing pending
 
     contents = [
         types.Content(
@@ -721,6 +763,26 @@ _FAB_CSS = """
     margin: 0 !important;
 }
 
+/* "Ask Dexter" label — a pseudo-element so the collapsed circle shows ONLY the
+   emoji (no clipped letter peeking past the round edge).  It fades + slides in
+   as the pill expands on hover. */
+.st-key-ai_assistant_fab button::after {
+    content: "Ask Dexter";
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-width 0.30s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, margin-left 0.30s ease;
+}
+.st-key-ai_assistant_fab:hover button::after {
+    max-width: 110px;
+    opacity: 1;
+    margin-left: 9px;
+}
+
 /* Hover on the keyed container — drives the pill morph + colour shift */
 .st-key-ai_assistant_fab:hover button {
     border-radius: 26px !important;
@@ -733,12 +795,12 @@ _FAB_CSS = """
     box-shadow: 0 2px 8px rgba(255, 75, 75, 0.35) !important;
 }
 
-/* ── 3. Size the popover panel that opens above the FAB ───────────────── */
-div[data-baseweb="popover"] {
-    /* Streamlit's popover content lives inside this baseweb wrapper */
-    min-width: 380px;
-}
-.st-key-ai_assistant_fab [data-testid="stPopoverBody"] {
+/* ── 3. Size the chat panel that opens above the FAB ──────────────────── */
+/* Target ONLY Streamlit's popover body (st.popover content) — the chat panel
+   is the app's only st.popover.  Selectbox/multiselect dropdowns use baseweb
+   menu/listbox, NOT stPopoverBody, so they're untouched (previously a global
+   popover min-width broke them into an oversized white box). */
+[data-testid="stPopoverBody"] {
     min-width: 380px;
     max-width: min(480px, 92vw);
     max-height: min(640px, 75vh);
@@ -790,13 +852,15 @@ def _render_chat_panel() -> None:
     msgs = st.session_state.get("ai_chat_messages", [])
 
     # ── empty-state suggestion chips ──────────────────────────────────────
+    # Clicking a chip only QUEUES the message and reruns — the chips vanish
+    # immediately (conversation no longer empty), so no sibling ever greys out.
     if not msgs:
         st.markdown("**Try asking:**")
         cols = st.columns(2)
         for i, (label, question) in enumerate(_SUGGESTIONS):
             if cols[i % 2].button(label, key=f"ai_sugg_{sid}_{i}",
                                   use_container_width=True):
-                _send_message(question)
+                _queue_user_message(question)
                 st.rerun()
         st.markdown("---")
 
@@ -804,6 +868,16 @@ def _render_chat_panel() -> None:
     for msg in msgs:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+
+    # ── generate the reply for a freshly-queued user message ──────────────
+    if msgs and msgs[-1]["role"] == "user":
+        n_before = len(msgs)
+        with st.chat_message("assistant"), st.spinner("Thinking…"):
+            _generate_pending_response()
+        # Only rerun if a reply was actually appended — guards against an
+        # infinite loop should generation ever return without a response.
+        if len(st.session_state.get("ai_chat_messages", [])) > n_before:
+            st.rerun()
 
     # ── input ─────────────────────────────────────────────────────────────
     # A form (instead of `st.chat_input`) lets us keep everything inside the
@@ -818,8 +892,7 @@ def _render_chat_panel() -> None:
         )
         submitted = cols[1].form_submit_button("→", use_container_width=True)
     if submitted and user_input.strip():
-        with st.spinner("Thinking…"):
-            _send_message(user_input.strip())
+        _queue_user_message(user_input.strip())
         st.rerun()
 
     # ── footer ────────────────────────────────────────────────────────────
@@ -844,5 +917,7 @@ def render_floating_button() -> None:
     with st.container(key="ai_assistant_fab"):
         # The popover trigger button IS the FAB.  No `help=` so no tooltip
         # appears — the hover-expand morph speaks for itself.
-        with st.popover("💬 Ask Dexter", use_container_width=False):
+        # Label is the emoji only; "Ask Dexter" is revealed via CSS ::after on
+        # hover, so the collapsed circle never shows a clipped letter.
+        with st.popover("💬", use_container_width=False):
             _render_chat_panel()

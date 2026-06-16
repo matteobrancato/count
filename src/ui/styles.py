@@ -213,6 +213,40 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 [class*="st-key-ai_chat_form_"] [data-testid="stFormSubmitButton"] button p {{ color: #fff !important; }}
 
+/* New-chat icon button (📝) — a clean rounded brand-tinted icon button. */
+[class*="st-key-ai_new_chat"] button {{
+    background: {c['brand_soft']} !important;
+    border: 1px solid {c['border']} !important;
+    border-radius: 11px !important;
+    color: {c['brand_strong']} !important;
+    box-shadow: none !important;
+    transition: background .15s ease, border-color .15s ease, transform .12s ease !important;
+}}
+[class*="st-key-ai_new_chat"] button:hover {{
+    background: #fff !important;
+    border-color: {c['brand']} !important;
+    transform: translateY(-1px) !important;
+}}
+
+/* ── Header "Refresh Numbers" — modern brand-gradient pill ─────────────────── */
+[class*="st-key-refresh_numbers"] button {{
+    background: linear-gradient(135deg, {c['brand']} 0%, {c['brand_strong']} 100%) !important;
+    border: none !important;
+    border-radius: 12px !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em !important;
+    box-shadow: 0 2px 10px rgba(46, 91, 255, 0.28) !important;
+    transition: box-shadow .18s ease, transform .12s ease, filter .15s ease !important;
+}}
+[class*="st-key-refresh_numbers"] button:hover {{
+    box-shadow: 0 5px 18px rgba(46, 91, 255, 0.38) !important;
+    transform: translateY(-1px) !important;
+    filter: brightness(1.05) !important;
+}}
+[class*="st-key-refresh_numbers"] button:active {{ transform: translateY(0) !important; }}
+[class*="st-key-refresh_numbers"] button p {{ color: #fff !important; }}
+
 /* ── Metric cards ─────────────────────────────────────────────────────────── */
 [data-testid="stMetric"] {{
     background: {c['surface']};
