@@ -239,64 +239,19 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
-/* ── Header refresh — pinned to the top-right of the tab bar ─────────────────
-   `tabs_zone` wraps the tab bar and is position:relative.  The refresh control
-   is absolutely pinned to its top-right (top:0 = the tab row), so it sits level
-   with the tabs, just above the grey underline — anchored to the tab row itself,
-   no header-to-tab gap guessing.  Caption + icon are one right-aligned row. */
+/* ── Data-freshness label — pinned to the top-right of the tab bar ───────────
+   `tabs_zone` wraps the tab bar (position:relative).  The freshness label is
+   absolutely pinned to its top-right, level with the tabs.  Purely informational
+   (no manual refresh — data auto-refreshes hourly via the cache ttl). */
 .st-key-tabs_zone {{ position: relative !important; }}
-.st-key-refresh_wrap {{
+.st-key-freshness {{
     position: absolute !important;
-    top: 2px !important;           /* sit on the tab row, above the underline */
+    top: 14px !important;          /* align with the tab labels */
     right: 0 !important;
     width: auto !important;
     z-index: 20 !important;
+    pointer-events: none !important;
 }}
-/* Lay caption + button on ONE horizontal row.  Targets every plausible level of
-   the keyed container (the element itself, its child div, and any descendant
-   vertical block) so it works regardless of Streamlit's wrapper nesting. */
-.st-key-refresh_wrap[data-testid="stVerticalBlockBorderWrapper"],
-.st-key-refresh_wrap > div,
-.st-key-refresh_wrap [data-testid="stVerticalBlock"] {{
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    justify-content: flex-end !important;
-    gap: 8px !important;
-    width: auto !important;
-}}
-.st-key-refresh_wrap [data-testid="stElementContainer"] {{
-    width: auto !important;
-    flex: 0 0 auto !important;
-}}
-[class*="st-key-refresh_numbers"] {{
-    display: flex !important;
-    justify-content: flex-end !important;   /* hug the right edge */
-}}
-[class*="st-key-refresh_numbers"] button {{
-    width: 34px !important;
-    min-width: 34px !important;
-    max-width: 34px !important;
-    height: 34px !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
-    background: {c['surface']} !important;
-    border: 1px solid {c['border_2']} !important;
-    color: {c['muted']} !important;
-    font-size: 16px !important;
-    line-height: 1 !important;
-    box-shadow: none !important;
-    transition: color .15s ease, border-color .15s ease, background .15s ease, transform .35s cubic-bezier(0.4,0,0.2,1) !important;
-}}
-[class*="st-key-refresh_numbers"] button:hover {{
-    color: {c['brand']} !important;
-    border-color: {c['brand']} !important;
-    background: {c['brand_soft']} !important;
-    transform: rotate(90deg) !important;     /* subtle refresh-spin hint */
-}}
-[class*="st-key-refresh_numbers"] button:active {{ transform: rotate(180deg) !important; }}
-[class*="st-key-refresh_numbers"] button p {{ color: inherit !important; }}
 
 /* ── Metric cards ─────────────────────────────────────────────────────────── */
 [data-testid="stMetric"] {{

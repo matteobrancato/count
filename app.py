@@ -63,14 +63,12 @@ def _header() -> None:
     )
 
 
-def _refresh_control() -> None:
-    """Data-freshness caption + a quiet circular refresh icon, as one right-
-    aligned row.  Rendered inside the `tabs_zone` container and CSS-pinned
-    (`.st-key-refresh_wrap`) to the top-right of the tab bar — level with the
-    tabs, just above the grey underline.  Anchored to the tab row itself, so
-    no header-to-tab gap guessing."""
+def _freshness_label() -> None:
+    """Small data-freshness caption, CSS-pinned (`.st-key-freshness`) to the
+    top-right of the tab bar — level with the tabs.  Purely informational: there
+    is no manual refresh; the numbers auto-refresh hourly via the cache ttl."""
     updated_at = _numbers_fetched_at()
-    with st.container(key="refresh_wrap"):
+    with st.container(key="freshness"):
         st.markdown(
             f"<div style='color:{COLORS['muted']};font-size:11px;"
             f"white-space:nowrap;line-height:1'>Updated "
@@ -78,26 +76,6 @@ def _refresh_control() -> None:
             f"{_relative_time(updated_at)}</b></div>",
             unsafe_allow_html=True,
         )
-        if st.button(
-            "↻", key="refresh_numbers",
-            help=("**Refresh all numbers from TestRail.**  \n⚠️ This re-fetches "
-                  "everything and can take **30–60s** — up to a couple of "
-                  "minutes on a cold start. The page will be busy until it "
-                  "finishes."),
-        ):
-            tr.clear_all_caches()
-            try:
-                from src.rules_engine import evaluate_rules
-                evaluate_rules.clear()
-            except Exception:
-                pass
-            try:
-                from src.ui.chat_assistant import _build_coverage_brief
-                _build_coverage_brief.clear()
-            except Exception:
-                pass
-            _numbers_fetched_at.clear()   # reset the "Updated …" age to now
-            st.rerun()
 
 
 # -------------------------------------------------------------------- credentials gate
@@ -143,10 +121,10 @@ def main() -> None:
     except ImportError:
         pass
 
-    # Wrap the tab bar in a relative-positioned zone so the refresh control can
+    # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
     with st.container(key="tabs_zone"):
-        _refresh_control()
+        _freshness_label()
         (tab_explore, tab_backlog, tab_coverage, tab_overview, tab_report,
          tab_runs, tab_debug) = st.tabs(
             ["📊 Explorer", "📋 Backlog", "📐 Coverage", "🧭 Overview",
