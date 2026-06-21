@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import traceback
 
 import streamlit as st
@@ -21,6 +22,18 @@ st.set_page_config(
 
 
 # -------------------------------------------------------------------- header
+def _relative_time(ts: float) -> str:
+    """Human 'time ago' for the data-freshness caption."""
+    delta = max(0.0, time.time() - ts)
+    if delta < 45:
+        return "just now"
+    if delta < 3600:
+        return f"{round(delta / 60)}m ago"
+    if delta < 86400:
+        return f"{round(delta / 3600)}h ago"
+    return f"{round(delta / 86400)}d ago"
+
+
 def _header() -> None:
     left, right = st.columns([4, 1], vertical_alignment="center")
     with left:
@@ -39,9 +52,18 @@ def _header() -> None:
             unsafe_allow_html=True,
         )
     with right:
-        if st.button("🔄  Refresh Numbers", use_container_width=True,
-                     key="refresh_numbers", type="primary",
-                     help="Clear all caches and re-fetch from TestRail."):
+        # Data-freshness caption + a quiet circular refresh icon (not a loud CTA).
+        updated_at = st.session_state.setdefault("numbers_updated_at", time.time())
+        cap_col, btn_col = st.columns([3, 1], vertical_alignment="center")
+        cap_col.markdown(
+            f"<div style='text-align:right;color:{COLORS['muted']};font-size:12px;"
+            f"white-space:nowrap;line-height:1.2'>Updated<br>"
+            f"<b style='color:{COLORS['text']};font-weight:600'>"
+            f"{_relative_time(updated_at)}</b></div>",
+            unsafe_allow_html=True,
+        )
+        if btn_col.button("↻", key="refresh_numbers",
+                          help="Refresh the numbers from TestRail."):
             tr.clear_all_caches()
             try:
                 from src.rules_engine import evaluate_rules
@@ -53,6 +75,7 @@ def _header() -> None:
                 _build_coverage_brief.clear()
             except Exception:
                 pass
+            st.session_state["numbers_updated_at"] = time.time()
             st.rerun()
 
 

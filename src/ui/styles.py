@@ -239,24 +239,34 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
-/* ── Header "Refresh Numbers" — modern brand-gradient pill ─────────────────── */
+/* ── Header refresh — a quiet circular ghost icon (↻), right-aligned ────────── */
+[class*="st-key-refresh_numbers"] {{
+    display: flex !important;
+    justify-content: flex-end !important;   /* hug the right edge */
+}}
 [class*="st-key-refresh_numbers"] button {{
-    background: linear-gradient(135deg, {c['brand']} 0%, {c['brand_strong']} 100%) !important;
-    border: none !important;
-    border-radius: 12px !important;
-    color: #fff !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.01em !important;
-    box-shadow: 0 2px 10px rgba(46, 91, 255, 0.28) !important;
-    transition: box-shadow .18s ease, transform .12s ease, filter .15s ease !important;
+    width: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
+    height: 40px !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    background: {c['surface']} !important;
+    border: 1px solid {c['border_2']} !important;
+    color: {c['muted']} !important;
+    font-size: 19px !important;
+    line-height: 1 !important;
+    box-shadow: none !important;
+    transition: color .15s ease, border-color .15s ease, background .15s ease, transform .35s cubic-bezier(0.4,0,0.2,1) !important;
 }}
 [class*="st-key-refresh_numbers"] button:hover {{
-    box-shadow: 0 5px 18px rgba(46, 91, 255, 0.38) !important;
-    transform: translateY(-1px) !important;
-    filter: brightness(1.05) !important;
+    color: {c['brand']} !important;
+    border-color: {c['brand']} !important;
+    background: {c['brand_soft']} !important;
+    transform: rotate(90deg) !important;     /* subtle refresh-spin hint */
 }}
-[class*="st-key-refresh_numbers"] button:active {{ transform: translateY(0) !important; }}
-[class*="st-key-refresh_numbers"] button p {{ color: #fff !important; }}
+[class*="st-key-refresh_numbers"] button:active {{ transform: rotate(180deg) !important; }}
+[class*="st-key-refresh_numbers"] button p {{ color: inherit !important; }}
 
 /* ── Metric cards ─────────────────────────────────────────────────────────── */
 [data-testid="stMetric"] {{
@@ -391,6 +401,26 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
+
+/* ── Coverage tab: Apple-style scroll-reveal ──────────────────────────────────
+   Pure CSS scroll-driven animation — each block fades + rises as it scrolls into
+   view, so the long Coverage page feels alive instead of heavy.  Gated behind
+   @supports so browsers WITHOUT scroll timelines (Safari/Firefox today) just
+   render everything normally — content can never get stuck invisible.  Anything
+   already on screen at load is past its entry range, so it shows instantly. */
+@supports (animation-timeline: view()) {{
+  @media (prefers-reduced-motion: no-preference) {{
+    @keyframes covReveal {{
+      from {{ opacity: 0; transform: translateY(30px); }}
+      to   {{ opacity: 1; transform: translateY(0); }}
+    }}
+    .st-key-coverage_anim [data-testid="stElementContainer"] {{
+      animation: covReveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 42%;
+    }}
+  }}
+}}
 </style>
 """
 

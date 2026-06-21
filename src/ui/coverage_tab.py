@@ -651,4 +651,7 @@ def render() -> None:
         c2.markdown(f"**{bu_choice}**")
 
     st.divider()
-    _coverage_for(chosen_scope, bu_choice)
+    # Keyed wrapper = scope hook for the scroll-reveal animation (see styles.py:
+    # `.st-key-coverage_anim`).  Elements fade + rise as they scroll into view.
+    with st.container(key="coverage_anim"):
+        _coverage_for(chosen_scope, bu_choice)
