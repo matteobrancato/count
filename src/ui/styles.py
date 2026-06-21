@@ -246,7 +246,7 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 .st-key-tabs_zone {{ position: relative !important; }}
 .st-key-freshness {{
     position: absolute !important;
-    top: 14px !important;          /* align with the tab labels */
+    top: 26px !important;          /* low in the tab row, flush above the grey line */
     right: 0 !important;
     width: auto !important;
     z-index: 20 !important;
