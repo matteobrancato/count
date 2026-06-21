@@ -7,18 +7,30 @@ top failing tests in Drogas?".
 
 Architecture
 ────────────
-We rely on Gemini's automatic function calling: the LLM never sees raw
-TestRail dumps — it calls our Python tool functions, gets exact numbers
-back, and formulates the answer.  This eliminates hallucinations on metrics.
+Reliability-first, two-layer design so we stay inside the free Gemini tier:
 
-Tools exposed to Gemini
-───────────────────────
-    list_bus()                 — list of all Business Units in the dashboard
-    get_bu_coverage(bu)        — coverage % + top areas + regression baseline
+  1. A compact "LIVE COVERAGE SNAPSHOT" of EVERY BU (coverage %, regression
+     baseline, production sanity, weakest areas, ranking) is pre-built from the
+     same cached rule-evaluation the dashboard uses and injected into the system
+     instruction.  Coverage / comparison / gap questions are therefore answered
+     from context in a SINGLE API call — no multi-hop function calling.
+
+  2. A small set of on-demand tools covers only the live detail that is too
+     heavy to pre-compute for every BU.  The model calls at most one, and only
+     when the question clearly needs it.
+
+This keeps metrics exact (no hallucinated numbers) while cutting API calls ~5×
+versus pure function calling — the previous design burned the daily quota fast.
+
+On-demand tools exposed to Gemini
+─────────────────────────────────
     get_active_runs(bu)        — open runs with pass/fail/completion
     get_open_bugs(bu)          — unique JIRA keys with the test that generated them
     get_test_stability(bu, …)  — always-pass / always-fail / flaky counts + top
-    compare_bus()              — ranking of all BUs by coverage %
+
+Internal helpers (NOT exposed — used to build the snapshot)
+──────────────────────────────────────────────────────────
+    list_bus() · get_bu_coverage(bu) · compare_bus()
 
 Privacy
 ───────
@@ -63,8 +75,9 @@ _DEFAULT_MODEL = "gemini-2.5-flash"
 # each request — picking the first model that's not currently rate-limited.
 # Ordered preferred → most-likely-available.  The first one to reply wins.
 _FALLBACK_CHAIN: list[str] = [
-    "gemini-2.5-flash",   # solid free tier in most regions (10 RPM · 250 RPD)
-    "gemini-2.0-flash",   # older, sometimes spare quota (15 RPM · 200 RPD)
+    "gemini-2.5-flash",       # best quality on free tier (10 RPM · 250 RPD)
+    "gemini-2.5-flash-lite",  # higher free quota — great resilience (15 RPM · 1000 RPD)
+    "gemini-2.0-flash",       # older, sometimes spare quota (15 RPM · 200 RPD)
 ]
 
 
@@ -114,56 +127,60 @@ def _parse_retry_delay(err_str: str, default: float = 60.0) -> float:
     return float(m.group(1)) if m else default
 
 _SYSTEM_INSTRUCTION = """
-You are an automation coverage assistant for AS Watson's testing platform.
-You help managers and QA leads understand the state of test automation across
-Business Units (BUs).
+You are Dexter, the automation-coverage assistant for AS Watson's testing
+platform.  You help managers and QA leads understand the state of test
+automation across Business Units (BUs), and you can hold a real conversation
+about it — follow-ups, comparisons, "why", "and the others?", etc.
 
-The complete list of valid Business Units is EXACTLY these 10 — there are NO
-others, do NOT invent variants or combinations:
+The VALID Business Units are EXACTLY the ones listed in the "LIVE COVERAGE
+SNAPSHOT" below — use those exact names and do NOT invent any others.  Note that
+"Superdrug / Savers" is a real, separate entry (the suite of tests shared between
+Superdrug and Savers); it is distinct from "Superdrug" and from "Savers".
+Common aliases to map: SD=Superdrug, KV=Kruidvat, WTR=Watsons,
+TPS=The Perfume Shop, ICI=ICI Paris XL, MRN=Marionnaud, DRO=Drogas.
 
-  - Superdrug
-  - Savers
-  - The Perfume Shop
-  - Kruidvat
-  - Trekpleister
-  - Watsons
-  - ICI Paris XL
-  - Marionnaud
-  - Drogas
-  - Next Gen
+# HOW TO ANSWER — read this carefully
+A "LIVE COVERAGE SNAPSHOT" is provided below with the CURRENT numbers for ALL
+BUs (overall coverage, No-Regression baseline, Production Sanity, weakest areas,
+and the full ranking).  These numbers are live from TestRail.
+
+  • For ANYTHING about coverage, totals, automated counts, comparisons,
+    rankings, or coverage gaps → answer DIRECTLY from the snapshot.  Do NOT call
+    any tool — the data is already in front of you.  This makes you fast and
+    reliable.
+  • Call a tool ONLY for live detail that is NOT in the snapshot:
+      - get_active_runs(bu)    → currently open/running test runs + pass rates
+      - get_open_bugs(bu)      → open JIRA bugs and the tests that raised them
+      - get_test_stability(bu) → flaky / always-fail analysis over recent runs
+    Call at most one tool, only when the question clearly needs that live detail.
 
 Rules
 ─────
-1. ALWAYS use the provided tools to get exact numbers. Never invent or estimate.
-2. **Reply in the user's language.**  If they write in Italian, reply in Italian.
-   If they write in English, reply in English.  Match their tone.
-3. Be concise and visual.  Lead with the headline number in **bold**, then 1-2
-   short bullets for context.  Skip preamble like "Here is the data:".
-4. Use full BU names in replies (e.g. "Superdrug", not "SD").
+1. NEVER invent or estimate a number.  Use the snapshot, or a tool — nothing else.
+2. **Reply in the user's language** (Italian → Italian, English → English) and
+   match their tone.
+3. Be concise and conversational.  Lead with the headline number in **bold**,
+   then 1-3 short bullets.  Skip preamble like "Here is the data:".
+4. Use full BU names ("Superdrug", not "SD").
 5. Format numbers with thousands separators ("2,032", not "2032").
-6. Always include context ("out of 7,234 total cases", "covers 28.3% of cases").
-7. Call only the tools needed to answer the question.  Do NOT proactively call
-   compare_bus() or query other BUs unless the user explicitly asks for a
-   comparison or ranking — this is critical for staying within API rate limits.
+6. Always give context ("1,116 of 3,949 cases", "28.3% covered").
+7. Be proactive in conversation: when it helps, add a one-line comparison or
+   call out the weakest area — the snapshot has every BU, so use it.
 
-CRITICAL — DO NOT ask for clarification when the user names one of the 10 BUs
-above.  "How is Superdrug doing?" is UNAMBIGUOUS → call get_bu_coverage("Superdrug")
-immediately.  Never present invented variants like "Superdrug / Savers" — there
-is no such BU, those are two distinct BUs.
+CRITICAL — DO NOT ask for clarification when the user names a BU that is in the
+snapshot (directly or via an alias).  "How is Superdrug doing?" is unambiguous →
+answer from the snapshot immediately.  Only ask to clarify when no BU is
+identifiable at all and the question needs one.
 
-Only ask a clarifying question when:
-  - The user's BU name does NOT match any of the 10 exactly or via known aliases
-    (SD = Superdrug, KV = Kruidvat, WTR = Watsons, TPS = The Perfume Shop, etc.)
-  - The question is genuinely vague (no BU mentioned at all, e.g. "How are we doing?")
+If a tool returns `{"error": "..."}`, tell the user the actual error — do not
+make something up.
 
-Tool error handling: if a tool returns `{"error": "..."}`, share the actual error
-message with the user.  Do NOT make up an explanation or hallucinate alternatives.
-
-Answer format (for "how is X doing" questions)
-──────────────────────────────────────────────
+Answer shape (example for "how is X doing")
+───────────────────────────────────────────
   **28.3%** automation coverage
   • 1,116 automated cases out of 3,949 total
-  • Regression baseline: 92% covered (X/Y cases)
+  • No-Regression baseline: 92% covered (X/Y) · Production Sanity: 64% (X/Y)
+  • Weakest area: <area> at 11%
 """
 
 # Suggestion chips shown in the empty-state of the chat panel.
@@ -308,6 +325,17 @@ def get_bu_coverage(bu: str) -> dict:
             "coverage_pct":     round((regr_auto / regr_total * 100) if regr_total else 0.0, 1),
         }
 
+    nd_ps, ab_ps, ids_ps = coverage_tab._filter_to_prod_sanity(non_dep, auto_bu)
+    prod_sanity: dict[str, Any] = {}
+    if not nd_ps.empty:
+        ps_total = int(nd_ps["case_id"].nunique())
+        ps_auto  = int(nd_ps["case_id"].isin(ids_ps).sum())
+        prod_sanity = {
+            "total_cases":      ps_total,
+            "automated_unique": ps_auto,
+            "coverage_pct":     round((ps_auto / ps_total * 100) if ps_total else 0.0, 1),
+        }
+
     return {
         "business_unit":                     canonical,
         "scope":                             scope,
@@ -317,6 +345,7 @@ def get_bu_coverage(bu: str) -> dict:
         "coverage_pct":                      cov_pct,
         "top_areas":                         top_areas,
         "regression_baseline":               regression,
+        "production_sanity":                 prod_sanity,
     }
 
 
@@ -501,10 +530,74 @@ def compare_bus() -> dict:
     return {"ranking": rankings}
 
 
-_TOOLS = [
-    list_bus, get_bu_coverage, get_active_runs,
-    get_open_bugs, get_test_stability, compare_bus,
-]
+# Tools exposed to Gemini = ONLY the live/heavy detail that is NOT in the
+# pre-built snapshot.  Coverage, totals, comparisons and gaps are answered
+# directly from the snapshot (see `_build_coverage_brief`) in a single API call —
+# this is the core of the reliability fix (no multi-hop function calling for the
+# common case, so we stay well within the free-tier rate limits).
+_TOOLS = [get_active_runs, get_open_bugs, get_test_stability]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _build_coverage_brief() -> str:
+    """Build a compact markdown snapshot of CURRENT coverage for every BU.
+
+    Injected into the system instruction so Gemini can answer coverage,
+    comparison and gap questions from context in a SINGLE call — no tool
+    round-trips.  Cheap to build: it reuses `get_bu_coverage`, which is backed by
+    the same `@st.cache_data` rule-evaluation the dashboard already uses.  Cached
+    here too (and cleared by the header's "Refresh Numbers" button).
+    """
+    bus = sorted({r.bu for r in ALL_RULES})
+    ranking: list[tuple[str, float]] = []
+    blocks: list[str] = []
+
+    for bu in bus:
+        d = get_bu_coverage(bu)
+        if not isinstance(d, dict) or "error" in d:
+            blocks.append(f"## {bu}\n- (no data available right now)")
+            continue
+        ranking.append((d["business_unit"], d["coverage_pct"]))
+        lines = [
+            f"## {d['business_unit']}",
+            f"- Overall coverage: {d['coverage_pct']}% "
+            f"({d['automated_unique']:,} automated of {d['total_cases']:,} cases)",
+        ]
+        rb = d.get("regression_baseline") or {}
+        if rb:
+            lines.append(
+                f"- No-Regression baseline: {rb['coverage_pct']}% "
+                f"({rb['automated_unique']:,}/{rb['total_cases']:,})"
+            )
+        ps = d.get("production_sanity") or {}
+        if ps:
+            lines.append(
+                f"- Production Sanity: {ps['coverage_pct']}% "
+                f"({ps['automated_unique']:,}/{ps['total_cases']:,})"
+            )
+        areas = d.get("top_areas") or []
+        weak = sorted(
+            (a for a in areas if a.get("total", 0) >= 10),
+            key=lambda a: a.get("coverage_pct", 0.0),
+        )[:5]
+        if weak:
+            lines.append("- Weakest areas (lowest coverage first):")
+            for a in weak:
+                lines.append(
+                    f"    - {a['area']}: {a['coverage_pct']}% "
+                    f"({a['automated_rows']}/{a['total']})"
+                )
+        blocks.append("\n".join(lines))
+
+    ranking.sort(key=lambda x: -x[1])
+    rank_line = "Coverage ranking (high → low): " + " > ".join(
+        f"{bu} {pct}%" for bu, pct in ranking
+    )
+    header = (
+        "These are the CURRENT automation-coverage numbers, live from TestRail. "
+        "Use them directly to answer coverage / comparison / gap questions.\n"
+    )
+    return f"{header}\n{rank_line}\n\n" + "\n\n".join(blocks)
 
 
 # ── Gemini client / session ──────────────────────────────────────────────────
@@ -574,18 +667,31 @@ def _generate_pending_response() -> None:
         )
         for m in msgs
     ]
+
+    # Inject the live coverage snapshot into the system instruction so the model
+    # answers coverage / comparison / gap questions from context in ONE call.
+    try:
+        brief = _build_coverage_brief()
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("Failed to build coverage brief")
+        brief = ""
+    system_instruction = _SYSTEM_INSTRUCTION.strip()
+    if brief:
+        system_instruction += "\n\n# LIVE COVERAGE SNAPSHOT\n" + brief
+
     config = types.GenerateContentConfig(
         tools=_TOOLS,
-        system_instruction=_SYSTEM_INSTRUCTION.strip(),
-        # Automatic function calling: the SDK executes our Python tools in-process
-        # and feeds the results back to the model in a single round-trip.  Allow
-        # enough hops for multi-step answers (e.g. list_bus → get_bu_coverage,
-        # or a compare across BUs).
+        system_instruction=system_instruction,
+        # The common case (coverage / comparison / gaps) needs ZERO tool calls —
+        # it's answered from the snapshot above.  A small budget remains for the
+        # occasional live-detail question (runs / bugs / stability): one tool
+        # call + the formatting turn.  Keeping this low is what holds us inside
+        # the free-tier rate limits.
         automatic_function_calling=types.AutomaticFunctionCallingConfig(
-            maximum_remote_calls=8,
+            maximum_remote_calls=4,
         ),
         # Low temperature: this is a factual data assistant, not a creative one.
-        temperature=0.2,
+        temperature=0.3,
     )
 
     candidates = _models_to_try()
@@ -684,8 +790,8 @@ def _generate_pending_response() -> None:
 _FAB_CSS = """
 <style>
 /* ── 1. The keyed container IS the FAB — a fixed, ALWAYS-EXPANDED chat pill.
-       No animation, no morph: the "💬 Ask Dexter" label is the button text,
-       centred in a fixed-width pill.  Nothing can clip, go oval, or drift. ─── */
+       No animation, no morph.  A modern SVG sparkle icon (::before) + the
+       "Ask Dexter" text are centred as one group.  Nothing can clip or drift. */
 .st-key-ai_assistant_fab {
     position: fixed !important;
     bottom: 24px !important;
@@ -728,7 +834,8 @@ _FAB_CSS = """
     white-space: nowrap !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: center !important;
+    justify-content: center !important;   /* [icon + label] group centred */
+    gap: 9px !important;                   /* space between icon and label */
     font-size: 15px !important;
     font-weight: 600 !important;
     line-height: 1 !important;
@@ -737,6 +844,16 @@ _FAB_CSS = """
     border: none !important;
     box-shadow: 0 4px 14px rgba(255, 75, 75, 0.42) !important;
     transition: box-shadow 0.16s ease, background 0.16s ease !important;
+}
+
+/* Modern SVG sparkle icon, drawn as a ::before flex item so it sits LEFT of the
+   label and the pair centres together.  White, fixed 17px square. */
+.st-key-ai_assistant_fab button::before {
+    content: "" !important;
+    flex: 0 0 auto !important;
+    width: 17px !important;
+    height: 17px !important;
+    background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='%23ffffff'%3E%3Cpath%20d='M12%202c.4%203.7%201%205.3%202.4%206.7C15.8%2010.1%2017.4%2010.7%2021%2011c-3.6.4-5.2%201-6.6%202.4C13%2014.8%2012.4%2016.4%2012%2020c-.4-3.6-1-5.2-2.4-6.6C8.2%2012%206.6%2011.4%203%2011c3.6-.3%205.2-.9%206.6-2.3C11%207.3%2011.6%205.7%2012%202z'/%3E%3Cpath%20d='M19%203c.15%201.2.4%201.7.85%202.15.45.45.95.7%202.15.85-1.2.15-1.7.4-2.15.85-.45.45-.7.95-.85%202.15-.15-1.2-.4-1.7-.85-2.15C17.7%205.55%2017.2%205.3%2016%205.15c1.2-.15%201.7-.4%202.15-.85C18.6%203.85%2018.85%203.35%2019%203z'/%3E%3C/svg%3E") no-repeat center / contain !important;
 }
 
 /* Hover/active only change colour + shadow — never size or position. */
@@ -749,15 +866,21 @@ _FAB_CSS = """
     box-shadow: 0 2px 8px rgba(255, 75, 75, 0.35) !important;
 }
 
-/* Centre the "💬 Ask Dexter" label and force it WHITE (global markdown rules
-   would otherwise tint it dark slate on the red pill). */
-.st-key-ai_assistant_fab button > div[data-testid="stMarkdownContainer"] {
+/* The "Ask Dexter" label: a natural-width flex item (NOT grow) so the
+   [icon + label] pair centres as a group.  Force WHITE text (global markdown
+   rules would otherwise tint it dark slate on the red pill). */
+/* Any wrapper between the button and the label must NOT grow, or it would fill
+   the pill and left-align the text (the decentering bug).  Descendant selector
+   (not `>`) so it applies however deep Streamlit nests the markdown. */
+.st-key-ai_assistant_fab button > div,
+.st-key-ai_assistant_fab button [data-testid="stMarkdownContainer"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    width: auto !important;
 }
-.st-key-ai_assistant_fab button > div,
+.st-key-ai_assistant_fab button div,
 .st-key-ai_assistant_fab button p,
 .st-key-ai_assistant_fab button span,
 .st-key-ai_assistant_fab button * {
@@ -898,7 +1021,7 @@ def render_floating_button() -> None:
     # Keyed container = CSS hook for fixed positioning (Streamlit ≥1.39).
     with st.container(key="ai_assistant_fab"):
         # The popover trigger button IS the FAB — an always-expanded pill whose
-        # label ("💬 Ask Dexter") is the button text, centred via CSS.  No
+        # label is plain "Ask Dexter"; the sparkle icon is CSS ::before.  No
         # animation, nothing to clip or drift.
-        with st.popover("💬 Ask Dexter", use_container_width=False):
+        with st.popover("Ask Dexter", use_container_width=False):
             _render_chat_panel()

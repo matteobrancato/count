@@ -644,13 +644,19 @@ def _render_stability(bu: str, project_ids: set[int]) -> None:
         st.info("No cases match the selected classifications.")
         return
 
+    # Make the ID a direct link to the case in TestRail (opens that exact test).
+    base_url = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")
+    sub["case_url"] = base_url + "/index.php?/cases/view/" + sub["case_id"].astype(str)
+
     st.dataframe(
-        sub[["case_id", "title", "pattern", "executions", "pass", "fail",
+        sub[["case_url", "title", "pattern", "executions", "pass", "fail",
              "blocked", "classification", "failure_rate"]],
         use_container_width=True,
         hide_index=True,
         column_config={
-            "case_id":        st.column_config.NumberColumn("ID", width="small"),
+            "case_url":       st.column_config.LinkColumn(
+                "ID", width="small", display_text=r"/cases/view/(\d+)",
+                help="Open this test case in TestRail."),
             "title":          st.column_config.TextColumn("Title", width="large"),
             "pattern":        st.column_config.TextColumn(
                 f"Pattern (last {len(runs)} runs)", width="medium",

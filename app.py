@@ -48,6 +48,11 @@ def _header() -> None:
                 evaluate_rules.clear()
             except Exception:
                 pass
+            try:
+                from src.ui.chat_assistant import _build_coverage_brief
+                _build_coverage_brief.clear()
+            except Exception:
+                pass
             st.rerun()
 
 
