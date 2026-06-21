@@ -22,6 +22,18 @@ st.set_page_config(
 
 
 # -------------------------------------------------------------------- header
+@st.cache_data(ttl=3600, show_spinner=False)
+def _numbers_fetched_at() -> float:
+    """Wall-clock time the current cached numbers were fetched.
+
+    Cached cross-session with the SAME ttl as `evaluate_rules`, so it represents
+    the real age of the data (not when *this* browser tab opened) and survives
+    page reloads.  Cleared by "Refresh Numbers" alongside the data caches, so it
+    resets to 'now' on a manual refresh.
+    """
+    return time.time()
+
+
 def _relative_time(ts: float) -> str:
     """Human 'time ago' for the data-freshness caption."""
     delta = max(0.0, time.time() - ts)
@@ -53,7 +65,7 @@ def _header() -> None:
         )
     with right:
         # Data-freshness caption + a quiet circular refresh icon (not a loud CTA).
-        updated_at = st.session_state.setdefault("numbers_updated_at", time.time())
+        updated_at = _numbers_fetched_at()
         cap_col, btn_col = st.columns([3, 1], vertical_alignment="center")
         cap_col.markdown(
             f"<div style='text-align:right;color:{COLORS['muted']};font-size:12px;"
@@ -75,7 +87,7 @@ def _header() -> None:
                 _build_coverage_brief.clear()
             except Exception:
                 pass
-            st.session_state["numbers_updated_at"] = time.time()
+            _numbers_fetched_at.clear()   # reset the "Updated …" age to now
             st.rerun()
 
 

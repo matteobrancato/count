@@ -411,13 +411,17 @@ footer {{ visibility: hidden; height: 0; }}
 @supports (animation-timeline: view()) {{
   @media (prefers-reduced-motion: no-preference) {{
     @keyframes covReveal {{
-      from {{ opacity: 0; transform: translateY(30px); }}
-      to   {{ opacity: 1; transform: translateY(0); }}
+      from {{ opacity: 0; transform: translateY(64px) scale(0.96); filter: blur(6px); }}
+      60%  {{ filter: blur(0); }}
+      to   {{ opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }}
     }}
+    /* Animate over the element's whole approach and finish well INSIDE the
+       viewport (cover 45%), so the rise is clearly visible as you scroll —
+       not completed the instant it peeks in at the bottom edge. */
     .st-key-coverage_anim [data-testid="stElementContainer"] {{
-      animation: covReveal linear both;
+      animation: covReveal cubic-bezier(0.22, 0.61, 0.36, 1) both;
       animation-timeline: view();
-      animation-range: entry 0% entry 42%;
+      animation-range: cover 0% cover 45%;
     }}
   }}
 }}
