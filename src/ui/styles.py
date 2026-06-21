@@ -245,16 +245,16 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     justify-content: flex-end !important;   /* hug the right edge */
 }}
 [class*="st-key-refresh_numbers"] button {{
-    width: 40px !important;
-    min-width: 40px !important;
-    max-width: 40px !important;
-    height: 40px !important;
+    width: 34px !important;
+    min-width: 34px !important;
+    max-width: 34px !important;
+    height: 34px !important;
     padding: 0 !important;
     border-radius: 50% !important;
     background: {c['surface']} !important;
     border: 1px solid {c['border_2']} !important;
     color: {c['muted']} !important;
-    font-size: 19px !important;
+    font-size: 16px !important;
     line-height: 1 !important;
     box-shadow: none !important;
     transition: color .15s ease, border-color .15s ease, background .15s ease, transform .35s cubic-bezier(0.4,0,0.2,1) !important;

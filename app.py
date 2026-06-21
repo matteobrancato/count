@@ -47,7 +47,9 @@ def _relative_time(ts: float) -> str:
 
 
 def _header() -> None:
-    left, right = st.columns([4, 1], vertical_alignment="center")
+    # Bottom-align the right group so "Updated … ↻" sits low in the header, just
+    # above the tab underline — at the same visual level as the tabs.
+    left, right = st.columns([4, 1], vertical_alignment="bottom")
     with left:
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:14px'>"
@@ -64,18 +66,24 @@ def _header() -> None:
             unsafe_allow_html=True,
         )
     with right:
-        # Data-freshness caption + a quiet circular refresh icon (not a loud CTA).
+        # Data-freshness caption + a quiet circular refresh icon (not a loud CTA),
+        # both on a single row, hugging the right edge.
         updated_at = _numbers_fetched_at()
-        cap_col, btn_col = st.columns([3, 1], vertical_alignment="center")
+        cap_col, btn_col = st.columns([5, 1], gap="small",
+                                      vertical_alignment="center")
         cap_col.markdown(
-            f"<div style='text-align:right;color:{COLORS['muted']};font-size:12px;"
-            f"white-space:nowrap;line-height:1.2'>Updated<br>"
+            f"<div style='text-align:right;color:{COLORS['muted']};font-size:11px;"
+            f"white-space:nowrap;line-height:1'>Updated "
             f"<b style='color:{COLORS['text']};font-weight:600'>"
             f"{_relative_time(updated_at)}</b></div>",
             unsafe_allow_html=True,
         )
-        if btn_col.button("↻", key="refresh_numbers",
-                          help="Refresh the numbers from TestRail."):
+        if btn_col.button(
+            "↻", key="refresh_numbers",
+            help=("**Refresh all numbers from TestRail.**  \n⚠️ This re-fetches "
+                  "everything and can take **30–60s** — up to a couple of minutes "
+                  "on a cold start. The page will be busy until it finishes."),
+        ):
             tr.clear_all_caches()
             try:
                 from src.rules_engine import evaluate_rules
