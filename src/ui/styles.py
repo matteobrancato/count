@@ -239,21 +239,28 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
-/* ── Header refresh — overlaid on the tab row, far right ─────────────────────
-   The control is absolutely anchored to the BOTTOM of the header (top:100%), so
-   it drops onto the tab row and sits just above the grey tab underline, level
-   with the tabs.  Caption + icon are a single right-aligned flex row. */
-.st-key-app_header {{ position: relative !important; }}
+/* ── Header refresh — pinned to the top-right of the tab bar ─────────────────
+   `tabs_zone` wraps the tab bar and is position:relative.  The refresh control
+   is absolutely pinned to its top-right (top:0 = the tab row), so it sits level
+   with the tabs, just above the grey underline — anchored to the tab row itself,
+   no header-to-tab gap guessing.  Caption + icon are one right-aligned row. */
+.st-key-tabs_zone {{ position: relative !important; }}
 .st-key-refresh_wrap {{
     position: absolute !important;
-    top: 100% !important;          /* = header bottom edge */
+    top: 2px !important;           /* sit on the tab row, above the underline */
     right: 0 !important;
-    margin-top: 10px !important;   /* nudge down onto the tab row */
     width: auto !important;
     z-index: 20 !important;
 }}
+/* Lay caption + button on ONE horizontal row.  Targets every plausible level of
+   the keyed container (the element itself, its child div, and any descendant
+   vertical block) so it works regardless of Streamlit's wrapper nesting. */
+.st-key-refresh_wrap[data-testid="stVerticalBlockBorderWrapper"],
+.st-key-refresh_wrap > div,
 .st-key-refresh_wrap [data-testid="stVerticalBlock"] {{
+    display: flex !important;
     flex-direction: row !important;
+    flex-wrap: nowrap !important;
     align-items: center !important;
     justify-content: flex-end !important;
     gap: 8px !important;

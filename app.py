@@ -47,57 +47,57 @@ def _relative_time(ts: float) -> str:
 
 
 def _header() -> None:
-    # The header sits ABOVE the tab bar in the DOM, so we anchor the refresh
-    # control absolutely to the header's bottom edge (CSS: `.st-key-refresh_wrap`
-    # → top:100%).  That drops "Updated … ↻" onto the tab row, far right, just
-    # above the grey tab underline — exactly level with the tabs.
-    with st.container(key="app_header"):
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:14px'>"
+        f"<div style='width:46px;height:46px;border-radius:13px;flex:0 0 auto;"
+        f"display:flex;align-items:center;justify-content:center;font-size:24px;"
+        f"background:linear-gradient(135deg,{COLORS['brand']} 0%,{COLORS['brand_strong']} 100%);"
+        f"box-shadow:0 4px 14px rgba(46,91,255,0.30)'>🧪</div>"
+        f"<div>"
+        f"<h1 style='margin:0;padding:0;line-height:1.05;white-space:nowrap;"
+        f"font-size:30px'>Automation Coverage</h1>"
+        f"<div style='color:{COLORS['muted']};font-size:13.5px;margin-top:3px'>"
+        f"Live view of TestRail&rsquo;s automation coverage across Business Units."
+        f"</div></div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _refresh_control() -> None:
+    """Data-freshness caption + a quiet circular refresh icon, as one right-
+    aligned row.  Rendered inside the `tabs_zone` container and CSS-pinned
+    (`.st-key-refresh_wrap`) to the top-right of the tab bar — level with the
+    tabs, just above the grey underline.  Anchored to the tab row itself, so
+    no header-to-tab gap guessing."""
+    updated_at = _numbers_fetched_at()
+    with st.container(key="refresh_wrap"):
         st.markdown(
-            f"<div style='display:flex;align-items:center;gap:14px'>"
-            f"<div style='width:46px;height:46px;border-radius:13px;flex:0 0 auto;"
-            f"display:flex;align-items:center;justify-content:center;font-size:24px;"
-            f"background:linear-gradient(135deg,{COLORS['brand']} 0%,{COLORS['brand_strong']} 100%);"
-            f"box-shadow:0 4px 14px rgba(46,91,255,0.30)'>🧪</div>"
-            f"<div>"
-            f"<h1 style='margin:0;padding:0;line-height:1.05;white-space:nowrap;"
-            f"font-size:30px'>Automation Coverage</h1>"
-            f"<div style='color:{COLORS['muted']};font-size:13.5px;margin-top:3px'>"
-            f"Live view of TestRail&rsquo;s automation coverage across Business Units."
-            f"</div></div></div>",
+            f"<div style='color:{COLORS['muted']};font-size:11px;"
+            f"white-space:nowrap;line-height:1'>Updated "
+            f"<b style='color:{COLORS['text']};font-weight:600'>"
+            f"{_relative_time(updated_at)}</b></div>",
             unsafe_allow_html=True,
         )
-
-        # Data-freshness caption + a quiet circular refresh icon, laid out as a
-        # single right-aligned flex row (see styles.py `.st-key-refresh_wrap`).
-        updated_at = _numbers_fetched_at()
-        with st.container(key="refresh_wrap"):
-            st.markdown(
-                f"<div style='color:{COLORS['muted']};font-size:11px;"
-                f"white-space:nowrap;line-height:1'>Updated "
-                f"<b style='color:{COLORS['text']};font-weight:600'>"
-                f"{_relative_time(updated_at)}</b></div>",
-                unsafe_allow_html=True,
-            )
-            if st.button(
-                "↻", key="refresh_numbers",
-                help=("**Refresh all numbers from TestRail.**  \n⚠️ This re-fetches "
-                      "everything and can take **30–60s** — up to a couple of "
-                      "minutes on a cold start. The page will be busy until it "
-                      "finishes."),
-            ):
-                tr.clear_all_caches()
-                try:
-                    from src.rules_engine import evaluate_rules
-                    evaluate_rules.clear()
-                except Exception:
-                    pass
-                try:
-                    from src.ui.chat_assistant import _build_coverage_brief
-                    _build_coverage_brief.clear()
-                except Exception:
-                    pass
-                _numbers_fetched_at.clear()   # reset the "Updated …" age to now
-                st.rerun()
+        if st.button(
+            "↻", key="refresh_numbers",
+            help=("**Refresh all numbers from TestRail.**  \n⚠️ This re-fetches "
+                  "everything and can take **30–60s** — up to a couple of "
+                  "minutes on a cold start. The page will be busy until it "
+                  "finishes."),
+        ):
+            tr.clear_all_caches()
+            try:
+                from src.rules_engine import evaluate_rules
+                evaluate_rules.clear()
+            except Exception:
+                pass
+            try:
+                from src.ui.chat_assistant import _build_coverage_brief
+                _build_coverage_brief.clear()
+            except Exception:
+                pass
+            _numbers_fetched_at.clear()   # reset the "Updated …" age to now
+            st.rerun()
 
 
 # -------------------------------------------------------------------- credentials gate
@@ -143,11 +143,15 @@ def main() -> None:
     except ImportError:
         pass
 
-    (tab_explore, tab_backlog, tab_coverage, tab_overview, tab_report,
-     tab_runs, tab_debug) = st.tabs(
-        ["📊 Explorer", "📋 Backlog", "📐 Coverage", "🧭 Overview",
-         "📄 Report", "🏃 Runs", "Debug"]
-    )
+    # Wrap the tab bar in a relative-positioned zone so the refresh control can
+    # be pinned to its top-right (= the tab row), reliably level with the tabs.
+    with st.container(key="tabs_zone"):
+        _refresh_control()
+        (tab_explore, tab_backlog, tab_coverage, tab_overview, tab_report,
+         tab_runs, tab_debug) = st.tabs(
+            ["📊 Explorer", "📋 Backlog", "📐 Coverage", "🧭 Overview",
+             "📄 Report", "🏃 Runs", "Debug"]
+        )
 
     try:
         with tab_explore:
