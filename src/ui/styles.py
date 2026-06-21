@@ -239,7 +239,30 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
-/* ── Header refresh — a quiet circular ghost icon (↻), right-aligned ────────── */
+/* ── Header refresh — overlaid on the tab row, far right ─────────────────────
+   The control is absolutely anchored to the BOTTOM of the header (top:100%), so
+   it drops onto the tab row and sits just above the grey tab underline, level
+   with the tabs.  Caption + icon are a single right-aligned flex row. */
+.st-key-app_header {{ position: relative !important; }}
+.st-key-refresh_wrap {{
+    position: absolute !important;
+    top: 100% !important;          /* = header bottom edge */
+    right: 0 !important;
+    margin-top: 10px !important;   /* nudge down onto the tab row */
+    width: auto !important;
+    z-index: 20 !important;
+}}
+.st-key-refresh_wrap [data-testid="stVerticalBlock"] {{
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 8px !important;
+    width: auto !important;
+}}
+.st-key-refresh_wrap [data-testid="stElementContainer"] {{
+    width: auto !important;
+    flex: 0 0 auto !important;
+}}
 [class*="st-key-refresh_numbers"] {{
     display: flex !important;
     justify-content: flex-end !important;   /* hug the right edge */

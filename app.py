@@ -47,10 +47,11 @@ def _relative_time(ts: float) -> str:
 
 
 def _header() -> None:
-    # Bottom-align the right group so "Updated … ↻" sits low in the header, just
-    # above the tab underline — at the same visual level as the tabs.
-    left, right = st.columns([4, 1], vertical_alignment="bottom")
-    with left:
+    # The header sits ABOVE the tab bar in the DOM, so we anchor the refresh
+    # control absolutely to the header's bottom edge (CSS: `.st-key-refresh_wrap`
+    # → top:100%).  That drops "Updated … ↻" onto the tab row, far right, just
+    # above the grey tab underline — exactly level with the tabs.
+    with st.container(key="app_header"):
         st.markdown(
             f"<div style='display:flex;align-items:center;gap:14px'>"
             f"<div style='width:46px;height:46px;border-radius:13px;flex:0 0 auto;"
@@ -65,38 +66,38 @@ def _header() -> None:
             f"</div></div></div>",
             unsafe_allow_html=True,
         )
-    with right:
-        # Data-freshness caption + a quiet circular refresh icon (not a loud CTA),
-        # both on a single row, hugging the right edge.
+
+        # Data-freshness caption + a quiet circular refresh icon, laid out as a
+        # single right-aligned flex row (see styles.py `.st-key-refresh_wrap`).
         updated_at = _numbers_fetched_at()
-        cap_col, btn_col = st.columns([5, 1], gap="small",
-                                      vertical_alignment="center")
-        cap_col.markdown(
-            f"<div style='text-align:right;color:{COLORS['muted']};font-size:11px;"
-            f"white-space:nowrap;line-height:1'>Updated "
-            f"<b style='color:{COLORS['text']};font-weight:600'>"
-            f"{_relative_time(updated_at)}</b></div>",
-            unsafe_allow_html=True,
-        )
-        if btn_col.button(
-            "↻", key="refresh_numbers",
-            help=("**Refresh all numbers from TestRail.**  \n⚠️ This re-fetches "
-                  "everything and can take **30–60s** — up to a couple of minutes "
-                  "on a cold start. The page will be busy until it finishes."),
-        ):
-            tr.clear_all_caches()
-            try:
-                from src.rules_engine import evaluate_rules
-                evaluate_rules.clear()
-            except Exception:
-                pass
-            try:
-                from src.ui.chat_assistant import _build_coverage_brief
-                _build_coverage_brief.clear()
-            except Exception:
-                pass
-            _numbers_fetched_at.clear()   # reset the "Updated …" age to now
-            st.rerun()
+        with st.container(key="refresh_wrap"):
+            st.markdown(
+                f"<div style='color:{COLORS['muted']};font-size:11px;"
+                f"white-space:nowrap;line-height:1'>Updated "
+                f"<b style='color:{COLORS['text']};font-weight:600'>"
+                f"{_relative_time(updated_at)}</b></div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "↻", key="refresh_numbers",
+                help=("**Refresh all numbers from TestRail.**  \n⚠️ This re-fetches "
+                      "everything and can take **30–60s** — up to a couple of "
+                      "minutes on a cold start. The page will be busy until it "
+                      "finishes."),
+            ):
+                tr.clear_all_caches()
+                try:
+                    from src.rules_engine import evaluate_rules
+                    evaluate_rules.clear()
+                except Exception:
+                    pass
+                try:
+                    from src.ui.chat_assistant import _build_coverage_brief
+                    _build_coverage_brief.clear()
+                except Exception:
+                    pass
+                _numbers_fetched_at.clear()   # reset the "Updated …" age to now
+                st.rerun()
 
 
 # -------------------------------------------------------------------- credentials gate
