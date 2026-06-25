@@ -947,8 +947,7 @@ def _render_chat_panel() -> None:
             st.rerun()
 
     st.caption(
-        "Ask about automation coverage, runs, bugs, or test stability — "
-        "numbers come live from TestRail, never made up."
+        "Ask about automation coverage, runs, bugs, or test stability."
     )
 
     # ── empty-state suggestion chips ──────────────────────────────────────
