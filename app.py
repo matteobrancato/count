@@ -111,12 +111,11 @@ def main() -> None:
     except Exception:  # noqa: BLE001 — never let the chat break the app
         traceback.print_exc()
 
-    # NOTE: we deliberately do NOT eagerly warm the cache here.  A blocking
-    # pre-fetch before st.tabs() left the whole tab area blank/white until it
-    # finished.  Instead we render the tab skeleton immediately and let each tab
-    # load its own data lazily — `evaluate_rules` is `@st.cache_data` with
-    # `show_spinner="Fetching and expanding cases…"`, so the loader shows only on
-    # the numbers while the page chrome (header, tabs, titles) is already visible.
+    # NOTE on load UX: we create the tab bar FIRST (instant skeleton), then warm
+    # the whole cache inside the active tab below (not in a blocking pre-fetch
+    # before st.tabs(), which used to leave the tab area blank/white).  So the
+    # page chrome is visible immediately, the loader sits on the data area, and
+    # every tab is pre-loaded — switching tabs stays instant.
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
@@ -130,6 +129,16 @@ def main() -> None:
 
     try:
         with tab_explore:
+            # Pre-load every suite ONCE, up-front, so switching tabs is instant
+            # afterwards.  The tab-bar skeleton is already on screen and the
+            # loader sits here in the active tab's content area — so the page is
+            # never blank, but we still warm everything (not lazy-per-tab).
+            try:
+                from src.rules_engine import warmup_cache
+                with st.spinner("⚡ Loading test data…"):
+                    warmup_cache()
+            except ImportError:
+                pass
             pivot_tab.render()
         with tab_backlog:
             backlog_tab.render()
