@@ -103,23 +103,20 @@ def main() -> None:
         st.stop()
 
     # Render the floating chat FIRST — Streamlit renders incrementally, so
-    # placing it here makes the FAB appear immediately, before the (slow)
-    # warmup_cache and the eager tab renders below.  `position: fixed` in the
-    # CSS handles the visual placement, so DOM order doesn't matter.
+    # placing it here makes the FAB appear immediately, before the (slow) data
+    # fetches in the tab renders below.  `position: fixed` in the CSS handles the
+    # visual placement, so DOM order doesn't matter.
     try:
         chat_assistant.render_floating_button()
     except Exception:  # noqa: BLE001 — never let the chat break the app
         traceback.print_exc()
 
-    # Pre-fetch all suite data in the background on first load.
-    # Uses a module-level flag so it runs only once per process.
-    # After this completes, every BU click only needs Python processing.
-    try:
-        from src.rules_engine import warmup_cache
-        with st.spinner("⚡ Pre-loading test suites…"):
-            warmup_cache()
-    except ImportError:
-        pass
+    # NOTE: we deliberately do NOT eagerly warm the cache here.  A blocking
+    # pre-fetch before st.tabs() left the whole tab area blank/white until it
+    # finished.  Instead we render the tab skeleton immediately and let each tab
+    # load its own data lazily — `evaluate_rules` is `@st.cache_data` with
+    # `show_spinner="Fetching and expanding cases…"`, so the loader shows only on
+    # the numbers while the page chrome (header, tabs, titles) is already visible.
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
