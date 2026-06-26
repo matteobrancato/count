@@ -378,23 +378,34 @@ def _metric_pair(col, label: str, n: int, u: int, help: str = "") -> None:
 _BACKLOG_THRESHOLD_PCT = 3.0
 
 
-def _backlog_badge(col, backlog: int, total: int) -> None:
-    """Small green/red pill flagging Backlog as a % of the baseline Total."""
-    pct  = (backlog / total * 100) if total else 0.0
-    over = pct > _BACKLOG_THRESHOLD_PCT
+def _backlog_card(col, backlog: int, u: int, total: int) -> None:
+    """Backlog metric card with the green/red health badge INSIDE the card,
+    next to the number.  Rebuilt in HTML (st.metric can't host extra content)
+    but styled to match the surrounding metric cards, then the usual unique-case
+    caption below.  Badge = Backlog as % of the baseline Total."""
+    pct   = (backlog / total * 100) if total else 0.0
+    over  = pct > _BACKLOG_THRESHOLD_PCT
     color = COLORS["danger"] if over else COLORS["success"]
     bg    = "#FCE7E7" if over else "#E6F6EC"
     arrow = "▲" if over else "▼"
     col.markdown(
-        f"<div style='display:inline-flex;align-items:center;gap:5px;margin-top:4px;"
-        f"padding:3px 10px;border-radius:999px;background:{bg};color:{color};"
-        f"font-size:11.5px;font-weight:700;line-height:1' "
-        f"title='Backlog is {pct:.1f}% of the baseline Total "
-        f"(threshold {_BACKLOG_THRESHOLD_PCT:.0f}%).'>"
-        f"{arrow} {pct:.1f}% of total"
-        f"</div>",
+        f"<div style='background:{COLORS['surface']};border:1px solid {COLORS['border']};"
+        f"border-radius:14px;padding:16px 18px;"
+        f"box-shadow:0 1px 2px rgba(15,23,42,0.04),0 1px 3px rgba(15,23,42,0.05)'>"
+        f"<div style='color:{COLORS['muted']};font-weight:600;font-size:14px;"
+        f"letter-spacing:0.01em'>Backlog</div>"
+        f"<div style='display:flex;align-items:center;gap:9px;margin-top:3px'>"
+        f"<span style='color:{COLORS['ink']};font-weight:750;font-size:36px;"
+        f"line-height:1.1'>{backlog:,}</span>"
+        f"<span style='display:inline-flex;align-items:center;gap:4px;padding:3px 9px;"
+        f"border-radius:999px;background:{bg};color:{color};font-size:11px;"
+        f"font-weight:700;line-height:1' title='Backlog is {pct:.1f}% of the "
+        f"baseline Total (threshold {_BACKLOG_THRESHOLD_PCT:.0f}%).'>"
+        f"{arrow} {pct:.1f}%</span>"
+        f"</div></div>",
         unsafe_allow_html=True,
     )
+    col.caption(f"{u:,} {'case' if u == 1 else 'cases'}")
 
 
 def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
@@ -483,8 +494,7 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
         c2, "Automated", s["automated"], s["u_auto"],
         help=f"{s['cov_total']:.1f}% of total · {s['cov_automatable']:.1f}% of automatable",
     )
-    _metric_pair(c3, "Backlog",          s["backlog"],        s["u_back"])
-    _backlog_badge(c3, s["backlog"], s["total"])
+    _backlog_card(c3, s["backlog"], s["u_back"], s["total"])
     _metric_pair(
         c4, "To update", s["to_be_updated"], s["u_tbu"],
         help="Status 'To be updated' — was automated but needs maintenance. "
