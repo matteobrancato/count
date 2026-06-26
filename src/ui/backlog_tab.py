@@ -21,6 +21,7 @@ Classification (per expanded row)
 ──────────────────────────────────
   automated      → (case_id, country_label, device) is in evaluate_rules().automated
   not_applicable → any status field = "Automation not applicable"
+  to_be_updated  → any status field = "To be updated" (split out of backlog)
   backlog        → any other non-empty, non-automated status
   unknown        → no status field populated
 
@@ -50,6 +51,17 @@ _STATUS_AUTO: set[str] = {
 _STATUS_NA: set[str] = {
     "Automation not applicable",
 }
+# "To be updated" — a test that was automated but needs maintenance.  Split out
+# of Backlog into its own category.  Matched NORMALISED (strip + lowercase) so
+# casing/spacing variants of the TestRail label still hit.
+_STATUS_TO_UPDATE: set[str] = {
+    "to be updated",
+}
+
+
+def _is_to_update(series: pd.Series) -> pd.Series:
+    """Boolean mask: status value equals a 'To be updated' label (normalised)."""
+    return series.notna() & series.astype(str).str.strip().str.lower().isin(_STATUS_TO_UPDATE)
 
 COUNTRY_NAMES: dict[str, str] = {
     "AT": "Austria",    "BE": "Belgium",     "CH": "Switzerland",
@@ -133,16 +145,21 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     # re-classified per-device after expansion (see below).
     status_cols = [c for c in raw.columns if c.startswith("status_")]
     na_mask      = pd.Series(False, index=raw.index)
+    tbu_mask     = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
     for col in status_cols:
-        s = raw[col]
+        s      = raw[col]
+        is_tbu = _is_to_update(s)
         na_mask      |= s.isin(_STATUS_NA)
-        backlog_mask |= s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "")
+        tbu_mask     |= is_tbu
+        # Backlog excludes the auto / N/A / to-be-updated values.
+        backlog_mask |= s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "") & ~is_tbu
 
     raw = raw.copy()
     raw["_cat_base"] = "unknown"
-    raw.loc[backlog_mask, "_cat_base"] = "backlog"
-    raw.loc[na_mask,      "_cat_base"] = "not_applicable"
+    raw.loc[backlog_mask,  "_cat_base"] = "backlog"
+    raw.loc[tbu_mask,       "_cat_base"] = "to_be_updated"
+    raw.loc[na_mask,        "_cat_base"] = "not_applicable"
 
     # ── Filter to baseline (big_regr labels) ──────────────────────────────────
     raw["_label_devs"] = raw["labels"].apply(
@@ -197,14 +214,17 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
             continue
         col_vals = raw[scol]
         has_value = col_vals.notna() & (col_vals != "")
+        is_tbu    = _is_to_update(col_vals)
         # Only reclassify rows where the device-specific TestIM field has a value.
         raw.loc[dev_mask & has_value & col_vals.isin(_STATUS_NA), "_cat_base"] = "not_applicable"
         raw.loc[
             dev_mask
             & has_value
-            & ~col_vals.isin(_STATUS_AUTO | _STATUS_NA),
+            & ~col_vals.isin(_STATUS_AUTO | _STATUS_NA)
+            & ~is_tbu,
             "_cat_base",
         ] = "backlog"
+        raw.loc[dev_mask & is_tbu, "_cat_base"] = "to_be_updated"
 
     # ── Dedup on (case_id, country_label, device) ─────────────────────────────
     return (
@@ -244,6 +264,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     cats   = expanded["category"].value_counts()
     n_auto = int(cats.get("automated",      0))
     n_back = int(cats.get("backlog",         0))
+    n_tbu  = int(cats.get("to_be_updated",   0))
     n_na   = int(cats.get("not_applicable",  0))
     total  = len(expanded)
 
@@ -253,6 +274,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     u_total = int(expanded["case_id"].nunique())
     u_auto  = _u("automated")
     u_back  = _u("backlog")
+    u_tbu   = _u("to_be_updated")
     u_na    = _u("not_applicable")
 
     # Framework breakdown via merge (vectorised — no row-by-row apply)
@@ -283,8 +305,10 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
                 n_testim = int(m[flag].sum())
                 u_testim = int(matched["case_id"].nunique())
 
-    automatable = n_auto + n_back
-    scoped      = n_auto + n_back + n_na
+    # "To be updated" stays inside the automatable/scoped denominators (it was
+    # previously part of Backlog), so Coverage % and N/A % are unchanged.
+    automatable = n_auto + n_back + n_tbu
+    scoped      = n_auto + n_back + n_tbu + n_na
 
     return {
         "total":           total,    "u_total":   u_total,
@@ -292,6 +316,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         "java":            n_java,   "u_java":    u_java,
         "testim":          n_testim, "u_testim":  u_testim,
         "backlog":         n_back,   "u_back":    u_back,
+        "to_be_updated":   n_tbu,    "u_tbu":     u_tbu,
         "not_applicable":  n_na,     "u_na":      u_na,
         "cov_total":       n_auto / total        * 100 if total        else 0.0,
         "cov_automatable": n_auto / automatable  * 100 if automatable  else 0.0,
@@ -334,6 +359,7 @@ def _build_summary(
             "Java":      s["java"],
             "TestIM":    s["testim"],
             "Backlog":   s["backlog"],
+            "To update": s["to_be_updated"],
             "N/A":       s["not_applicable"],
             "Cov. %":    round(s["cov_total"], 1),
         })
@@ -345,6 +371,30 @@ def _metric_pair(col, label: str, n: int, u: int, help: str = "") -> None:
     """Metric card showing expanded count + unique case count caption."""
     col.metric(label, f"{n:,}", help=help or None)
     col.caption(f"{u:,} {'case' if u == 1 else 'cases'}")
+
+
+# Backlog (pure backlog rows) is "healthy" while it stays under this share of the
+# baseline Total.  Under → green ▼, over → red ▲.
+_BACKLOG_THRESHOLD_PCT = 3.0
+
+
+def _backlog_badge(col, backlog: int, total: int) -> None:
+    """Small green/red pill flagging Backlog as a % of the baseline Total."""
+    pct  = (backlog / total * 100) if total else 0.0
+    over = pct > _BACKLOG_THRESHOLD_PCT
+    color = COLORS["danger"] if over else COLORS["success"]
+    bg    = "#FCE7E7" if over else "#E6F6EC"
+    arrow = "▲" if over else "▼"
+    col.markdown(
+        f"<div style='display:inline-flex;align-items:center;gap:5px;margin-top:4px;"
+        f"padding:3px 10px;border-radius:999px;background:{bg};color:{color};"
+        f"font-size:11.5px;font-weight:700;line-height:1' "
+        f"title='Backlog is {pct:.1f}% of the baseline Total "
+        f"(threshold {_BACKLOG_THRESHOLD_PCT:.0f}%).'>"
+        f"{arrow} {pct:.1f}% of total"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
@@ -360,6 +410,7 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
     disp["Category"] = disp["category"].map({
         "automated":      "Automated",
         "backlog":        "Backlog",
+        "to_be_updated":  "To update",
         "not_applicable": "N/A",
     }).fillna("Other")
 
@@ -425,16 +476,22 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
 
     s = _stats(expanded, auto)
 
-    # ── Row 1: Total · Automated · Backlog · N/A ─────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
+    # ── Row 1: Total · Automated · Backlog · To update · N/A ─────────────────
+    c1, c2, c3, c4, c5 = st.columns(5)
     _metric_pair(c1, "Total (baseline)", s["total"],         s["u_total"])
     _metric_pair(
         c2, "Automated", s["automated"], s["u_auto"],
         help=f"{s['cov_total']:.1f}% of total · {s['cov_automatable']:.1f}% of automatable",
     )
     _metric_pair(c3, "Backlog",          s["backlog"],        s["u_back"])
+    _backlog_badge(c3, s["backlog"], s["total"])
     _metric_pair(
-        c4, "Not Applicable", s["not_applicable"], s["u_na"],
+        c4, "To update", s["to_be_updated"], s["u_tbu"],
+        help="Status 'To be updated' — was automated but needs maintenance. "
+             "Split out of Backlog (still counts as automatable, so coverage % is unchanged).",
+    )
+    _metric_pair(
+        c5, "Not Applicable", s["not_applicable"], s["u_na"],
         help=f"{s['na_pct']:.1f}% of scoped rows",
     )
 
@@ -510,6 +567,8 @@ def render() -> None:
             "Java":      st.column_config.NumberColumn("Java"),
             "TestIM":    st.column_config.NumberColumn("TestIM"),
             "Backlog":   st.column_config.NumberColumn("Backlog"),
+            "To update": st.column_config.NumberColumn(
+                "To update", help="Status 'To be updated' — split out of Backlog."),
             "N/A":       st.column_config.NumberColumn("N/A"),
             "Cov. %":    st.column_config.NumberColumn("Coverage %", format="%.1f%%"),
         },
