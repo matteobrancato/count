@@ -121,35 +121,36 @@ def main() -> None:
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
     with st.container(key="tabs_zone"):
         _freshness_label()
-        (tab_explore, tab_backlog, tab_coverage, tab_overview, tab_report,
-         tab_runs) = st.tabs(
-            ["📊 Explorer", "📋 Backlog", "📐 Coverage", "🧭 Overview",
-             "📄 Report", "🏃 Runs"]
+        (tab_backlog, tab_coverage, tab_explore, tab_runs, tab_overview,
+         tab_report) = st.tabs(
+            ["📋 Backlog", "📐 Coverage", "📊 Explorer", "🏃 Runs",
+             "🧭 Overview", "📄 Report"]
         )
 
     try:
-        with tab_explore:
+        with tab_backlog:
             # Pre-load every suite ONCE, up-front, so switching tabs is instant
-            # afterwards.  The tab-bar skeleton is already on screen and the
-            # loader sits here in the active tab's content area — so the page is
-            # never blank, but we still warm everything (not lazy-per-tab).
+            # afterwards.  This sits in the FIRST (default-active) tab, so the
+            # tab-bar skeleton is already on screen and the loader shows here in
+            # the active tab — the page is never blank, yet we still warm
+            # everything (not lazy-per-tab).
             try:
                 from src.rules_engine import warmup_cache
                 with st.spinner("⚡ Loading test data…"):
                     warmup_cache()
             except ImportError:
                 pass
-            pivot_tab.render()
-        with tab_backlog:
             backlog_tab.render()
         with tab_coverage:
             coverage_tab.render()
+        with tab_explore:
+            pivot_tab.render()
+        with tab_runs:
+            runs_tab.render()
         with tab_overview:
             overview_tab.render()
         with tab_report:
             report_tab.render()
-        with tab_runs:
-            runs_tab.render()
     except Exception as exc:  # global safety net — never crash the whole app
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
