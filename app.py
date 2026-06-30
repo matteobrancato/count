@@ -122,9 +122,9 @@ def main() -> None:
     with st.container(key="tabs_zone"):
         _freshness_label()
         (tab_explore, tab_backlog, tab_coverage, tab_overview, tab_report,
-         tab_runs, tab_debug) = st.tabs(
+         tab_runs) = st.tabs(
             ["📊 Explorer", "📋 Backlog", "📐 Coverage", "🧭 Overview",
-             "📄 Report", "🏃 Runs", "Debug"]
+             "📄 Report", "🏃 Runs"]
         )
 
     try:
@@ -150,9 +150,6 @@ def main() -> None:
             report_tab.render()
         with tab_runs:
             runs_tab.render()
-        with tab_debug:
-            from src.ui import debug_tab
-            debug_tab.render()
     except Exception as exc:  # global safety net — never crash the whole app
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):

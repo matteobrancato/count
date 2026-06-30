@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 
 import requests
 import streamlit as st
+from requests.adapters import HTTPAdapter
 from requests.auth import HTTPBasicAuth
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -51,6 +52,14 @@ class TestRailClient:
         self._session = requests.Session()
         self._session.auth = HTTPBasicAuth(creds.user, creds.api_key)
         self._session.headers.update({"Content-Type": "application/json"})
+        # Big connection pool — the cold-start warm-up fires many parallel
+        # requests (16 suite workers × up to 5 pagination workers each).  The
+        # default urllib3 pool is only 10 connections, so without this the
+        # parallel fetches silently queue behind 10 sockets.  A larger pool lets
+        # them actually run concurrently (the dominant initial-load speed-up).
+        adapter = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     # ------------------------------------------------------------------ low level
     def _url(self, endpoint: str) -> str:
@@ -154,6 +163,10 @@ class TestRailClient:
             offset += BATCH_SIZE * limit
         return cases
 
+    def get_case(self, case_id: int) -> dict:
+        """A single test case by ID (title, refs, section, type, custom fields)."""
+        return self._get(f"get_case/{case_id}")
+
     # -------------------------------------------------- runs / plans / results
     def _get_paginated(self, endpoint: str, key: str, limit: int = 250) -> list[dict]:
         """Generic paginated fetch — used for runs / plans / tests / results.
@@ -207,6 +220,11 @@ class TestRailClient:
         if status_id is not None:
             endpoint += f"&status_id={status_id}"
         return self._get_paginated(endpoint, key="results")
+
+    def get_results_for_case(self, run_id: int, case_id: int) -> list[dict]:
+        """Every result the case accrued in one run (newest first per TestRail)."""
+        return self._get_paginated(
+            f"get_results_for_case/{run_id}/{case_id}", key="results")
 
 
 # --------------------------------------------------------------------- caching
@@ -288,6 +306,18 @@ def fetch_failed_results(run_id: int) -> list[dict]:
     return _get_client().get_results_for_run(run_id, status_id=5)
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_case(case_id: int) -> dict:
+    """A single case by ID — used by the Runs tab's in-depth analysis."""
+    return _get_client().get_case(case_id)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_results_for_case(run_id: int, case_id: int) -> list[dict]:
+    """Result history of one case within one run."""
+    return _get_client().get_results_for_case(run_id, case_id)
+
+
 def resolve_project_id(suite_id: int) -> int:
     """Get the project_id that owns a given suite (needed for get_cases)."""
     suite = fetch_suite(suite_id)
@@ -297,7 +327,8 @@ def resolve_project_id(suite_id: int) -> int:
 def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
                fetch_suite, fetch_sections, fetch_cases, fetch_labels,
-               fetch_runs, fetch_plans, fetch_plan, fetch_tests, fetch_failed_results):
+               fetch_runs, fetch_plans, fetch_plan, fetch_tests, fetch_failed_results,
+               fetch_case, fetch_results_for_case):
         fn.clear()
 
 

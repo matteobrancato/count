@@ -26,6 +26,9 @@ import streamlit as st
 
 from .. import testrail_client as tr
 from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
+from ..field_resolver import get_registry
+from ..rules_engine import _section_path_lookup
+from .styles import COLORS
 
 
 # ── constants ────────────────────────────────────────────────────────────────
@@ -675,6 +678,335 @@ def _render_stability(bu: str, project_ids: set[int]) -> None:
 
 
 # ── render ──────────────────────────────────────────────────────────────────
+# ── in-depth single-case analysis ───────────────────────────────────────────
+# status_id → (label, text colour, soft background, emoji)
+_STATUS_DISPLAY: dict[int, tuple[str, str, str, str]] = {
+    1: ("Passed",   "#16A34A", "#E6F6EC", "✅"),
+    2: ("Blocked",  "#64748B", "#EEF1F6", "🚫"),
+    3: ("Untested", "#94A3B8", "#F1F5F9", "⚪"),
+    4: ("Retest",   "#D97706", "#FEF3E2", "🔁"),
+    5: ("Failed",   "#DC2626", "#FCE7E7", "❌"),
+}
+
+
+def _status_disp(sid: int) -> tuple[str, str, str, str]:
+    return _STATUS_DISPLAY.get(int(sid or 0), (f"Status {sid}", "#64748B", "#EEF1F6", "•"))
+
+
+def _parse_case_id(text: str) -> int | None:
+    """Pull a case id from a TestRail case URL, a `C12345`, or a bare number."""
+    if not text:
+        return None
+    m = re.search(r"/cases/view/(\d+)", text)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"\bC?0*(\d+)\b", text.strip())
+    return int(m.group(1)) if m else None
+
+
+def _case_field(case: dict, reg, label: str) -> str | None:
+    """Resolve a custom dropdown / multi-select case field to its human label(s)."""
+    try:
+        meta = reg.field(label)
+        if not meta:
+            return None
+        raw = case.get(meta.system_name)
+        if raw in (None, "", []):
+            return None
+        if isinstance(raw, list):
+            vals = [meta.values_by_id.get(int(v), str(v)) for v in raw if str(v).strip()]
+            return ", ".join(v for v in vals if v) or None
+        if isinstance(raw, bool):
+            return "Yes" if raw else None
+        if isinstance(raw, int):
+            return meta.values_by_id.get(raw, str(raw))
+        if isinstance(raw, str) and raw.strip().isdigit():
+            return meta.values_by_id.get(int(raw.strip()), raw)
+        return str(raw)
+    except Exception:                                                   # noqa: BLE001
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def _case_run_universe(suite_id: int, depth: int) -> tuple[list[str], dict]:
+    """All runs (active + recent completed) for the BU(s) that own this suite.
+
+    Returns (bus, {run_id: {name, plan, ts, url, completed}}), capped to the
+    `depth` most-recent runs so the scan stays bounded.  Reuses the BU-filtered
+    gatherers, so we only touch runs that could contain the case.
+    """
+    bus = sorted({r.bu for r in ALL_RULES if r.suite_id == suite_id})
+    base_url = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")
+    bu_to_pids = _bu_project_ids()
+    meta: dict[int, dict] = {}
+    for bu in bus:
+        pids = bu_to_pids.get(bu, set())
+        if not pids:
+            continue
+        for r in _flatten_active_runs(pids, bu):
+            rid = int(r["id"])
+            meta.setdefault(rid, {
+                "name": r.get("name") or "(unnamed)",
+                "plan": r.get("plan_name") or "—",
+                "ts":   int(r.get("updated_on") or r.get("created_on") or 0),
+                "url":  f"{base_url}/index.php?/runs/view/{rid}",
+            })
+        for r in _completed_runs_for_bu(bu, pids, limit=depth):
+            rid = int(r["id"])
+            meta.setdefault(rid, {
+                "name": r.get("name") or "(unnamed)",
+                "plan": "—",
+                "ts":   int(r.get("completed_on") or r.get("created_on") or 0),
+                "url":  f"{base_url}/index.php?/runs/view/{rid}",
+            })
+    # Keep only the `depth` most-recent runs to bound the per-run scan.
+    top = dict(sorted(meta.items(), key=lambda kv: -kv[1]["ts"])[:depth])
+    return bus, top
+
+
+def _gather_case_executions(case_id: int, run_ids: list[int]) -> tuple[dict, dict]:
+    """For each run, locate the case's test + pull its full result history.
+
+    Two parallel passes (the second only over runs that actually contain the
+    case), so we never fetch results for irrelevant runs.
+    """
+    found: dict[int, dict] = {}
+    if run_ids:
+        with ThreadPoolExecutor(max_workers=min(len(run_ids), 16)) as pool:
+            futs = {pool.submit(tr.fetch_tests, rid): rid for rid in run_ids}
+            for fut in as_completed(futs):
+                rid = futs[fut]
+                try:
+                    tests = fut.result()
+                except Exception:                                       # noqa: BLE001
+                    continue
+                for t in tests:
+                    if int(t.get("case_id") or 0) == case_id:
+                        found[rid] = t
+                        break
+
+    history: dict[int, list[dict]] = {}
+    if found:
+        with ThreadPoolExecutor(max_workers=min(len(found), 16)) as pool:
+            futs = {pool.submit(tr.fetch_results_for_case, rid, case_id): rid
+                    for rid in found}
+            for fut in as_completed(futs):
+                rid = futs[fut]
+                try:
+                    history[rid] = fut.result()
+                except Exception:                                       # noqa: BLE001
+                    history[rid] = []
+    return found, history
+
+
+def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) -> None:
+    """A clean header card: title, id link, key attributes, and what it covers."""
+    title = case.get("title") or "(untitled)"
+    case_url = f"{base_url}/index.php?/cases/view/{case_id}"
+
+    # Resolve the readable attributes (all best-effort).
+    try:
+        reg = get_registry()
+    except Exception:                                                   # noqa: BLE001
+        reg = None
+    type_name = prio_name = section = None
+    try:
+        types = {int(t["id"]): t.get("name") for t in tr.fetch_case_types()}
+        type_name = types.get(int(case.get("type_id") or 0))
+    except Exception:                                                   # noqa: BLE001
+        pass
+    try:
+        prios = {int(p["id"]): p.get("name") for p in tr.fetch_priorities()}
+        prio_name = prios.get(int(case.get("priority_id") or 0))
+    except Exception:                                                   # noqa: BLE001
+        pass
+    try:
+        pid = tr.resolve_project_id(suite_id)
+        section = _section_path_lookup(tr.fetch_sections(pid, suite_id)).get(
+            int(case.get("section_id") or 0))
+    except Exception:                                                   # noqa: BLE001
+        pass
+
+    chips: list[tuple[str, str]] = []
+    if type_name:
+        chips.append(("Type", type_name))
+    if prio_name:
+        chips.append(("Priority", prio_name))
+    if section:
+        chips.append(("Area", section))
+    if reg is not None:
+        for lbl, key in [
+            ("Automation", "Automation Status"),
+            ("Testim Desktop", "Automation Status Testim Desktop"),
+            ("Testim Mobile", "Automation Status Testim Mobile View"),
+            ("Countries", "multi_countries"),
+        ]:
+            v = _case_field(case, reg, key)
+            if v:
+                chips.append((lbl, v))
+
+    chip_html = "".join(
+        f"<span style='display:inline-flex;gap:6px;align-items:center;"
+        f"background:{COLORS['canvas']};border:1px solid {COLORS['border']};"
+        f"border-radius:8px;padding:4px 10px;font-size:12px'>"
+        f"<span style='color:{COLORS['muted']};font-weight:600'>{k}</span>"
+        f"<span style='color:{COLORS['text']};font-weight:600'>{v}</span></span>"
+        for k, v in chips
+    )
+
+    # "Covers" — refs (stories / requirements), linked to JIRA when they look like keys.
+    refs = (case.get("refs") or "").strip()
+    covers_html = ""
+    if refs:
+        parts = [p.strip() for p in re.split(r"[,\s]+", refs) if p.strip()]
+        links = []
+        for p in parts:
+            if _JIRA_KEY_RE.fullmatch(p):
+                links.append(f"<a href='{JIRA_BROWSE_URL}{p}' target='_blank' "
+                             f"style='color:{COLORS['brand']};font-weight:600'>{p}</a>")
+            else:
+                links.append(f"<span style='color:{COLORS['text']}'>{p}</span>")
+        covers_html = (
+            f"<div style='margin-top:10px;font-size:12.5px'>"
+            f"<span style='color:{COLORS['muted']};font-weight:600'>Covers</span>"
+            f"&nbsp;&nbsp;{' · '.join(links)}</div>"
+        )
+
+    st.markdown(
+        f"<div style='background:{COLORS['surface']};border:1px solid {COLORS['border']};"
+        f"border-radius:14px;padding:16px 18px;box-shadow:0 1px 3px rgba(15,23,42,0.05)'>"
+        f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap'>"
+        f"<a href='{case_url}' target='_blank' style='font-size:12px;font-weight:700;"
+        f"color:#fff;background:{COLORS['brand']};border-radius:7px;padding:2px 9px;"
+        f"text-decoration:none'>C{case_id} ↗</a>"
+        f"<span style='font-size:18px;font-weight:750;color:{COLORS['ink']}'>{title}</span>"
+        f"</div>"
+        f"<div style='display:flex;flex-wrap:wrap;gap:7px;margin-top:12px'>{chip_html}</div>"
+        f"{covers_html}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_case_deep_dive() -> None:
+    st.markdown("#### 🔬 In-depth Test Analysis")
+    st.caption(
+        "Paste a TestRail **test-case URL** (or its ID) to trace every run it went "
+        "through and how it ended, its bug history, and what it covers."
+    )
+
+    c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+    raw = c1.text_input(
+        "Test case URL or ID", key="deep_case_input",
+        placeholder="https://…/index.php?/cases/view/3500712   or   C3500712",
+        label_visibility="collapsed",
+    )
+    depth = int(c2.number_input(
+        "Runs to scan", min_value=20, max_value=400, value=80, step=20,
+        key="deep_depth", help="How many of the most-recent runs to search."))
+
+    case_id = _parse_case_id(raw)
+    if not case_id:
+        if raw.strip():
+            st.warning("Couldn't read a case ID — use the full case URL or e.g. `C3500712`.")
+        return
+
+    try:
+        case = tr.fetch_case(case_id)
+    except Exception as exc:                                            # noqa: BLE001
+        st.error(f"Couldn't load case **C{case_id}**: "
+                 f"`{type(exc).__name__}: {str(exc)[:160]}`")
+        return
+
+    suite_id = int(case.get("suite_id") or 0)
+    base_url = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")
+
+    with st.spinner(f"Scanning runs for C{case_id} (can take a few seconds)…"):
+        bus, run_meta = _case_run_universe(suite_id, depth)
+        found, history = _gather_case_executions(case_id, list(run_meta.keys()))
+
+    _render_case_header(case, case_id, suite_id, base_url)
+
+    if not found:
+        st.info(
+            f"This case wasn't found in the {len(run_meta)} most-recent runs "
+            f"for {', '.join(bus) or 'its BU'}. Increase **Runs to scan** to look deeper."
+        )
+        return
+
+    # Build per-run records + collect the bug history.
+    records: list[dict] = []
+    all_bugs: list[tuple[str, int, str]] = []   # (key, ts, run_name)
+    for rid, test in found.items():
+        meta    = run_meta[rid]
+        results = history.get(rid, [])
+        n_exec  = sum(1 for r in results if int(r.get("status_id") or 0)) or 1
+        run_bugs: set[str] = set()
+        for r in results:
+            for k in _extract_jira_keys(r.get("defects")):
+                run_bugs.add(k)
+                all_bugs.append((k, int(r.get("created_on") or meta["ts"] or 0), meta["name"]))
+        label, _c, _b, emoji = _status_disp(int(test.get("status_id") or 0))
+        records.append({
+            "Run":        meta["name"],
+            "Plan":       meta["plan"],
+            "Final status": f"{emoji} {label}",
+            "Last run":   _ts_to_date(meta["ts"]),
+            "Times run":  n_exec,
+            "Bugs":       ", ".join(sorted(run_bugs)) or "—",
+            "Open":       meta["url"],
+            "_ts":        meta["ts"],
+            "_pass":      int(test.get("status_id") or 0) == _STATUS_PASSED,
+        })
+    records.sort(key=lambda r: -r["_ts"])
+
+    n_runs    = len(records)
+    n_pass    = sum(1 for r in records if r["_pass"])
+    pass_rate = n_pass / n_runs * 100 if n_runs else 0.0
+    uniq_bugs = sorted({k for k, _, _ in all_bugs})
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Runs found", f"{n_runs:,}")
+    s2.metric("Final pass rate", f"{pass_rate:.0f}%",
+              help="Share of runs where the case ended Passed.")
+    s3.metric("Open bugs (history)", f"{len(uniq_bugs):,}")
+    s4.metric("Latest status", records[0]["Final status"],
+              help=f"{records[0]['Run']} · {records[0]['Last run']}")
+
+    st.markdown("##### 🗓 Execution history")
+    df = pd.DataFrame(records).drop(columns=["_ts", "_pass"])
+    st.dataframe(
+        df, use_container_width=True, hide_index=True,
+        column_config={
+            "Run":          st.column_config.TextColumn("Run", width="large"),
+            "Plan":         st.column_config.TextColumn("Plan", width="medium"),
+            "Final status": st.column_config.TextColumn("Final status", width="small"),
+            "Last run":     st.column_config.TextColumn("Last run", width="small"),
+            "Times run":    st.column_config.NumberColumn("Times run", width="small"),
+            "Bugs":         st.column_config.TextColumn("Bugs", width="medium"),
+            "Open":         st.column_config.LinkColumn("Open", display_text="↗", width="small"),
+        },
+    )
+
+    if uniq_bugs:
+        st.markdown("##### 🐞 Bug history")
+        latest: dict[str, tuple[int, str]] = {}
+        for k, ts, rname in all_bugs:
+            if k not in latest or ts > latest[k][0]:
+                latest[k] = (ts, rname)
+        chips = "".join(
+            f"<a href='{JIRA_BROWSE_URL}{k}' target='_blank' "
+            f"style='display:inline-flex;align-items:center;gap:6px;margin:0 6px 6px 0;"
+            f"background:{COLORS['surface']};border:1px solid {COLORS['border_2']};"
+            f"border-radius:999px;padding:4px 11px;font-size:12px;font-weight:600;"
+            f"color:{COLORS['brand']};text-decoration:none'>🐞 {k}"
+            f"<span style='color:{COLORS['muted']};font-weight:500'>"
+            f"· {_ts_to_date(latest[k][0])}</span></a>"
+            for k in uniq_bugs
+        )
+        st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
+
+
 @st.fragment
 def render() -> None:
     st.subheader("🏃 Runs & Stability")
@@ -698,3 +1030,5 @@ def render() -> None:
     _render_active_runs(bu, project_ids, base_url)
     st.divider()
     _render_stability(bu, project_ids)
+    st.divider()
+    _render_case_deep_dive()
