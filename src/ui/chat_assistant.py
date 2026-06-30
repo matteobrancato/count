@@ -789,18 +789,26 @@ def _generate_pending_response() -> None:
 # We anchor our CSS on that — far more robust than `:has()` tricks.
 _FAB_CSS = """
 <style>
-/* ── 1. The keyed container IS the FAB — a fixed, ALWAYS-EXPANDED chat pill.
-       No animation, no morph.  A modern SVG sparkle icon (::before) + the
-       "Ask Dexter" text are centred as one group.  Nothing can clip or drift. */
+/* ── 1. The keyed container IS the FAB.  Idle, it is a small 48px circle showing
+       only the sparkle icon — it just peeks at the bottom-left so it never
+       overlaps the page.  On hover (or while the chat is open) it WIDENS to the
+       full "✨ Ask Dexter" pill and is clickable.  The left edge is fixed and it
+       grows rightward, so the cursor never slips off mid-grow (no hover flicker)
+       and the icon never moves. */
 .st-key-ai_assistant_fab {
     position: fixed !important;
     bottom: 24px !important;
     left:   24px !important;
     z-index: 9999 !important;
-    width: 158px !important;
+    width: 48px !important;            /* collapsed: a small icon circle */
     height: 48px !important;
     margin: 0 !important;
     padding: 0 !important;
+    transition: width 0.30s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+.st-key-ai_assistant_fab:hover,
+.st-key-ai_assistant_fab:has(button[aria-expanded="true"]) {
+    width: 158px !important;           /* expanded: the full pill */
 }
 
 /* ── 2. Every inner wrapper fills the pill ─── */
@@ -828,13 +836,16 @@ _FAB_CSS = """
     min-width: 100% !important;
     max-width: 100% !important;
     height: 48px !important;
-    padding: 0 16px !important;
+    padding: 0 15px !important;
     border-radius: 24px !important;
     overflow: hidden !important;
     white-space: nowrap !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: center !important;   /* [icon + label] group centred */
+    /* flex-start pins the icon at the left (15px ≈ centred in the 48px circle).
+       As the container widens, the label simply reveals to the icon's right and
+       the icon stays put. */
+    justify-content: flex-start !important;
     gap: 9px !important;                   /* space between icon and label */
     font-size: 15px !important;
     font-weight: 600 !important;
