@@ -891,6 +891,17 @@ _FAB_CSS = """
     align-items: center !important;
     justify-content: center !important;
 }
+/* Collapsed: the label is fully HIDDEN (opacity 0) so not even its first letter
+   peeks past the icon circle.  It fades in only once expanded (hover / chat
+   open), independent of the width clip. */
+.st-key-ai_assistant_fab button [data-testid="stMarkdownContainer"] {
+    opacity: 0 !important;
+    transition: opacity 0.18s ease 0.04s !important;
+}
+.st-key-ai_assistant_fab:hover button [data-testid="stMarkdownContainer"],
+.st-key-ai_assistant_fab:has(button[aria-expanded="true"]) button [data-testid="stMarkdownContainer"] {
+    opacity: 1 !important;
+}
 .st-key-ai_assistant_fab button div,
 .st-key-ai_assistant_fab button p,
 .st-key-ai_assistant_fab button span,
