@@ -368,6 +368,43 @@ def _filter_to_regression_baseline(
     return nd_base, ab_base, set(ab_base["case_id"].astype(int).unique())
 
 
+def _regression_baseline_like_backlog(
+    non_dep: pd.DataFrame, auto_bu: pd.DataFrame, rules_bu: list,
+) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
+    """Regression baseline computed EXACTLY like the Backlog tab.
+
+    Reuses the Backlog's own expansion (`_expand_baseline` + `_classify_expanded`):
+    each big_regr case is expanded over its `multi_countries` countries × the
+    label-driven device, then classified against the automated set.  This keeps
+    the Coverage "No-Regression Baseline Only" view aligned 1:1 with the Backlog
+    tab — the previous filter used the framework Country-Coverage expansion, which
+    counted automated rows for countries NOT present in `multi_countries`.
+
+    Returns (non_dep_baseline, automated_rows, baseline_auto_case_ids) in the same
+    shape `_render_coverage_section` expects (automated_rows carry `section_path`).
+    """
+    from . import backlog_tab as bl
+
+    empty = (non_dep.iloc[0:0], auto_bu.iloc[0:0], set())
+    if non_dep.empty:
+        return empty
+    expanded = bl._classify_expanded(bl._expand_baseline(non_dep, rules_bu), auto_bu)
+    if expanded.empty:
+        return empty
+
+    base_ids = set(expanded["case_id"].astype(int).unique())
+    nd_base  = non_dep[non_dep["case_id"].astype(int).isin(base_ids)]
+
+    auto_rows = expanded[expanded["category"] == "automated"].copy()
+    auto_rows["case_id"] = auto_rows["case_id"].astype(int)
+    # Attach per-case section_path so the coverage table can break it down by area.
+    sec = non_dep[["case_id", "section_path"]].copy()
+    sec["case_id"] = sec["case_id"].astype(int)
+    auto_rows = auto_rows.merge(sec.drop_duplicates("case_id"), on="case_id", how="left")
+
+    return nd_base, auto_rows, set(auto_rows["case_id"].unique())
+
+
 def _filter_to_prod_sanity(
     non_dep: pd.DataFrame, auto_bu: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
@@ -539,7 +576,8 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         return
 
     # `rules` is already filtered to *scope* by _load_scope, so no second scope check.
-    bu_suites = {r.suite_id for r in rules if r.bu == bu_choice}
+    rules_bu  = [r for r in rules if r.bu == bu_choice]
+    bu_suites = {r.suite_id for r in rules_bu}
 
     raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
     auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
@@ -570,12 +608,12 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     st.markdown("### 📋 No-Regression Baseline Only")
     st.caption(
         "Same breakdown, restricted to cases with the **`big_regr_desktop`** / "
-        "**`big_regr_mobile`** labels — the regression baseline used by the "
-        "Backlog tab.  Desktop / Mobile rows are matched against the label per "
-        "device, so this view tells you the *effective* coverage of what is "
-        "actually scheduled for regression."
+        "**`big_regr_mobile`** labels — computed **exactly like the Backlog tab** "
+        "(expanded over `multi_countries` × label-device), so the numbers line up "
+        "1:1 with it."
     )
-    nd_base, ab_base, ids_base = _filter_to_regression_baseline(non_dep, auto_bu)
+    nd_base, ab_base, ids_base = _regression_baseline_like_backlog(
+        non_dep, auto_bu, rules_bu)
     if nd_base.empty:
         st.info(
             "No cases tagged with `big_regr_desktop` / `big_regr_mobile` for this BU. "
