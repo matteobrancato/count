@@ -259,13 +259,17 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     border: 1px solid {c['border']};
     border-radius: 14px;
     padding: 16px 18px;
-    min-height: 124px;          /* uniform card height (matches the custom Backlog card) */
-    box-sizing: border-box;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.05);
     transition: box-shadow .18s ease, transform .18s ease;
 }}
 [data-testid="stMetric"]:hover {{
     box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    transform: translateY(-1px);
+}}
+/* Hand-built stat cards (Backlog tab detail) — match the metric-card hover. */
+.stat-card {{ transition: box-shadow .18s ease, transform .18s ease; }}
+.stat-card:hover {{
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08) !important;
     transform: translateY(-1px);
 }}
 [data-testid="stMetricValue"] {{ color: {c['ink']}; font-weight: 750; }}

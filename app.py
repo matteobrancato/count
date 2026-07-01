@@ -133,11 +133,20 @@ def main() -> None:
             # afterwards.  This sits in the FIRST (default-active) tab, so the
             # tab-bar skeleton is already on screen and the loader shows here in
             # the active tab — the page is never blank, yet we still warm
-            # everything (not lazy-per-tab).
+            # everything (not lazy-per-tab).  On the first load we show a verbose
+            # step-by-step status (so the wait feels shorter); once warm, the
+            # call is instant cache hits so we skip the UI entirely.
             try:
                 from src.rules_engine import warmup_cache
-                with st.spinner("⚡ Loading test data…"):
+                if st.session_state.get("_warmed_ui"):
                     warmup_cache()
+                else:
+                    with st.status("⚡ Loading dashboard data…",
+                                   expanded=True) as _status:
+                        warmup_cache(on_step=_status.write)
+                        _status.update(label="✅ Dashboard ready",
+                                       state="complete", expanded=False)
+                    st.session_state["_warmed_ui"] = True
             except ImportError:
                 pass
             backlog_tab.render()

@@ -34,6 +34,8 @@ Scope: website + microservices (next_gen). Mobile App excluded for now.
 """
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -367,42 +369,49 @@ def _build_summary(
 
 
 # ── detail view ───────────────────────────────────────────────────────────────
-def _metric_pair(col, label: str, n: int, u: int, help: str = "") -> None:
-    """Metric card showing expanded count + unique case count caption."""
-    col.metric(label, f"{n:,}", help=help or None)
-    col.caption(f"{u:,} {'case' if u == 1 else 'cases'}")
-
-
 # Backlog (pure backlog rows) is "healthy" while it stays under this share of the
 # baseline Total.  Under → green ▼, over → red ▲.
 _BACKLOG_THRESHOLD_PCT = 3.0
 
 
-def _backlog_card(col, backlog: int, u: int, total: int) -> None:
-    """Backlog metric card with the green/red health badge INSIDE the card,
-    next to the number.  Rebuilt in HTML (st.metric can't host extra content)
-    but styled to match the surrounding metric cards, then the usual unique-case
-    caption below.  Badge = Backlog as % of the baseline Total."""
+def _backlog_badge_html(backlog: int, total: int) -> str:
+    """Inline green/red health pill: Backlog as a % of the baseline Total."""
     pct   = (backlog / total * 100) if total else 0.0
     over  = pct > _BACKLOG_THRESHOLD_PCT
     color = COLORS["danger"] if over else COLORS["success"]
     bg    = "#FCE7E7" if over else "#E6F6EC"
     arrow = "▲" if over else "▼"
-    col.markdown(
-        f"<div style='background:{COLORS['surface']};border:1px solid {COLORS['border']};"
-        f"border-radius:14px;padding:16px 18px;min-height:124px;box-sizing:border-box;"
-        f"box-shadow:0 1px 2px rgba(15,23,42,0.04),0 1px 3px rgba(15,23,42,0.05)'>"
-        f"<div style='color:{COLORS['muted']};font-weight:600;font-size:14px;"
-        f"letter-spacing:0.01em'>Backlog</div>"
-        f"<div style='display:flex;align-items:center;gap:9px;margin-top:3px'>"
-        f"<span style='color:{COLORS['ink']};font-weight:750;font-size:36px;"
-        f"line-height:1.1'>{backlog:,}</span>"
+    return (
         f"<span style='display:inline-flex;align-items:center;gap:4px;padding:3px 9px;"
-        f"border-radius:999px;background:{bg};color:{color};font-size:11px;"
-        f"font-weight:700;line-height:1' title='Backlog is {pct:.1f}% of the "
-        f"baseline Total (threshold {_BACKLOG_THRESHOLD_PCT:.0f}%).'>"
-        f"{arrow} {pct:.1f}%</span>"
-        f"</div></div>",
+        f"border-radius:999px;background:{bg};color:{color};font-size:11px;font-weight:700;"
+        f"line-height:1' title='Backlog is {pct:.1f}% of the baseline Total "
+        f"(threshold {_BACKLOG_THRESHOLD_PCT:.0f}%).'>{arrow} {pct:.1f}%</span>"
+    )
+
+
+def _stat_card(col, label: str, n: int, u: int, *, badge_html: str = "",
+               help_text: str = "") -> None:
+    """One metric card.  EVERY detail card uses this identical markup, so they all
+    have exactly the same height — that's what keeps the row (and the unique-case
+    captions below) aligned, while letting the Backlog card carry an inline badge.
+    (st.metric can't host extra content, and its height didn't match, so we render
+    them all ourselves.)"""
+    help_icon = ""
+    if help_text:
+        help_icon = (
+            f"<span title=\"{html.escape(help_text)}\" style='cursor:help;"
+            f"color:{COLORS['faint']};font-size:12px;font-weight:400;margin-left:5px'>"
+            f"&#9432;</span>"
+        )
+    col.markdown(
+        f"<div class='stat-card' style='background:{COLORS['surface']};"
+        f"border:1px solid {COLORS['border']};border-radius:14px;padding:16px 18px;"
+        f"box-shadow:0 1px 2px rgba(15,23,42,0.04),0 1px 3px rgba(15,23,42,0.05)'>"
+        f"<div style='color:{COLORS['muted']};font-weight:600;font-size:13.5px;"
+        f"letter-spacing:0.01em;white-space:nowrap'>{label}{help_icon}</div>"
+        f"<div style='display:flex;align-items:center;gap:9px;margin-top:6px'>"
+        f"<span style='color:{COLORS['ink']};font-weight:750;font-size:34px;"
+        f"line-height:1.15'>{n:,}</span>{badge_html}</div></div>",
         unsafe_allow_html=True,
     )
     col.caption(f"{u:,} {'case' if u == 1 else 'cases'}")
@@ -489,20 +498,23 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
 
     # ── Row 1: Total · Automated · Backlog · To update · N/A ─────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
-    _metric_pair(c1, "Total (baseline)", s["total"],         s["u_total"])
-    _metric_pair(
+    _stat_card(c1, "Total (baseline)", s["total"], s["u_total"])
+    _stat_card(
         c2, "Automated", s["automated"], s["u_auto"],
-        help=f"{s['cov_total']:.1f}% of total · {s['cov_automatable']:.1f}% of automatable",
+        help_text=f"{s['cov_total']:.1f}% of total · "
+                  f"{s['cov_automatable']:.1f}% of automatable",
     )
-    _backlog_card(c3, s["backlog"], s["u_back"], s["total"])
-    _metric_pair(
+    _stat_card(c3, "Backlog", s["backlog"], s["u_back"],
+               badge_html=_backlog_badge_html(s["backlog"], s["total"]))
+    _stat_card(
         c4, "To update", s["to_be_updated"], s["u_tbu"],
-        help="Status 'To be updated' — was automated but needs maintenance. "
-             "Split out of Backlog (still counts as automatable, so coverage % is unchanged).",
+        help_text="Status 'To be updated' — was automated but needs maintenance. "
+                  "Split out of Backlog (still counts as automatable, so coverage % "
+                  "is unchanged).",
     )
-    _metric_pair(
+    _stat_card(
         c5, "Not Applicable", s["not_applicable"], s["u_na"],
-        help=f"{s['na_pct']:.1f}% of scoped rows",
+        help_text=f"{s['na_pct']:.1f}% of scoped rows",
     )
 
     # ── Coverage line (with N/A %) ────────────────────────────────────────────
@@ -518,8 +530,8 @@ def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
     st.markdown("##### Automated by framework")
     f1, f2, f3 = st.columns(3)
-    _metric_pair(f1, "Java",   s["java"],   s["u_java"])
-    _metric_pair(f2, "TestIM", s["testim"], s["u_testim"])
+    _stat_card(f1, "Java",   s["java"],   s["u_java"])
+    _stat_card(f2, "TestIM", s["testim"], s["u_testim"])
 
     java_pct   = s["java"]   / s["automated"] * 100 if s["automated"] else 0.0
     testim_pct = s["testim"] / s["automated"] * 100 if s["automated"] else 0.0

@@ -441,7 +441,10 @@ def _fetch_suite_data(sid: int, pid: int) -> tuple[int, list[dict], dict[int, st
     return sid, cases, sections
 
 
-@st.cache_data(show_spinner="Fetching and expanding cases…", ttl=3600)
+# No built-in spinner: the startup warm-up (warmup_cache) drives its own verbose
+# status, and after warm-up every call is a cache hit — so a spinner here would
+# only ever double up with the warm-up status.
+@st.cache_data(show_spinner=False, ttl=3600)
 def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
     reg      = get_registry()
     rules    = [r for r in ALL_RULES if r.name in rule_names]
@@ -508,7 +511,7 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
 
 
 # ----------------------------------------------------------------- warmup
-def warmup_cache() -> None:
+def warmup_cache(on_step=None) -> None:
     """Pre-fetch ALL data and pre-cache ALL rule evaluations at startup.
 
     Two-phase warm-up:
@@ -516,17 +519,36 @@ def warmup_cache() -> None:
       2. Run evaluate_rules() for every scope so the Python expansion/matching
          is also cached.  All subsequent tab renders (Overview, Backlog, Explorer)
          hit the @st.cache_data cache and return instantly.
+
+    *on_step* is an optional callback(str) — the UI passes one to surface a
+    verbose, step-by-step loading status so the wait feels shorter.
     """
     from .bu_rules import ALL_RULES
 
-    # Phase 1 – parallelised API fetch
-    suite_ids = sorted({r.suite_id for r in ALL_RULES})
-    tr.prefetch_all_suites(suite_ids)
+    def step(msg: str) -> None:
+        if on_step:
+            on_step(msg)
 
-    # Phase 2 – pre-cache the Python processing per scope
-    # Use the same rule-name tuples that Overview / Backlog tabs use, so all
-    # renders share a single cached result rather than recomputing per BU.
-    for scope in ("website", "next_gen", "mobile_app"):
+    suite_ids = sorted({r.suite_id for r in ALL_RULES})
+    n_bu = len({r.bu for r in ALL_RULES})
+
+    # Phase 1 – parallelised API fetch.  These two messages bracket the single
+    # (longest) blocking call, so the accurate "Downloading…" line is what shows
+    # while it runs.
+    step("🔌 Connecting to TestRail…")
+    step(f"📥 Downloading {len(suite_ids)} test suites across {n_bu} Business Units…")
+    tr.prefetch_all_suites(suite_ids)
+    step("🏷 Resolving custom fields, labels & sections…")
+
+    # Phase 2 – pre-cache the Python processing per scope.  Same rule-name tuples
+    # the Overview / Backlog tabs use, so every render shares one cached result.
+    _pretty = {"website": "Website", "next_gen": "Next Gen", "mobile_app": "Mobile App"}
+    scopes = [s for s in ("website", "next_gen", "mobile_app")
+              if any(r.scope == s for r in ALL_RULES)]
+    for i, scope in enumerate(scopes, 1):
+        step(f"🧮 Expanding coverage rules — {_pretty.get(scope, scope)} "
+             f"({i}/{len(scopes)})…")
         rules = [r for r in ALL_RULES if r.scope == scope]
         if rules:
             evaluate_rules(tuple(r.name for r in rules))
+    step("✨ Building the dashboard…")
