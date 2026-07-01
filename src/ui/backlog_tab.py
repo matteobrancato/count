@@ -390,7 +390,7 @@ def _backlog_card(col, backlog: int, u: int, total: int) -> None:
     arrow = "▲" if over else "▼"
     col.markdown(
         f"<div style='background:{COLORS['surface']};border:1px solid {COLORS['border']};"
-        f"border-radius:14px;padding:16px 18px;min-height:104px;box-sizing:border-box;"
+        f"border-radius:14px;padding:16px 18px;min-height:124px;box-sizing:border-box;"
         f"box-shadow:0 1px 2px rgba(15,23,42,0.04),0 1px 3px rgba(15,23,42,0.05)'>"
         f"<div style='color:{COLORS['muted']};font-weight:600;font-size:14px;"
         f"letter-spacing:0.01em'>Backlog</div>"

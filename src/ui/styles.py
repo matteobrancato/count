@@ -259,7 +259,7 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     border: 1px solid {c['border']};
     border-radius: 14px;
     padding: 16px 18px;
-    min-height: 104px;          /* uniform card height (matches the custom Backlog card) */
+    min-height: 124px;          /* uniform card height (matches the custom Backlog card) */
     box-sizing: border-box;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.05);
     transition: box-shadow .18s ease, transform .18s ease;
