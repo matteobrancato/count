@@ -173,36 +173,6 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     color: #fff;
 }}
 
-/* ── AI-assistant suggestion chips ────────────────────────────────────────── */
-/* Each chip carries a unique `st-key-ai_sugg_*` class, so this styling is fully
-   self-contained per chip — hover can never bleed across siblings.  A soft
-   tinted card with a left-aligned label and a clear brand hover. */
-[class*="st-key-ai_sugg_"] button {{
-    background: {c['brand_soft']} !important;
-    border: 1px solid {c['border']} !important;
-    border-radius: 12px !important;
-    color: {c['ink']} !important;
-    font-weight: 600 !important;
-    font-size: 13px !important;
-    line-height: 1.25 !important;
-    text-align: left !important;
-    justify-content: flex-start !important;
-    align-items: center !important;     /* uniform vertical centring */
-    white-space: normal !important;     /* wrap instead of clipping */
-    min-height: 52px !important;        /* all four chips the same height */
-    padding: 10px 14px !important;
-    box-shadow: none !important;
-    transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease !important;
-}}
-[class*="st-key-ai_sugg_"] button:hover {{
-    background: #fff !important;
-    border-color: {c['brand']} !important;
-    color: {c['brand_strong']} !important;
-    box-shadow: 0 4px 14px rgba(46, 91, 255, 0.16) !important;
-    transform: none !important;
-}}
-[class*="st-key-ai_sugg_"] button p {{ color: inherit !important; }}
-
 /* Chat input submit arrow — brand-filled so it reads as the primary action. */
 [class*="st-key-ai_chat_form_"] [data-testid="stFormSubmitButton"] button {{
     background: {c['brand']} !important;

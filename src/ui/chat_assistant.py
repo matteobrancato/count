@@ -139,59 +139,66 @@ Superdrug and Savers); it is distinct from "Superdrug" and from "Savers".
 Common aliases to map: SD=Superdrug, KV=Kruidvat, WTR=Watsons,
 TPS=The Perfume Shop, ICI=ICI Paris XL, MRN=Marionnaud, DRO=Drogas.
 
-# HOW TO ANSWER — read this carefully
-A "LIVE COVERAGE SNAPSHOT" is provided below with the CURRENT numbers for ALL
-BUs (overall coverage, No-Regression baseline, Production Sanity, weakest areas,
-and the full ranking).  These numbers are live from TestRail.
+# WHERE YOUR DATA COMES FROM
+Everything in the "LIVE COVERAGE SNAPSHOT" below is LIVE from TestRail — the exact
+same pipeline the dashboard uses, so your numbers ALWAYS match the dashboard.
+The numbers are exact: never round or estimate beyond what is given.  If a
+specific number is NOT in the snapshot and no tool provides it, say so plainly
+("I don't have that exact number") instead of guessing.
 
-  • For ANYTHING about coverage, totals, automated counts, comparisons,
-    rankings, or coverage gaps → answer DIRECTLY from the snapshot.  Do NOT call
-    any tool — the data is already in front of you.  This makes you fast and
-    reliable.
-  • Call a tool ONLY for live detail that is NOT in the snapshot:
-      - get_active_runs(bu)    → currently open/running test runs + pass rates
+# HOW TO ANSWER
+  • Coverage, totals, automated counts, comparisons, rankings, gaps, the
+    No-Regression baseline, the backlog breakdown (Backlog / To-update / N/A),
+    frameworks (Java / Testim) → answer DIRECTLY from the snapshot.  Do NOT call
+    a tool — the data is already in front of you.  This is fast and reliable.
+  • Call a tool ONLY for live detail NOT in the snapshot (at most one):
+      - get_active_runs(bu)    → currently open/running runs + pass rates
       - get_open_bugs(bu)      → open JIRA bugs and the tests that raised them
       - get_test_stability(bu) → flaky / always-fail analysis over recent runs
-    Call at most one tool, only when the question clearly needs that live detail.
+
+# HOW THE METRICS ARE CALCULATED  (use this to answer "how / why / what does X mean")
+- Data is pulled from TestRail; DEPRECATED cases are ALWAYS excluded.
+- Coverage % = UNIQUE automated cases ÷ total non-deprecated cases (per case).
+- "Automated rows (D+M)": a case can be automated on Desktop AND Mobile, counted
+  as two separate rows — so the row count is larger than the unique-case count.
+  Coverage % always uses UNIQUE cases, never rows.
+- Countries: each BU runs in several countries; a case is attributed to a BU by
+  the country tokens in its `multi_countries` field.  Suites shared between BUs
+  (e.g. Eastern Europe) are split per country.
+- No-Regression baseline = cases labelled `big_regr_desktop` / `big_regr_mobile`
+  (the regression suite — the Backlog tab's scope).  Device comes from the label.
+  Each (case × country × device) row in it is classified as one of:
+    · Automated     — status Automated / Automated DEV / UAT / Prod
+    · To be updated — status "To be updated" (was automated, needs maintenance)
+    · N/A           — status "Automation not applicable"
+    · Backlog       — any OTHER non-automated status (Not automated, In progress,
+                      Ready to be automated, Blocked, Assigned to Testim)
+  "Coverage vs total" = Automated ÷ all rows; "Coverage vs automatable" excludes
+  N/A.  A BU's Backlog is considered healthy while it stays under 3% of the total.
+- Production Sanity = tests executed only in production.
+- Frameworks: Testim (Desktop/Mobile) and Java.  A case can be covered by both,
+  so Java% + Testim% may sum to more than 100%.
 
 Rules
 ─────
-1. NEVER invent or estimate a number.  Use the snapshot, or a tool — nothing else.
-2. **Reply in the user's language** (Italian → Italian, English → English) and
-   match their tone.
-3. Be concise and conversational.  Lead with the headline number in **bold**,
-   then 1-3 short bullets.  Skip preamble like "Here is the data:".
-4. Use full BU names ("Superdrug", not "SD").
-5. Format numbers with thousands separators ("2,032", not "2032").
-6. Always give context ("1,116 of 3,949 cases", "28.3% covered").
-7. Be proactive in conversation: when it helps, add a one-line comparison or
-   call out the weakest area — the snapshot has every BU, so use it.
-
-CRITICAL — DO NOT ask for clarification when the user names a BU that is in the
-snapshot (directly or via an alias).  "How is Superdrug doing?" is unambiguous →
-answer from the snapshot immediately.  Only ask to clarify when no BU is
-identifiable at all and the question needs one.
-
-If a tool returns `{"error": "..."}`, tell the user the actual error — do not
-make something up.
+1. NEVER invent or estimate a number.  Use the snapshot or a tool — nothing else.
+   If you genuinely don't have it, say so rather than guessing.
+2. **Reply in the user's language** (Italian → Italian, English → English), match tone.
+3. Be concise and conversational.  Lead with the headline number in **bold**, then
+   1-3 short bullets.  No "Here is the data:" preamble.
+4. Full BU names ("Superdrug", not "SD").  Thousands separators ("2,032").
+5. Always give context ("1,116 of 3,949 cases", "28.3% covered").
+6. Be proactive: add a one-line comparison or call out the weakest area when useful.
+7. Don't ask to clarify when a BU is identifiable (name or alias) — just answer.
+   If a tool returns `{"error": "..."}`, share the actual error, don't invent one.
 
 Answer shape (example for "how is X doing")
 ───────────────────────────────────────────
   **28.3%** automation coverage
-  • 1,116 automated cases out of 3,949 total
-  • No-Regression baseline: 92% covered (X/Y) · Production Sanity: 64% (X/Y)
+  • 1,116 automated of 3,949 cases
+  • No-Regression baseline: 92% (X/Y) · Production Sanity: 64% (X/Y)
   • Weakest area: <area> at 11%
 """
-
-# Suggestion chips shown in the empty-state of the chat panel.
-# Pairs: (display label, full question sent to Gemini).
-_SUGGESTIONS: list[tuple[str, str]] = [
-    ("📊  Superdrug status",   "How is Superdrug doing on automation?"),
-    ("🏆  Compare all BUs",    "Compare all BUs by coverage and tell me who is ahead."),
-    ("🐛  Bugs · Watsons",     "What bugs are currently open for Watsons?"),
-    ("🌀  Flaky · Drogas",     "Which tests are flaky for Drogas? Top offenders."),
-]
-
 
 # ── BU resolution ────────────────────────────────────────────────────────────
 def _safe_tool(fn):
@@ -552,6 +559,23 @@ def _build_coverage_brief() -> str:
     ranking: list[tuple[str, float]] = []
     blocks: list[str] = []
 
+    # Regression-baseline / backlog breakdown — the SAME numbers as the Backlog
+    # tab (Total rows, Automated, Backlog, To-update, N/A, Java, Testim), so
+    # Dexter's regression answers line up 1:1 with the dashboard.  Best-effort:
+    # if it fails, the brief still carries the coverage numbers.
+    backlog_by_bu: dict[str, dict] = {}
+    try:
+        from . import backlog_tab as bl
+        scope_data: dict[str, tuple] = {}
+        for scope in ("website", "next_gen"):
+            raw, auto, rules = bl._load_scope(scope)
+            if not raw.empty:
+                scope_data[scope] = (raw, auto, rules)
+        for _, row in bl._build_summary(scope_data).iterrows():
+            backlog_by_bu[str(row["BU"])] = row.to_dict()
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("Coverage brief: backlog summary failed")
+
     for bu in bus:
         d = get_bu_coverage(bu)
         if not isinstance(d, dict) or "error" in d:
@@ -563,12 +587,22 @@ def _build_coverage_brief() -> str:
             f"- Overall coverage: {d['coverage_pct']}% "
             f"({d['automated_unique']:,} automated of {d['total_cases']:,} cases)",
         ]
-        rb = d.get("regression_baseline") or {}
-        if rb:
+        bk = backlog_by_bu.get(d["business_unit"])
+        if bk:
             lines.append(
-                f"- No-Regression baseline: {rb['coverage_pct']}% "
-                f"({rb['automated_unique']:,}/{rb['total_cases']:,})"
+                f"- No-Regression baseline (regression suite): "
+                f"{int(bk['Automated']):,} automated of {int(bk['Total']):,} rows "
+                f"({float(bk['Cov. %']):.1f}%) — Backlog {int(bk['Backlog']):,}, "
+                f"To-update {int(bk['To update']):,}, N/A {int(bk['N/A']):,} "
+                f"· Java {int(bk['Java']):,} / Testim {int(bk['TestIM']):,}"
             )
+        else:
+            rb = d.get("regression_baseline") or {}
+            if rb:
+                lines.append(
+                    f"- No-Regression baseline: {rb['coverage_pct']}% "
+                    f"({rb['automated_unique']:,}/{rb['total_cases']:,})"
+                )
         ps = d.get("production_sanity") or {}
         if ps:
             lines.append(
@@ -972,23 +1006,19 @@ def _render_chat_panel() -> None:
         "Ask about automation coverage, runs, bugs, or test stability."
     )
 
-    # ── empty-state suggestion chips ──────────────────────────────────────
-    # Clicking a chip only QUEUES the message and reruns — the chips vanish
-    # immediately (conversation no longer empty), so no sibling ever greys out.
+    # ── empty state: a quiet, non-clickable hint (no suggestion chips) ────────
     if not msgs:
         st.markdown(
-            f"<div style='font-size:12px;font-weight:700;color:{COLORS['muted']};"
-            f"text-transform:uppercase;letter-spacing:0.06em;margin:2px 0 8px'>"
-            f"Try asking</div>",
+            f"<div style='margin:8px 0 2px;padding:12px 14px;border-radius:12px;"
+            f"background:{COLORS['canvas']};border:1px solid {COLORS['border']};"
+            f"font-size:12.5px;color:{COLORS['text']};line-height:1.55'>"
+            f"Ask me anything about <b>automation coverage</b> — for example "
+            f"“how is Superdrug doing?”, “compare all BUs”, “where are Drogas' "
+            f"gaps?”, or “open bugs in Watsons”.<br>"
+            f"<span style='color:{COLORS['muted']}'>Numbers are live from "
+            f"TestRail and match the dashboard.</span></div>",
             unsafe_allow_html=True,
         )
-        cols = st.columns(2)
-        for i, (label, question) in enumerate(_SUGGESTIONS):
-            if cols[i % 2].button(label, key=f"ai_sugg_{sid}_{i}",
-                                  use_container_width=True):
-                _queue_user_message(question)
-                st.rerun()
-        st.markdown("")
 
     # ── conversation history ──────────────────────────────────────────────
     for msg in msgs:
