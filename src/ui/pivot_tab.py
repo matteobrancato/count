@@ -429,12 +429,15 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
 # ------------------------------------------------------------------ render
 @st.fragment
 def render() -> None:
-    st.subheader("📊 Business Units")
+    # Heading matches the tab name so navigation and content agree.
+    st.subheader("📊 Explorer")
+    st.caption("Pivot the automated tests of a Business Unit by device, "
+               "framework and country — plus the full suite status breakdown.")
 
-    options = BU_ORDER + ["─", "Microservices", "Mobile Application"]
+    # No fake "─" separator entry: it was a selectable option that blanked the
+    # whole tab via st.stop() when picked.
+    options = BU_ORDER + ["Microservices", "Mobile Application"]
     choice  = st.selectbox("Business Unit", options, index=0, key="tab1_bu")
-    if choice.startswith("─"):
-        st.stop()
 
     rules = _rules_for_choice(choice)
     if not rules:
@@ -448,7 +451,7 @@ def render() -> None:
     auto_all = _dedup_auto(result.automated)
 
     if auto_all.empty and raw.empty:
-        st.warning("No cases loaded. Check the Debug tab for field mapping issues.")
+        st.warning("No cases loaded — data refreshes automatically every hour.")
         return
 
     # ---- Filters + Pivot (on automated expanded df)

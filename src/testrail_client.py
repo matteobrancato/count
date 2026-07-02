@@ -6,6 +6,7 @@ When "next" is null we are done. We follow the next link (relative) until exhaus
 """
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -53,11 +54,12 @@ class TestRailClient:
         self._session.auth = HTTPBasicAuth(creds.user, creds.api_key)
         self._session.headers.update({"Content-Type": "application/json"})
         # Big connection pool — the cold-start warm-up fires many parallel
-        # requests (16 suite workers × up to 5 pagination workers each).  The
-        # default urllib3 pool is only 10 connections, so without this the
-        # parallel fetches silently queue behind 10 sockets.  A larger pool lets
-        # them actually run concurrently (the dominant initial-load speed-up).
-        adapter = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
+        # requests (16 suite workers × up to 5 pagination workers each ≈ 80
+        # peak).  The default urllib3 pool is only 10 connections, so without
+        # this the parallel fetches silently queue behind 10 sockets.  maxsize
+        # is a cap, not a preallocation, so oversizing is free — 96 covers the
+        # warm-up peak without connection churn (discard/reopen).
+        adapter = HTTPAdapter(pool_connections=32, pool_maxsize=96, max_retries=0)
         self._session.mount("https://", adapter)
         self._session.mount("http://", adapter)
 
@@ -81,8 +83,13 @@ class TestRailClient:
     def _get(self, endpoint: str) -> Any:
         resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         if resp.status_code == 429:
-            # Rate limit — honour Retry-After and retry once manually
-            wait = int(resp.headers.get("Retry-After", "5"))
+            # Rate limit — honour Retry-After (seconds form; RFC 7231 also
+            # allows an HTTP-date, which int() can't parse) and retry once.
+            # Capped so a hostile/buggy header can't stall a worker thread.
+            try:
+                wait = min(int(resp.headers.get("Retry-After", "5")), 30)
+            except ValueError:
+                wait = 5
             time.sleep(wait)
             resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         if not resp.ok:
@@ -166,6 +173,10 @@ class TestRailClient:
     def get_case(self, case_id: int) -> dict:
         """A single test case by ID (title, refs, section, type, custom fields)."""
         return self._get(f"get_case/{case_id}")
+
+    def get_statuses(self) -> list[dict]:
+        """All result statuses, including custom ones (id ≥ 6)."""
+        return self._get("get_statuses")
 
     # -------------------------------------------------- runs / plans / results
     def _get_paginated(self, endpoint: str, key: str, limit: int = 250) -> list[dict]:
@@ -294,10 +305,25 @@ def fetch_plan(plan_id: int) -> dict:
     return _get_client().get_plan(plan_id)
 
 
-# Completed-run data is immutable → long TTL (6h).
+# Completed-run data is immutable → long TTL (6h).  Use ONLY for completed runs.
 @st.cache_data(show_spinner=False, ttl=21600)
 def fetch_tests(run_id: int) -> list[dict]:
     return _get_client().get_tests(run_id)
+
+
+# Same call, short TTL — for ACTIVE runs, whose tests/statuses keep changing.
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_tests_fresh(run_id: int) -> list[dict]:
+    return _get_client().get_tests(run_id)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_statuses() -> dict[int, str]:
+    """{status_id: display label} incl. custom statuses (id ≥ 6)."""
+    return {
+        int(s["id"]): (s.get("label") or s.get("name") or f"Status {s['id']}")
+        for s in _get_client().get_statuses()
+    }
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -327,32 +353,46 @@ def resolve_project_id(suite_id: int) -> int:
 def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
                fetch_suite, fetch_sections, fetch_cases, fetch_labels,
-               fetch_runs, fetch_plans, fetch_plan, fetch_tests, fetch_failed_results,
-               fetch_case, fetch_results_for_case):
+               fetch_runs, fetch_plans, fetch_plan, fetch_tests, fetch_tests_fresh,
+               fetch_failed_results, fetch_case, fetch_results_for_case,
+               fetch_statuses):
         fn.clear()
 
 
 # ----------------------------------------------------------------- startup pre-warm
-_WARMED = False   # module-level flag — runs once per process, not per user session
+# Wall-clock of the last pre-warm.  Slightly shorter than the data TTL (3600s)
+# so the parallel pre-warm kicks in again just before the cache entries lapse —
+# the old boolean flag never reset, leaving every post-TTL refresh un-warmed.
+_WARMED_AT = 0.0
+_WARM_INTERVAL = 3300.0
 
 
 def prefetch_all_suites(suite_ids: list[int]) -> None:
     """Pre-warm fetch_cases + fetch_sections caches for every known suite.
 
-    Called once at app startup.  Subsequent BU clicks only need Python
-    processing (rule matching), not API calls.
+    Fault-tolerant per suite: one deleted/renamed suite must not blank the
+    whole dashboard — its failure is logged and skipped here, and if the suite
+    genuinely matters, `evaluate_rules` will surface a visible error for it.
     """
-    global _WARMED
-    if _WARMED:
+    global _WARMED_AT
+    if time.time() - _WARMED_AT < _WARM_INTERVAL:
         return
-    _WARMED = True
+    _WARMED_AT = time.time()   # set upfront so concurrent sessions don't re-warm
 
-    # Step 1: resolve all project IDs in parallel
+    # Step 1: resolve all project IDs in parallel (skip suites that fail)
     with ThreadPoolExecutor(max_workers=min(len(suite_ids), 8)) as pool:
         pid_futures = {sid: pool.submit(resolve_project_id, sid) for sid in suite_ids}
-    suite_to_project = {sid: f.result() for sid, f in pid_futures.items()}
+    suite_to_project: dict[int, int] = {}
+    for sid, fut in pid_futures.items():
+        try:
+            suite_to_project[sid] = fut.result()
+        except Exception:                                               # noqa: BLE001
+            logging.getLogger(__name__).exception(
+                "prefetch: could not resolve suite %s — skipping", sid)
 
-    # Step 2: fetch cases + sections + labels for all suites in parallel
+    # Step 2: fetch cases + sections + labels for all suites in parallel.
+    # Failures here are harmless: these calls only warm the cache, and any
+    # suite that failed will simply be fetched (with retries) on first use.
     project_ids = set(suite_to_project.values())
     with ThreadPoolExecutor(max_workers=min(len(suite_ids) * 2 + len(project_ids), 16)) as pool:
         for sid, pid in suite_to_project.items():

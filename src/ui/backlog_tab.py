@@ -268,6 +268,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     n_back = int(cats.get("backlog",         0))
     n_tbu  = int(cats.get("to_be_updated",   0))
     n_na   = int(cats.get("not_applicable",  0))
+    n_unk  = int(cats.get("unknown",         0))
     total  = len(expanded)
 
     def _u(cat: str) -> int:
@@ -320,6 +321,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         "backlog":         n_back,   "u_back":    u_back,
         "to_be_updated":   n_tbu,    "u_tbu":     u_tbu,
         "not_applicable":  n_na,     "u_na":      u_na,
+        "unknown":         n_unk,
         "cov_total":       n_auto / total        * 100 if total        else 0.0,
         "cov_automatable": n_auto / automatable  * 100 if automatable  else 0.0,
         "na_pct":          n_na   / scoped        * 100 if scoped       else 0.0,
@@ -327,17 +329,24 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
 
 
 # ── summary table ─────────────────────────────────────────────────────────────
+_AUTO_SLIM_COLS = ["case_id", "country_label", "device", "framework"]
+
+
 def _build_summary(
     scope_data: dict[str, tuple],
-) -> pd.DataFrame:
-    """Build the summary table from pre-loaded scope data.
+) -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
+           dict[tuple[str, str], pd.DataFrame]]:
+    """Build the summary table plus the per-(BU, scope) frames the detail view needs.
 
     *scope_data* maps scope → (raw, auto, rules) already filtered to that scope.
+
+    Returns (summary, expanded_by_bu, auto_by_bu):
+      - expanded_by_bu: classified (case × country × device) baseline rows per BU
+      - auto_by_bu:     the BU's automated rows slimmed to the 4 columns `_stats`
+                        uses — kept small so the cached payload copies fast.
     """
-    # Pre-compute and cache expanded DataFrames so _detail_view can reuse them
-    # without running _expand_baseline / _classify_expanded a second time.
-    expanded_cache: dict[tuple, pd.DataFrame] = {}
-    scope_data["_expanded_cache"] = expanded_cache  # type: ignore[assignment]
+    expanded_by_bu: dict[tuple[str, str], pd.DataFrame] = {}
+    auto_by_bu:     dict[tuple[str, str], pd.DataFrame] = {}
 
     rows = []
     for bu, scope in _scoped_bus():
@@ -351,7 +360,11 @@ def _build_summary(
         if expanded.empty:
             continue
         expanded = _classify_expanded(expanded, auto)
-        expanded_cache[(bu, scope)] = expanded   # cache for detail view
+        expanded_by_bu[(bu, scope)] = expanded
+        auto_by_bu[(bu, scope)] = (
+            auto[_AUTO_SLIM_COLS].copy() if not auto.empty
+            else pd.DataFrame(columns=_AUTO_SLIM_COLS)
+        )
         s = _stats(expanded, auto)
         rows.append({
             "BU":        bu,
@@ -363,9 +376,28 @@ def _build_summary(
             "Backlog":   s["backlog"],
             "To update": s["to_be_updated"],
             "N/A":       s["not_applicable"],
+            "Unknown":   s["unknown"],
             "Cov. %":    round(s["cov_total"], 1),
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
+                             dict[tuple[str, str], pd.DataFrame]]:
+    """The heavy 11-BU baseline pipeline (expand + classify + stats), computed
+    ONCE per data refresh (TTL matches `evaluate_rules`) and shared by the
+    Backlog tab (summary + detail view) and Dexter's coverage brief.
+
+    Without this cache the whole pandas pipeline re-ran on EVERY widget
+    interaction inside the fragment (BU selectbox, pivot multiselects) — the
+    main source of Backlog-tab interaction lag."""
+    scope_data: dict[str, tuple] = {}
+    for scope in ("website", "next_gen"):
+        raw, auto, rules = _load_scope(scope)
+        if not raw.empty:
+            scope_data[scope] = (raw, auto, rules)
+    return _build_summary(scope_data)
 
 
 # ── detail view ───────────────────────────────────────────────────────────────
@@ -400,7 +432,7 @@ def _stat_card(col, label: str, n: int, u: int, *, badge_html: str = "",
     if help_text:
         help_icon = (
             f"<span title=\"{html.escape(help_text)}\" style='cursor:help;"
-            f"color:{COLORS['faint']};font-size:12px;font-weight:400;margin-left:5px'>"
+            f"color:{COLORS['muted']};font-size:12px;font-weight:400;margin-left:5px'>"
             f"&#9432;</span>"
         )
     col.markdown(
@@ -467,32 +499,25 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
         st.error(f"Pivot error: {exc}")
 
 
-def _detail_view(bu: str, scope: str, scope_data: dict[str, tuple]) -> None:
-    if scope not in scope_data:
-        st.info("No data loaded for this scope.")
-        return
-    raw_all, auto_all, rules_all = scope_data[scope]
-    raw, auto, rules = _filter_bu(raw_all, auto_all, rules_all, bu)
-    if raw.empty:
-        st.info("No cases found.")
-        return
-
-    # Re-use pre-computed expanded data cached in scope_data if available,
-    # otherwise compute it now (avoids double work vs _build_summary).
-    _cache = scope_data.get("_expanded_cache", {})
-    cache_key = (bu, scope)
-    if cache_key in _cache:
-        expanded = _cache[cache_key]
-    else:
-        expanded = _classify_expanded(_expand_baseline(raw, rules), auto)
-
-    if expanded.empty:
+def _detail_view(
+    bu: str,
+    scope: str,
+    expanded_by_bu: dict[tuple[str, str], pd.DataFrame],
+    auto_by_bu: dict[tuple[str, str], pd.DataFrame],
+) -> None:
+    # Both frames come straight from the cached `_backlog_data()` payload — no
+    # recomputation on widget interactions.
+    expanded = expanded_by_bu.get((bu, scope))
+    if expanded is None or expanded.empty:
         st.info(
             "No big_regr cases found for this BU. "
-            "Check that cases have the 'big_regr_desktop' / 'big_regr_mobile' label. "
-            "If you just labelled them, click 🔄 Refresh."
+            "Check that cases have the 'big_regr_desktop' / 'big_regr_mobile' "
+            "label — new labels appear at the next hourly data refresh."
         )
         return
+    auto = auto_by_bu.get((bu, scope))
+    if auto is None:
+        auto = pd.DataFrame(columns=_AUTO_SLIM_COLS)
 
     s = _stats(expanded, auto)
 
@@ -560,25 +585,29 @@ def render() -> None:
         "Baseline: cases with the label 'big_regr_desktop' / 'big_regr_mobile'. "
     )
 
+    # One cached call — the heavy pipeline only actually runs on the first
+    # render after a data refresh; every interaction after that is a cache hit.
     with st.spinner("Computing backlog stats…"):
-        scope_data: dict[str, tuple] = {}
-        for scope in ("website", "next_gen"):
-            raw, auto, rules = _load_scope(scope)
-            if not raw.empty:
-                scope_data[scope] = (raw, auto, rules)
-        summary = _build_summary(scope_data)
+        summary, expanded_by_bu, auto_by_bu = _backlog_data()
 
     if summary.empty:
         st.warning(
             "No baseline data found. Ensure cases have the big_regr_desktop / "
-            "big_regr_mobile labels in TestRail, then click 🔄 Refresh."
+            "big_regr_mobile labels in TestRail — new labels appear at the "
+            "next hourly data refresh."
         )
         return
 
     # ── Summary table ─────────────────────────────────────────────────────────
     st.markdown("#### All Business Units")
+    # "Unknown" (rows with an automated status not attributed to this BU's
+    # automated set, or no status at all) is shown only when it occurs, so
+    # Total always equals the sum of the visible categories.
+    display = summary
+    if "Unknown" in summary.columns and int(summary["Unknown"].sum()) == 0:
+        display = summary.drop(columns=["Unknown"])
     st.dataframe(
-        summary,
+        display,
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -592,6 +621,11 @@ def render() -> None:
             "To update": st.column_config.NumberColumn(
                 "To update", help="Status 'To be updated' — split out of Backlog."),
             "N/A":       st.column_config.NumberColumn("N/A"),
+            "Unknown":   st.column_config.NumberColumn(
+                "Unknown",
+                help="Rows whose status is automated but not attributed to this "
+                     "BU's automated set (country mismatch), or with no status. "
+                     "Shown only when > 0 so Total = sum of the columns."),
             "Cov. %":    st.column_config.NumberColumn("Coverage %", format="%.1f%%"),
         },
     )
@@ -620,4 +654,4 @@ def render() -> None:
         label_visibility="collapsed",
     )
     chosen_bu, chosen_scope = pair_map[choice_lbl]
-    _detail_view(chosen_bu, chosen_scope, scope_data)
+    _detail_view(chosen_bu, chosen_scope, expanded_by_bu, auto_by_bu)

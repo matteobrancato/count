@@ -32,7 +32,9 @@ def _bu_country_picker(tree: dict[str, list[str]], key_prefix: str) -> dict[str,
     for bu, countries in tree.items():
         with st.container():
             c1, c2 = st.columns([0.5, 3])
-            checked = c1.checkbox("", value=True, key=f"{key_prefix}_bu_{bu}",
+            # Real label (collapsed visually) = accessible name for screen
+            # readers, and no Streamlit empty-label warning.
+            checked = c1.checkbox(bu, value=True, key=f"{key_prefix}_bu_{bu}",
                                   label_visibility="collapsed")
             c2.markdown(f"**{bu}**")
             if not checked:
@@ -66,11 +68,13 @@ def _apply_selection(df: pd.DataFrame, selection: dict[str, list[str]]) -> pd.Da
 
 
 # --------------------------------------------------------------------- cards
-def _metric_card(title: str, subset: pd.DataFrame, accent: str) -> None:
+def _metric_card(title: str, subset: pd.DataFrame, accent: str,
+                 tooltip: str = "") -> None:
     tot = metrics.totals(subset)
+    tip = f' title="{tooltip}"' if tooltip else ""
     st.markdown(
         f"""
-        <div style="
+        <div{tip} style="
             padding:18px 22px;border-radius:16px;
             background:linear-gradient(135deg,{accent}1f,{accent}08);
             border:1px solid {accent}3a;margin-bottom:8px;
@@ -133,6 +137,11 @@ def render() -> None:
         with c1:
             _metric_card("Smoke (Highest automated)", smoke, COLORS["warning"])
         with c2:
-            _metric_card("No-Regression (All automated)", regr, COLORS["brand"])
+            _metric_card(
+                "No-Regression (All automated)", regr, COLORS["brand"],
+                tooltip=("ALL automated cases (deduped) — NOT the big_regr "
+                         "regression baseline. For the baseline figures see "
+                         "the Backlog tab."),
+            )
         with c3:
             _metric_card("Production Sanity", sanity, COLORS["success"])

@@ -66,8 +66,12 @@ def _bus_for_run_name(name: str | None) -> set[str]:
     return {bu for pattern, bu in _BU_ALIAS_PATTERNS if pattern.search(name)}
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
 def _bu_project_ids() -> dict[str, set[int]]:
-    """Map BU → set of TestRail project IDs (derived from each BU's rule suites)."""
+    """Map BU → set of TestRail project IDs (derived from each BU's rule suites).
+
+    Cached: it loops every rule calling `resolve_project_id`, and is hit on every
+    Runs-tab rerun plus every Dexter runs/bugs/stability tool call."""
     out: dict[str, set[int]] = {}
     for r in ALL_RULES:
         try:
@@ -259,7 +263,10 @@ def _collect_bug_records(runs: list[dict]) -> list[dict]:
     tests_by_run: dict[int, list[dict]] = {}
     if rids_with_bugs:
         with ThreadPoolExecutor(max_workers=min(len(rids_with_bugs), 12)) as pool:
-            t_fut = {pool.submit(tr.fetch_tests, rid): rid for rid in rids_with_bugs}
+            # fetch_tests_fresh (10-min TTL): these are ACTIVE runs, whose test
+            # list/statuses keep changing — the 6h completed-run TTL would show
+            # stale bug→test links.
+            t_fut = {pool.submit(tr.fetch_tests_fresh, rid): rid for rid in rids_with_bugs}
             for fut in as_completed(t_fut):
                 rid = t_fut[fut]
                 try:
@@ -350,8 +357,11 @@ def _classify_stability(runs: list[dict], min_executions: int = 5) -> pd.DataFra
     if not runs:
         return pd.DataFrame()
 
-    # Parallel fetch get_tests for each run
+    # Parallel fetch get_tests for each run.  Failed fetches are counted (and
+    # surfaced via df.attrs so the caller can warn) instead of silently
+    # classifying against a truncated history.
     by_run: dict[int, list[dict]] = {}
+    n_fetch_failed = 0
     with ThreadPoolExecutor(max_workers=min(len(runs), 8)) as pool:
         futures = {pool.submit(tr.fetch_tests, int(r["id"])): int(r["id"]) for r in runs}
         for fut in as_completed(futures):
@@ -360,6 +370,7 @@ def _classify_stability(runs: list[dict], min_executions: int = 5) -> pd.DataFra
                 by_run[rid] = fut.result()
             except Exception:
                 by_run[rid] = []
+                n_fetch_failed += 1
 
     # Order runs chronologically (oldest → newest) so the status pattern reads left→right
     run_order = sorted(runs, key=lambda r: int(r.get("completed_on") or r.get("created_on") or 0))
@@ -429,8 +440,11 @@ def _classify_stability(runs: list[dict], min_executions: int = 5) -> pd.DataFra
 
     df = pd.DataFrame(rows)
     if df.empty:
+        df.attrs["n_fetch_failed"] = n_fetch_failed
         return df
-    return df.sort_values(["failure_rate", "fail"], ascending=[False, False]).reset_index(drop=True)
+    df = df.sort_values(["failure_rate", "fail"], ascending=[False, False]).reset_index(drop=True)
+    df.attrs["n_fetch_failed"] = n_fetch_failed
+    return df
 
 
 # ── UI sections ─────────────────────────────────────────────────────────────
@@ -443,6 +457,7 @@ _CLASS_EMOJI = {
 }
 
 
+@st.fragment
 def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
     st.markdown("#### 🏃 Active Runs")
     st.caption(
@@ -555,12 +570,13 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
     )
 
 
+@st.fragment
 def _render_stability(bu: str, project_ids: set[int]) -> None:
     st.markdown("#### 📈 Test Stability")
     st.caption(
         "Classify cases by their result pattern across the last N **completed** runs. "
         "*Always fail* → fix priority · *Flaky* → investigate · *Always pass* → safe · "
-        "*Insufficient data* → < 1 execution recorded."
+        "*Insufficient data* → fewer executions than the **Min executions** you set below."
     )
 
     c1, c2, _ = st.columns([1, 1, 3])
@@ -595,6 +611,12 @@ def _render_stability(bu: str, project_ids: set[int]) -> None:
         )
         return
 
+    n_failed = int(stab.attrs.get("n_fetch_failed", 0))
+    if n_failed:
+        st.warning(
+            f"⚠️ {n_failed} of {len(runs)} runs could not be fetched — "
+            f"classifications below are based on a partial history."
+        )
     if stab.empty:
         st.info("No test data found in the selected runs.")
         return
@@ -690,7 +712,18 @@ _STATUS_DISPLAY: dict[int, tuple[str, str, str, str]] = {
 
 
 def _status_disp(sid: int) -> tuple[str, str, str, str]:
-    return _STATUS_DISPLAY.get(int(sid or 0), (f"Status {sid}", "#64748B", "#EEF1F6", "•"))
+    """(label, colour, bg, emoji) for a status id.
+
+    Ids 1-5 use the styled built-ins; CUSTOM statuses (id ≥ 6) resolve their
+    real TestRail label via the API instead of rendering as 'Status 11'."""
+    sid = int(sid or 0)
+    if sid in _STATUS_DISPLAY:
+        return _STATUS_DISPLAY[sid]
+    try:
+        label = tr.fetch_statuses().get(sid, f"Status {sid}")
+    except Exception:                                                   # noqa: BLE001
+        label = f"Status {sid}"
+    return (label, "#64748B", "#EEF1F6", "•")
 
 
 def _parse_case_id(text: str) -> int | None:
@@ -764,21 +797,28 @@ def _case_run_universe(suite_id: int, depth: int) -> tuple[list[str], dict]:
     return bus, top
 
 
-def _gather_case_executions(case_id: int, run_ids: list[int]) -> tuple[dict, dict]:
+def _gather_case_executions(
+    case_id: int, run_ids: list[int],
+) -> tuple[dict, dict, int]:
     """For each run, locate the case's test + pull its full result history.
 
     Two parallel passes (the second only over runs that actually contain the
-    case), so we never fetch results for irrelevant runs.
+    case), so we never fetch results for irrelevant runs.  Returns
+    (found, history, n_failed) where *n_failed* counts runs whose fetch errored
+    — surfaced as a warning so gaps aren't silently read as 'never ran'.
+    Uses the fresh 10-min TTL: the scanned window mixes active runs.
     """
     found: dict[int, dict] = {}
+    n_failed = 0
     if run_ids:
         with ThreadPoolExecutor(max_workers=min(len(run_ids), 16)) as pool:
-            futs = {pool.submit(tr.fetch_tests, rid): rid for rid in run_ids}
+            futs = {pool.submit(tr.fetch_tests_fresh, rid): rid for rid in run_ids}
             for fut in as_completed(futs):
                 rid = futs[fut]
                 try:
                     tests = fut.result()
                 except Exception:                                       # noqa: BLE001
+                    n_failed += 1
                     continue
                 for t in tests:
                     if int(t.get("case_id") or 0) == case_id:
@@ -796,7 +836,8 @@ def _gather_case_executions(case_id: int, run_ids: list[int]) -> tuple[dict, dic
                     history[rid] = fut.result()
                 except Exception:                                       # noqa: BLE001
                     history[rid] = []
-    return found, history
+                    n_failed += 1
+    return found, history, n_failed
 
 
 def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) -> None:
@@ -888,6 +929,7 @@ def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) 
     )
 
 
+@st.fragment
 def _render_case_deep_dive() -> None:
     st.markdown("#### 🔬 In-depth Test Analysis")
     st.caption(
@@ -923,10 +965,16 @@ def _render_case_deep_dive() -> None:
 
     with st.spinner(f"Scanning runs for C{case_id} (can take a few seconds)…"):
         bus, run_meta = _case_run_universe(suite_id, depth)
-        found, history = _gather_case_executions(case_id, list(run_meta.keys()))
+        found, history, n_failed = _gather_case_executions(
+            case_id, list(run_meta.keys()))
 
     _render_case_header(case, case_id, suite_id, base_url)
 
+    if n_failed:
+        st.warning(
+            f"⚠️ {n_failed} of {len(run_meta)} runs could not be fetched — "
+            f"the history below may be incomplete."
+        )
     if not found:
         st.info(
             f"This case wasn't found in the {len(run_meta)} most-recent runs "
@@ -940,7 +988,9 @@ def _render_case_deep_dive() -> None:
     for rid, test in found.items():
         meta    = run_meta[rid]
         results = history.get(rid, [])
-        n_exec  = sum(1 for r in results if int(r.get("status_id") or 0)) or 1
+        # Honest count: None (blank cell) when the results fetch returned
+        # nothing, instead of fabricating "1".
+        n_exec  = sum(1 for r in results if int(r.get("status_id") or 0)) or None
         run_bugs: set[str] = set()
         for r in results:
             for k in _extract_jira_keys(r.get("defects")):

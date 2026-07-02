@@ -363,9 +363,10 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
 
-/* ── Coverage tab: Apple-style scroll-reveal ──────────────────────────────────
+/* ── Apple-style scroll-reveal (all data tabs) ────────────────────────────────
    Pure CSS scroll-driven animation — each block fades + rises as it scrolls into
-   view, so the long Coverage page feels alive instead of heavy.  Gated behind
+   view, so long pages feel alive instead of heavy.  Applies to any container
+   whose key ends in `_anim` (each tab wraps its body in one).  Gated behind
    @supports so browsers WITHOUT scroll timelines (Safari/Firefox today) just
    render everything normally — content can never get stuck invisible.  Anything
    already on screen at load is past its entry range, so it shows instantly. */
@@ -379,7 +380,7 @@ footer {{ visibility: hidden; height: 0; }}
     /* Animate over the element's whole approach and finish well INSIDE the
        viewport (cover 45%), so the rise is clearly visible as you scroll —
        not completed the instant it peeks in at the bottom edge. */
-    .st-key-coverage_anim [data-testid="stElementContainer"] {{
+    [class*="st-key-"][class*="_anim"] [data-testid="stElementContainer"] {{
       animation: covReveal cubic-bezier(0.22, 0.61, 0.36, 1) both;
       animation-timeline: view();
       animation-range: cover 0% cover 45%;

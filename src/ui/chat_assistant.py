@@ -305,14 +305,20 @@ def get_bu_coverage(bu: str) -> dict:
     result = evaluate_rules(tuple(r.name for r in rules))
     raw, auto = result.raw_cases, result.automated
 
-    bu_suites = {r.suite_id for r in rules if r.bu == canonical}
+    rules_bu  = [r for r in rules if r.bu == canonical]
+    bu_suites = {r.suite_id for r in rules_bu}
     raw_bu  = raw[raw["suite_id"].isin(bu_suites)] if not raw.empty else raw
     auto_bu = auto[auto["bu"] == canonical] if not auto.empty else auto
+    # Same conventions as the Coverage tab / Explorer: dedupe dual-framework
+    # rows and drop other-BU cases on shared suites from the denominator.
+    if not auto_bu.empty:
+        auto_bu = auto_bu.drop_duplicates(subset=["case_id", "country_label", "device"])
 
     if raw_bu.empty:
         return {"error": f"No data loaded for {canonical}"}
 
     non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
+    non_dep, _n_other = coverage_tab._filter_to_bu_countries(non_dep, rules_bu)
     auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
     total       = int(non_dep["case_id"].nunique())
@@ -330,7 +336,10 @@ def get_bu_coverage(bu: str) -> dict:
                 "coverage_pct":   float(row["coverage_pct"]),
             })
 
-    nd_base, ab_base, ids_base = coverage_tab._filter_to_regression_baseline(non_dep, auto_bu)
+    # Regression baseline via the Backlog-aligned method (this is only the
+    # FALLBACK — the brief normally carries the Backlog tab's own summary).
+    nd_base, ab_base, ids_base = coverage_tab._regression_baseline_like_backlog(
+        non_dep, auto_bu, rules_bu)
     regression: dict[str, Any] = {}
     if not nd_base.empty:
         regr_total = int(nd_base["case_id"].nunique())
@@ -384,7 +393,7 @@ def get_active_runs(bu: str) -> dict:
         return {"error": f"No TestRail projects for {canonical}"}
 
     base_url    = tr.TestRailCredentials.from_secrets().base_url
-    all_active  = runs_tab._flatten_active_runs(project_ids)
+    all_active  = runs_tab._flatten_active_runs(project_ids, bu=canonical)
     bu_runs     = [
         r for r in all_active
         if canonical in runs_tab._bus_for_run_name(r.get("name"))
@@ -441,7 +450,7 @@ def get_open_bugs(bu: str) -> dict:
         return {"error": f"No TestRail projects for {canonical}"}
 
     base_url   = tr.TestRailCredentials.from_secrets().base_url
-    all_active = runs_tab._flatten_active_runs(project_ids)
+    all_active = runs_tab._flatten_active_runs(project_ids, bu=canonical)
     bu_runs    = [
         r for r in all_active
         if canonical in runs_tab._bus_for_run_name(r.get("name"))
@@ -575,12 +584,8 @@ def _build_coverage_brief() -> str:
     backlog_by_bu: dict[str, dict] = {}
     try:
         from . import backlog_tab as bl
-        scope_data: dict[str, tuple] = {}
-        for scope in ("website", "next_gen"):
-            raw, auto, rules = bl._load_scope(scope)
-            if not raw.empty:
-                scope_data[scope] = (raw, auto, rules)
-        for _, row in bl._build_summary(scope_data).iterrows():
+        summary, _, _ = bl._backlog_data()   # shared cache with the Backlog tab
+        for _, row in summary.iterrows():
             backlog_by_bu[str(row["BU"])] = row.to_dict()
     except Exception:                                                   # noqa: BLE001
         logger.exception("Coverage brief: backlog summary failed")

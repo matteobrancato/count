@@ -18,6 +18,7 @@ Output DataFrame columns:
 """
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,8 @@ import streamlit as st
 from . import testrail_client as tr
 from .bu_rules import Rule, ALL_RULES
 from .field_resolver import FieldRegistry, get_registry
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------- field labels
@@ -551,4 +554,21 @@ def warmup_cache(on_step=None) -> None:
         rules = [r for r in ALL_RULES if r.scope == scope]
         if rules:
             evaluate_rules(tuple(r.name for r in rules))
+
+    # Phase 3 – pre-build the derived layers while the data is hot, so the
+    # Backlog tab renders instantly and Dexter's first reply doesn't pay the
+    # coverage-brief build.  Both are best-effort: a failure here only means
+    # they build lazily on first use.
+    step("📊 Building the backlog summary…")
+    try:
+        from .ui.backlog_tab import _backlog_data
+        _backlog_data()
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("warmup: backlog summary pre-build failed")
+    step("🤖 Preparing the AI assistant…")
+    try:
+        from .ui.chat_assistant import _build_coverage_brief
+        _build_coverage_brief()
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("warmup: coverage brief pre-build failed")
     step("✨ Building the dashboard…")

@@ -136,6 +136,8 @@ def main() -> None:
             # everything (not lazy-per-tab).  On the first load we show a verbose
             # step-by-step status (so the wait feels shorter); once warm, the
             # call is instant cache hits so we skip the UI entirely.
+            # A warm-up failure must never blank the tab: worst case the tabs
+            # fetch their own data lazily (each surfacing its own error).
             try:
                 from src.rules_engine import warmup_cache
                 if st.session_state.get("_warmed_ui"):
@@ -149,17 +151,30 @@ def main() -> None:
                     st.session_state["_warmed_ui"] = True
             except ImportError:
                 pass
-            backlog_tab.render()
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+                st.warning(
+                    "⚠️ Part of the data pre-load failed — sections will load "
+                    "lazily and may be slower on first view."
+                )
+            # `*_anim` containers opt each tab into the scroll-reveal animation
+            # (styles.py) — Coverage wraps itself internally.
+            with st.container(key="backlog_anim"):
+                backlog_tab.render()
         with tab_coverage:
             coverage_tab.render()
         with tab_explore:
-            pivot_tab.render()
+            with st.container(key="explorer_anim"):
+                pivot_tab.render()
         with tab_runs:
-            runs_tab.render()
+            with st.container(key="runs_anim"):
+                runs_tab.render()
         with tab_overview:
-            overview_tab.render()
+            with st.container(key="overview_anim"):
+                overview_tab.render()
         with tab_report:
-            report_tab.render()
+            with st.container(key="report_anim"):
+                report_tab.render()
     except Exception as exc:  # global safety net — never crash the whole app
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):

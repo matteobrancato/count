@@ -16,36 +16,44 @@ _GREY   = COLORS["unspecified"]  # Unspecified (Next Gen)
 
 _BU_ORDER = [
     "The Perfume Shop", "Savers", "Superdrug",
-    "Kruidvat", "Trekplaister", "Watsons", "Drogas",
+    "Kruidvat", "Trekpleister", "Watsons", "Drogas",
     "Marionnaud", "ICI Paris XL", "Next Gen",
 ]
 
 
 # ── data loading (shares evaluate_rules cache with other tabs) ────────────────
 def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
-    """Add `is_regression` column based on big_regr_* labels matched to row's device."""
+    """Add `is_regression` from the Backlog tab's own baseline expansion.
+
+    A row is regression when its (case, country, device) is an *automated*
+    baseline row per the Backlog method (`big_regr` labels × multi_countries) —
+    the single source of truth, so the solid segments reconcile with the
+    Backlog / Coverage baseline numbers.  Unspecified-device rows (Next Gen)
+    fall back to case-level membership since the baseline is device-labelled.
+    """
     if auto.empty:
         return auto
-    if raw.empty or "labels" not in raw.columns:
+    try:
+        from . import backlog_tab as bl
+        _, expanded_by_bu, _ = bl._backlog_data()
+        frames = [f[f["category"] == "automated"] for f in expanded_by_bu.values()]
+        base = (pd.concat(frames, ignore_index=True) if frames
+                else pd.DataFrame(columns=["case_id", "country_label", "device"]))
+    except Exception:                                                   # noqa: BLE001
+        base = pd.DataFrame(columns=["case_id", "country_label", "device"])
+    if base.empty:
         return auto.assign(is_regression=False)
 
-    case_labels = raw[["case_id", "labels"]].drop_duplicates(subset=["case_id"]).copy()
-    case_labels["has_desk"] = case_labels["labels"].apply(
-        lambda ls: "big_regr_desktop" in ls if isinstance(ls, list) else False
-    )
-    case_labels["has_mob"] = case_labels["labels"].apply(
-        lambda ls: "big_regr_mobile" in ls if isinstance(ls, list) else False
-    )
-    out  = auto.merge(case_labels[["case_id", "has_desk", "has_mob"]],
-                      on="case_id", how="left")
-    desk = out["has_desk"].fillna(False)
-    mob  = out["has_mob"].fillna(False)
-    out["is_regression"] = (
-        ((out["device"] == "Desktop") & desk) |
-        ((out["device"] == "Mobile")  & mob)  |
-        ((out["device"] == "Unspecified") & (desk | mob))
-    )
-    return out.drop(columns=["has_desk", "has_mob"])
+    keys = set(zip(base["case_id"].astype(int),
+                   base["country_label"], base["device"]))
+    case_any = set(base["case_id"].astype(int))
+    out = auto.copy()
+    out["is_regression"] = [
+        (cid, ctry, dev) in keys or (dev == "Unspecified" and cid in case_any)
+        for cid, ctry, dev in zip(out["case_id"].astype(int),
+                                  out["country_label"], out["device"])
+    ]
+    return out
 
 
 def _load() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -123,19 +131,19 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
     return grp.rename(columns={"country_label": "country"})
 
 
-def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
-    """Return (faceted Altair chart, ordered BU list).
-
-    Each bar is stacked: solid segment = regression baseline, faded = other.
-    Total count is shown as text at the end of the stacked bar.
-    """
-    present = set(auto["bu"].unique())
+def _ordered_bus(present: set[str]) -> list[str]:
     bus = [b for b in _BU_ORDER if b in present]
-    bus += sorted(b for b in present if b not in bus)
+    return bus + sorted(b for b in present if b not in bus)
 
-    df = _prepare_chart_data(auto, bus)
 
-    # Sort y-axis per-facet by sort_key (field-based, no global list).
+def _build_bu_chart(df_bu: pd.DataFrame) -> alt.LayerChart:
+    """One responsive chart for a single BU (stacked bars + total labels).
+
+    One chart per BU rendered inside `st.columns` (instead of a fixed-width
+    Altair facet grid) so every panel is container-width-aware — the Report was
+    the app's only non-responsive chart.
+    Solid segment = regression baseline, faded = other automated.
+    """
     y_sort = alt.EncodingSortField(field="sort_key", order="ascending")
 
     color_scale = alt.Scale(
@@ -143,7 +151,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
         range=[_BLUE, _ORANGE, _GREY],
     )
 
-    y_axis = alt.Axis(title=None, labelFontSize=10.5, labelFont="Inter",
+    y_axis = alt.Axis(title=None, labelFontSize=11, labelFont="Inter",
                       labelColor=COLORS["text"],
                       labelLimit=170, ticks=False, domain=False)
 
@@ -154,7 +162,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
             x=alt.X("count:Q",
                     stack="zero",
                     axis=alt.Axis(title=None, grid=True, gridColor=COLORS["grid"],
-                                  tickCount=5, labelFontSize=10, domain=False,
+                                  tickCount=5, labelFontSize=11, domain=False,
                                   labelColor=COLORS["muted"])),
             y=alt.Y("label:N", sort=y_sort, axis=y_axis),
             color=alt.Color("device:N", scale=color_scale, legend=None),
@@ -177,7 +185,7 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
     # Text label at end of each stacked bar — only the row with total>0 renders.
     text = (
         alt.Chart()
-        .mark_text(align="left", dx=5, fontSize=9.5, color=COLORS["muted"])
+        .mark_text(align="left", dx=5, fontSize=11, color=COLORS["text"])
         .encode(
             x=alt.X("total:Q"),
             y=alt.Y("label:N", sort=y_sort),
@@ -186,35 +194,12 @@ def _build_chart(auto: pd.DataFrame) -> tuple[alt.Chart, list[str]]:
         .transform_filter(alt.datum.total > 0)
     )
 
-    chart = (
-        alt.layer(bars, text, data=df)
-        # Widen each panel so the two-column grid fills the page (no right gap).
-        .properties(width=560, height=alt.Step(21))
-        .facet(
-            facet=alt.Facet(
-                "bu:N",
-                sort=bus,
-                header=alt.Header(
-                    title=None,
-                    labelAngle=0,
-                    labelAlign="left",
-                    labelFontSize=13,
-                    labelFontWeight="bold",
-                    labelColor=COLORS["ink"],
-                    labelFont="Inter",
-                    labelPadding=10,
-                ),
-            ),
-            columns=2,
-        )
-        .properties(background="transparent")   # blend into the page canvas
-        .resolve_scale(y="independent", x="shared")
-        .configure_view(stroke=COLORS["border"], strokeWidth=1, fill="transparent")
+    return (
+        alt.layer(bars, text, data=df_bu)
+        .properties(height=alt.Step(21), background="transparent")
+        .configure_view(stroke=None, fill="transparent")
         .configure_axis(labelFont="Inter")
-        .configure_legend(labelFont="Inter", padding=4)
     )
-
-    return chart, bus
 
 
 # ── UI card helpers ───────────────────────────────────────────────────────────
@@ -234,7 +219,7 @@ def _fw_card(col, icon: str, name: str, subtitle: str, bg: str) -> None:
 
 
 def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
-    sub_html = (f'<div style="font-size:10px;color:{COLORS["muted"]};margin-top:1px">{sub}</div>'
+    sub_html = (f'<div style="font-size:11px;color:{COLORS["muted"]};margin-top:1px">{sub}</div>'
                 if sub else "")
     col.markdown(
         f"""<div style="background:{COLORS['surface']};border:1px solid {COLORS['border']};
@@ -242,7 +227,7 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
                     box-shadow:0 1px 2px rgba(15,23,42,0.04);
                     display:flex;flex-direction:column;justify-content:center">
             <div style="font-size:23px;font-weight:800;color:{COLORS['brand']};line-height:1.1">{value}</div>
-            <div style="font-size:10px;font-weight:600;color:{COLORS['ink']};margin-top:2px;
+            <div style="font-size:11px;font-weight:600;color:{COLORS['ink']};margin-top:2px;
                         text-transform:uppercase;letter-spacing:0.04em">{label}</div>
             {sub_html}
         </div>""",
@@ -253,18 +238,19 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
 # ── render ────────────────────────────────────────────────────────────────────
 @st.fragment
 def render() -> None:
-    st.markdown(
-        f"<h2 style='text-align:center;font-weight:800;"
-        f"color:{COLORS['ink']};margin-bottom:20px;letter-spacing:-0.02em'>"
-        f"Automation &nbsp;·&nbsp; Frameworks and Status</h2>",
-        unsafe_allow_html=True,
+    # Standard tab opener (subheader + caption) — same pattern as every other tab.
+    st.subheader("📄 Frameworks & Status")
+    st.caption(
+        "Automated tests per Business Unit, split by framework and device. "
+        "Solid bar segments are the regression baseline; faded segments are "
+        "other automated tests."
     )
 
     with st.spinner("Loading…"):
         web_auto, all_auto = _load()
 
     if all_auto.empty:
-        st.warning("No automated data available. Click 🔄 Refresh.")
+        st.warning("No automated data available — data refreshes automatically every hour.")
         return
 
     s_tot = metrics.totals(metrics.select_smoke(web_auto))
@@ -309,13 +295,24 @@ def render() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Chart ─────────────────────────────────────────────────────────────────
-    chart, _ = _build_chart(all_auto)
-    st.altair_chart(chart, use_container_width=True)
+    # ── Charts — one responsive panel per BU, in aligned 2-column rows ────────
+    bus = _ordered_bus(set(all_auto["bu"].unique()))
+    df  = _prepare_chart_data(all_auto, bus)
+    for row_start in range(0, len(bus), 2):
+        cols = st.columns(2, gap="large")
+        for col, bu in zip(cols, bus[row_start:row_start + 2]):
+            with col:
+                st.markdown(
+                    f"<div style='font-weight:700;font-size:13px;"
+                    f"color:{COLORS['ink']};margin:8px 0 2px'>{bu}</div>",
+                    unsafe_allow_html=True,
+                )
+                st.altair_chart(_build_bu_chart(df[df["bu"] == bu]),
+                                use_container_width=True)
 
     st.markdown(
-        f"<div style='font-size:10.5px;color:{COLORS['muted']};margin-top:2px'>"
-        f"* These numbers are calculated with the same logic of other tabs"
+        f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px'>"
+        f"* Solid regression segments use the same baseline as the Backlog tab"
         f"</div>",
         unsafe_allow_html=True,
     )

@@ -224,11 +224,38 @@ def _area_color_map(cov: pd.DataFrame) -> dict[str, str]:
     return {area: _PIE_PALETTE[i % len(_PIE_PALETTE)] for i, area in enumerate(ordered)}
 
 
+# Beyond this many slices the palette would repeat (breaking "same colour =
+# same area") and thin slices become unreadable — the tail goes into "Other".
+_PIE_MAX_SLICES = 11
+_PIE_OTHER_COLOR = COLORS["faint"]
+
+
 def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None:
-    """Pie of automated case distribution across sections (slice size = automated)."""
+    """Pie of automated case distribution across sections (slice size = automated).
+
+    The top areas keep their palette colour; anything beyond _PIE_MAX_SLICES is
+    bucketed into a single grey "Other" slice."""
     data = cov[cov["automated"] > 0].copy()
     if data.empty:
         return None
+    if len(data) > _PIE_MAX_SLICES:
+        data = data.sort_values("automated", ascending=False).reset_index(drop=True)
+        head, tail = data.iloc[:_PIE_MAX_SLICES], data.iloc[_PIE_MAX_SLICES:]
+        n_tail = len(tail)
+        other = pd.DataFrame([{
+            "section":      f"Other ({n_tail} areas)",
+            "total":        int(tail["total"].sum()),
+            "desktop":      int(tail["desktop"].sum()),
+            "mobile":       int(tail["mobile"].sum()),
+            "unspecified":  int(tail["unspecified"].sum()),
+            "automated":    int(tail["automated"].sum()),
+            "auto_unique":  int(tail["auto_unique"].sum()),
+            "coverage_pct": round(float(tail["auto_unique"].sum())
+                                  / float(tail["total"].sum()) * 100, 1)
+                            if tail["total"].sum() else 0.0,
+        }])
+        data = pd.concat([head, other], ignore_index=True)
+        color_map = {**color_map, f"Other ({n_tail} areas)": _PIE_OTHER_COLOR}
     sections_order = data.sort_values("automated", ascending=False)["section"].tolist()
     color_scale = alt.Scale(
         domain=sections_order,
@@ -323,49 +350,31 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
 
 
 # ── regression-baseline filter ───────────────────────────────────────────────
-_LBL_REGR_DESK = "big_regr_desktop"
-_LBL_REGR_MOB  = "big_regr_mobile"
+def _filter_to_bu_countries(
+    non_dep: pd.DataFrame, rules_bu: list,
+) -> tuple[pd.DataFrame, int]:
+    """Keep only cases whose country field carries one of the BU's tokens —
+    the SAME convention as the Explorer tab (pivot_tab._suite_status).
 
-
-def _filter_to_regression_baseline(
-    non_dep: pd.DataFrame, auto_bu: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
-    """Filter both DataFrames to the regression baseline (the same one used by
-    the Backlog tab): cases tagged with `big_regr_desktop` and/or
-    `big_regr_mobile`.
-
-    For `auto_bu`, the device must match the label:
-      - Desktop rows kept only if the case has `big_regr_desktop`
-      - Mobile  rows kept only if the case has `big_regr_mobile`
-      - Unspecified (Next Gen) rows kept if the case has either label
-
-    Returns (non_dep_baseline, auto_bu_baseline, baseline_auto_case_ids).
-    """
-    if non_dep.empty or "labels" not in non_dep.columns:
-        return non_dep.iloc[0:0], auto_bu.iloc[0:0], set()
-
-    has_d = non_dep["labels"].apply(
-        lambda ls: _LBL_REGR_DESK in ls if isinstance(ls, list) else False
+    On suites shared between BUs (Eastern Europe, Kruidvat/Trekpleister,
+    Superdrug/Savers) this removes the other BUs' cases from the denominator,
+    so Coverage totals match Explorer instead of counting the whole suite for
+    every BU.  Returns (filtered, n_excluded); BUs without country filters are
+    passed through untouched."""
+    country_col = "multi_countries"
+    for r in rules_bu:
+        if getattr(r, "country_field_label", "multi_countries") == "custom_country_coverage":
+            country_col = "country_coverage"
+            break
+    all_tokens: set[str] = set()
+    for r in rules_bu:
+        all_tokens.update(r.countries_filter or [])
+    if not all_tokens or non_dep.empty or country_col not in non_dep.columns:
+        return non_dep, 0
+    has_tok = non_dep[country_col].apply(
+        lambda mc: any(t in all_tokens for t in (mc if isinstance(mc, list) else []))
     )
-    has_m = non_dep["labels"].apply(
-        lambda ls: _LBL_REGR_MOB in ls if isinstance(ls, list) else False
-    )
-    nd_base = non_dep[has_d | has_m]
-    if nd_base.empty or auto_bu.empty:
-        return nd_base, auto_bu.iloc[0:0], set()
-
-    base_d_ids = set(non_dep.loc[has_d, "case_id"].astype(int))
-    base_m_ids = set(non_dep.loc[has_m, "case_id"].astype(int))
-    base_all   = base_d_ids | base_m_ids
-
-    ab          = auto_bu.copy()
-    ab["case_id"] = ab["case_id"].astype(int)
-    keep_d = (ab["device"] == "Desktop")     & ab["case_id"].isin(base_d_ids)
-    keep_m = (ab["device"] == "Mobile")      & ab["case_id"].isin(base_m_ids)
-    keep_u = (ab["device"] == "Unspecified") & ab["case_id"].isin(base_all)
-
-    ab_base = ab[keep_d | keep_m | keep_u]
-    return nd_base, ab_base, set(ab_base["case_id"].astype(int).unique())
+    return non_dep[has_tok], int((~has_tok).sum())
 
 
 def _regression_baseline_like_backlog(
@@ -581,12 +590,24 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 
     raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
     auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
+    # Dedup dual-framework rows on (case, country, device) — the Explorer
+    # convention (pivot_tab._dedup_auto).  Without this a case automated by
+    # BOTH Java and Testim counted as two D+M rows here but one in Explorer.
+    if not auto_bu.empty:
+        auto_bu = auto_bu.drop_duplicates(subset=["case_id", "country_label", "device"])
 
     if raw_bu.empty:
         st.info(f"No cases found for **{bu_choice}**.")
         return
 
     non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
+    non_dep, n_other_bu = _filter_to_bu_countries(non_dep, rules_bu)
+    if n_other_bu:
+        st.caption(
+            f"ℹ️ {n_other_bu:,} cases in this suite belong to other BUs sharing it "
+            f"(no matching country token) and are excluded — same convention as "
+            f"the Explorer tab."
+        )
     auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
     # ── View 1: full universe ────────────────────────────────────────────────
@@ -617,7 +638,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     if nd_base.empty:
         st.info(
             "No cases tagged with `big_regr_desktop` / `big_regr_mobile` for this BU. "
-            "Add the labels in TestRail (or click 🔄 Refresh if you just did)."
+            "Add the labels in TestRail — they appear at the next hourly data refresh."
         )
     else:
         _render_coverage_section(
@@ -641,7 +662,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         st.info(
             "No Production Sanity cases found for this BU. "
             "Mark cases with the `Test Automation PRD Run` checkbox in TestRail "
-            "(or click 🔄 Refresh if you just did)."
+            "— new flags appear at the next hourly data refresh."
         )
     else:
         _render_coverage_section(
