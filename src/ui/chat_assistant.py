@@ -1084,49 +1084,53 @@ def _render_chat_panel() -> None:
     msgs = st.session_state.get("ai_chat_messages", [])
     sid  = st.session_state.get("ai_chat_session_id", 0)
 
-    # ── header: identity on the left, a quiet "Delete chat" link on the right.
-    # The link only appears once there's a conversation to delete.  Deleting
-    # bumps the session_id so widget keys change, forcing Streamlit to treat
-    # every form/button as brand-new (avoids stale widget state leaking across
-    # reruns inside the popover).
-    head_l, head_r = st.columns([7, 3], vertical_alignment="center")
-    head_l.markdown(
-        f"<div style='display:flex;align-items:center;gap:10px'>"
-        f"<div style='width:38px;height:38px;border-radius:12px;flex:0 0 auto;"
-        f"display:flex;align-items:center;justify-content:center;font-size:18px;"
-        f"background:linear-gradient(135deg,#FF6B6B 0%,#E63E3E 100%);"
-        f"box-shadow:0 3px 10px rgba(255,75,75,0.35)'>✨</div>"
-        f"<div>"
-        f"<div style='font-size:17px;font-weight:800;color:{COLORS['ink']};"
-        f"letter-spacing:-0.01em;line-height:1.1;white-space:nowrap'>Dexter</div>"
-        f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px;"
-        f"white-space:nowrap'>AI coverage assistant</div>"
-        f"</div></div>",
-        unsafe_allow_html=True,
-    )
-    if msgs:
+    if not msgs:
+        # ── welcome hero (empty chat) — centred, airy, no grey box ────────────
+        st.markdown(
+            f"<div style='text-align:center;padding:30px 10px 24px'>"
+            f"<div style='width:56px;height:56px;margin:0 auto 14px;border-radius:17px;"
+            f"display:inline-flex;align-items:center;justify-content:center;font-size:26px;"
+            f"background:linear-gradient(135deg,#FF6B6B 0%,#E63E3E 100%);"
+            f"box-shadow:0 8px 22px rgba(255,75,75,0.35)'>✨</div>"
+            f"<div style='font-size:18px;font-weight:800;color:{COLORS['ink']};"
+            f"letter-spacing:-0.01em'>Hi, I'm Dexter</div>"
+            f"<div style='font-size:12.5px;color:{COLORS['muted']};margin-top:6px;"
+            f"line-height:1.6'>Ask me anything about coverage, runs, bugs or flaky "
+            f"tests —<br>numbers come live from TestRail and match the dashboard.</div>"
+            f"<div style='font-size:11.5px;color:{COLORS['faint']};margin-top:18px;"
+            f"font-style:italic;line-height:1.8'>“How is Superdrug doing?”"
+            f"&nbsp;&nbsp;·&nbsp;&nbsp;“Compare all BUs”"
+            f"&nbsp;&nbsp;·&nbsp;&nbsp;“Open bugs in Watsons”</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        # ── compact header once a conversation exists ─────────────────────────
+        # Deleting bumps the session_id so widget keys change, forcing Streamlit
+        # to treat every form/button as brand-new (avoids stale widget state
+        # leaking across reruns inside the popover).
+        head_l, head_r = st.columns([7, 3], vertical_alignment="center")
+        head_l.markdown(
+            f"<div style='display:flex;align-items:center;gap:10px'>"
+            f"<div style='width:38px;height:38px;border-radius:12px;flex:0 0 auto;"
+            f"display:flex;align-items:center;justify-content:center;font-size:18px;"
+            f"background:linear-gradient(135deg,#FF6B6B 0%,#E63E3E 100%);"
+            f"box-shadow:0 3px 10px rgba(255,75,75,0.35)'>✨</div>"
+            f"<div>"
+            f"<div style='font-size:17px;font-weight:800;color:{COLORS['ink']};"
+            f"letter-spacing:-0.01em;line-height:1.1;white-space:nowrap'>Dexter</div>"
+            f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px;"
+            f"white-space:nowrap'>AI coverage assistant</div>"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
         if head_r.button("Delete chat", key="ai_delete_chat",
                          use_container_width=True):
             st.session_state["ai_chat_messages"]   = []
             st.session_state["ai_chat_session_id"] = sid + 1
             st.rerun()
-
-    st.markdown(
-        f"<div style='height:1px;background:{COLORS['border']};margin:10px 0 6px'></div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── empty state: a quiet, non-clickable hint (no suggestion chips) ────────
-    if not msgs:
         st.markdown(
-            f"<div style='margin:8px 0 2px;padding:12px 14px;border-radius:12px;"
-            f"background:{COLORS['canvas']};border:1px solid {COLORS['border']};"
-            f"font-size:12.5px;color:{COLORS['text']};line-height:1.55'>"
-            f"Ask me anything about <b>automation coverage</b> — for example "
-            f"“how is Superdrug doing?”, “compare all BUs”, “where are Drogas' "
-            f"gaps?”, or “open bugs in Watsons”.<br>"
-            f"<span style='color:{COLORS['muted']}'>Numbers are live from "
-            f"TestRail and match the dashboard.</span></div>",
+            f"<div style='height:1px;background:{COLORS['border']};margin:10px 0 6px'></div>",
             unsafe_allow_html=True,
         )
 

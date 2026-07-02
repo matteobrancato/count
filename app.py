@@ -77,8 +77,9 @@ def _freshness_label() -> None:
             f"{_relative_time(updated_at)}</b></div>",
             unsafe_allow_html=True,
         )
-        if st.button("↻", key="refresh_mini",
-                     help="Refresh the numbers from TestRail (~30-60s)."):
+        # No help tooltip: it rendered a large card covering the label.  The ↻
+        # glyph + hover rotation are self-explanatory.
+        if st.button("↻", key="refresh_mini"):
             tr.clear_all_caches()
             try:
                 from src.rules_engine import evaluate_rules

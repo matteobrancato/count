@@ -220,53 +220,55 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 .st-key-tabs_zone {{ position: relative !important; }}
 .st-key-freshness {{
     position: absolute !important;
-    top: 19px !important;          /* row centre ≈ old label position */
+    top: 26px !important;          /* low in the tab row, flush above the grey line */
     right: 0 !important;
     width: auto !important;
     z-index: 20 !important;
 }}
-/* Label + mini button on one row (targets every plausible wrapper level). */
-.st-key-freshness[data-testid="stVerticalBlockBorderWrapper"],
-.st-key-freshness > div,
-.st-key-freshness [data-testid="stVerticalBlock"] {{
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    justify-content: flex-end !important;
-    gap: 7px !important;
+/* The mini ↻ is ABSOLUTELY pinned just LEFT of the label — no reliance on
+   Streamlit's wrapper flex (which stacked it under the label).  It stays out
+   of the flow, so the container is exactly the label's size. */
+.st-key-freshness [class*="st-key-refresh_mini"] {{
+    position: absolute !important;
+    right: calc(100% + 8px) !important;
+    top: 50% !important;
     width: auto !important;
+    transform: translateY(-50%) !important;
+    margin: 0 !important;
 }}
-.st-key-freshness [data-testid="stElementContainer"] {{
-    width: auto !important;
-    flex: 0 0 auto !important;
-}}
-/* The mini refresh: a 26px ghost circle, hidden until the label row is hovered
-   — then it slides/scales in.  Keyboard users get it via :focus-visible too. */
+/* Hidden by default; fades/scales in when the label area is hovered.
+   (Hovering the button itself keeps the parent :hover alive.) */
 [class*="st-key-refresh_mini"] button {{
-    width: 26px !important;
-    min-width: 26px !important;
-    max-width: 26px !important;
-    height: 26px !important;
+    width: 24px !important;
+    min-width: 24px !important;
+    max-width: 24px !important;
+    height: 24px !important;
     padding: 0 !important;
     border-radius: 50% !important;
     background: {c['surface']} !important;
     border: 1px solid {c['border_2']} !important;
     color: {c['muted']} !important;
-    font-size: 13px !important;
+    font-size: 12px !important;
     line-height: 1 !important;
     box-shadow: none !important;
+    outline: none !important;
     opacity: 0;
-    transform: scale(0.55) translateX(8px);
-    transition: opacity .18s ease, transform .22s cubic-bezier(0.34, 1.3, 0.5, 1),
+    transform: scale(0.6);
+    transition: opacity .16s ease, transform .2s cubic-bezier(0.34, 1.3, 0.5, 1),
                 color .15s ease, border-color .15s ease, background .15s ease !important;
 }}
-.st-key-freshness:hover [class*="st-key-refresh_mini"] button,
-[class*="st-key-refresh_mini"] button:focus-visible {{
-    opacity: 1;
-    transform: scale(1) translateX(0);
+[class*="st-key-refresh_mini"] button:focus,
+[class*="st-key-refresh_mini"] button:focus-visible,
+[class*="st-key-refresh_mini"] button:active {{
+    box-shadow: none !important;
+    outline: none !important;
+    border-color: {c['border_2']} !important;
 }}
-[class*="st-key-refresh_mini"] button:hover {{
+.st-key-freshness:hover [class*="st-key-refresh_mini"] button {{
+    opacity: 1;
+    transform: scale(1);
+}}
+.st-key-freshness [class*="st-key-refresh_mini"] button:hover {{
     color: {c['brand']} !important;
     border-color: {c['brand']} !important;
     background: {c['brand_soft']} !important;
