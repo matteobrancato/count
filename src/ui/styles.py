@@ -231,10 +231,14 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 .st-key-freshness [class*="st-key-refresh_mini"] {{
     position: absolute !important;
     right: calc(100% + 8px) !important;
-    top: 50% !important;
+    /* Anchor to the label's TEXT line (which starts at the container top) —
+       centring on the container height drifted upward because the wrapper is
+       taller than the visible text.  11px text vs 15px glyph → -2px offset. */
+    top: -2px !important;
     width: auto !important;
-    transform: translateY(-50%) !important;
+    transform: none !important;
     margin: 0 !important;
+    line-height: 1 !important;
 }}
 /* Bare ↻ glyph — no circle, border or background (the previous circle rendered
    oval because Streamlit's default button min-height beat our height).  Hidden
