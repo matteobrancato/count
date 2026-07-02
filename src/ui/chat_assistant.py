@@ -71,6 +71,11 @@ except ImportError:
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
 
+# Only the most recent turns are sent to the model — the snapshot (rebuilt fresh
+# on every request) is the source of truth, so old turns add noise, tokens and
+# stale-number risk without improving answers.
+_MAX_HISTORY_MSGS = 16
+
 # When `GEMINI_MODEL` is NOT explicitly set in secrets, we walk this chain on
 # each request — picking the first model that's not currently rate-limited.
 # Ordered preferred → most-likely-available.  The first one to reply wins.
@@ -191,6 +196,10 @@ Rules
 6. Be proactive: add a one-line comparison or call out the weakest area when useful.
 7. Don't ask to clarify when a BU is identifiable (name or alias) — just answer.
    If a tool returns `{"error": "..."}`, share the actual error, don't invent one.
+8. Cross-BU math (totals, averages, "overall"): use the precomputed GROUP TOTALS
+   in the snapshot — do NOT re-add per-BU numbers yourself.  For any OTHER derived
+   number (a difference, a ratio not provided), show the calculation inline
+   ("1,886 − 1,342 = 544") so the user can verify it.
 
 Answer shape (example for "how is X doing")
 ───────────────────────────────────────────
@@ -576,12 +585,16 @@ def _build_coverage_brief() -> str:
     except Exception:                                                   # noqa: BLE001
         logger.exception("Coverage brief: backlog summary failed")
 
+    grand_total = grand_auto = 0   # accumulate for precomputed group totals
+
     for bu in bus:
         d = get_bu_coverage(bu)
         if not isinstance(d, dict) or "error" in d:
             blocks.append(f"## {bu}\n- (no data available right now)")
             continue
         ranking.append((d["business_unit"], d["coverage_pct"]))
+        grand_total += int(d.get("total_cases") or 0)
+        grand_auto  += int(d.get("automated_unique") or 0)
         lines = [
             f"## {d['business_unit']}",
             f"- Overall coverage: {d['coverage_pct']}% "
@@ -627,11 +640,43 @@ def _build_coverage_brief() -> str:
     rank_line = "Coverage ranking (high → low): " + " > ".join(
         f"{bu} {pct}%" for bu, pct in ranking
     )
+
+    # Precomputed group totals — LLM arithmetic over many BUs is error-prone, so
+    # cross-BU aggregates are computed here in Python and handed over verbatim.
+    agg_lines = ["## GROUP TOTALS (precomputed — use these, do NOT re-add BU numbers yourself)"]
+    if grand_total:
+        overall = grand_auto / grand_total * 100
+        agg_lines.append(
+            f"- All BUs combined: {grand_auto:,} automated of {grand_total:,} "
+            f"cases → {overall:.1f}% overall coverage"
+        )
+    if ranking:
+        avg = sum(p for _, p in ranking) / len(ranking)
+        agg_lines.append(
+            f"- Average coverage across the {len(ranking)} BUs: {avg:.1f}% "
+            f"(simple mean of per-BU percentages)"
+        )
+        agg_lines.append(f"- Best: {ranking[0][0]} ({ranking[0][1]}%) · "
+                         f"Worst: {ranking[-1][0]} ({ranking[-1][1]}%)")
+    if backlog_by_bu:
+        bk_tot  = sum(int(v.get("Total") or 0)     for v in backlog_by_bu.values())
+        bk_auto = sum(int(v.get("Automated") or 0) for v in backlog_by_bu.values())
+        bk_back = sum(int(v.get("Backlog") or 0)   for v in backlog_by_bu.values())
+        bk_tbu  = sum(int(v.get("To update") or 0) for v in backlog_by_bu.values())
+        bk_na   = sum(int(v.get("N/A") or 0)       for v in backlog_by_bu.values())
+        agg_lines.append(
+            f"- Regression baseline, all BUs combined: {bk_auto:,} automated of "
+            f"{bk_tot:,} rows — Backlog {bk_back:,}, To-update {bk_tbu:,}, "
+            f"N/A {bk_na:,}"
+        )
+
     header = (
-        "These are the CURRENT automation-coverage numbers, live from TestRail. "
+        "These are the CURRENT automation-coverage numbers, live from TestRail "
+        "(refreshed at most 1 hour ago — same data the dashboard shows). "
         "Use them directly to answer coverage / comparison / gap questions.\n"
     )
-    return f"{header}\n{rank_line}\n\n" + "\n\n".join(blocks)
+    return (f"{header}\n{rank_line}\n\n" + "\n".join(agg_lines) + "\n\n"
+            + "\n\n".join(blocks))
 
 
 # ── Gemini client / session ──────────────────────────────────────────────────
@@ -694,12 +739,18 @@ def _generate_pending_response() -> None:
     if not msgs or msgs[-1]["role"] != "user":
         return  # nothing pending
 
+    # Send only the most recent turns.  Long histories add noise (and tokens)
+    # without helping factual answers — the snapshot, not the chat, is the source
+    # of truth.  Trim to whole turns starting at a user message.
+    window = msgs[-_MAX_HISTORY_MSGS:]
+    while window and window[0]["role"] != "user":
+        window = window[1:]
     contents = [
         types.Content(
             role="user" if m["role"] == "user" else "model",
             parts=[types.Part(text=m["content"])],
         )
-        for m in msgs
+        for m in window
     ]
 
     # Inject the live coverage snapshot into the system instruction so the model
@@ -712,11 +763,21 @@ def _generate_pending_response() -> None:
     system_instruction = _SYSTEM_INSTRUCTION.strip()
     if brief:
         system_instruction += "\n\n# LIVE COVERAGE SNAPSHOT\n" + brief
+    else:
+        # NEVER let the model improvise when the snapshot failed to build — the
+        # instruction references a snapshot, so make its absence explicit.
+        system_instruction += (
+            "\n\n# LIVE COVERAGE SNAPSHOT\n"
+            "UNAVAILABLE — the coverage data could not be loaded right now. "
+            "Tell the user plainly that the live numbers are temporarily "
+            "unavailable and to retry in a minute (or refresh the dashboard). "
+            "Do NOT state any coverage number from memory."
+        )
 
     config = types.GenerateContentConfig(
         tools=_TOOLS,
         system_instruction=system_instruction,
-        # The common case (coverage / comparison / gaps) needs ZERO tool calls —
+        # The common case (coverage / comparisons / gaps) needs ZERO tool calls —
         # it's answered from the snapshot above.  A small budget remains for the
         # occasional live-detail question (runs / bugs / stability): one tool
         # call + the formatting turn.  Keeping this low is what holds us inside
@@ -724,8 +785,10 @@ def _generate_pending_response() -> None:
         automatic_function_calling=types.AutomaticFunctionCallingConfig(
             maximum_remote_calls=4,
         ),
-        # Low temperature: this is a factual data assistant, not a creative one.
-        temperature=0.3,
+        # Near-deterministic decoding: this is a factual data assistant reading
+        # numbers out of its context — sampling variety only hurts here.
+        temperature=0.1,
+        top_p=0.9,
     )
 
     candidates = _models_to_try()
