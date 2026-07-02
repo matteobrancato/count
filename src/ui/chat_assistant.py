@@ -76,6 +76,10 @@ _DEFAULT_MODEL = "gemini-2.5-flash"
 # stale-number risk without improving answers.
 _MAX_HISTORY_MSGS = 16
 
+# Chat avatars — plain emoji glyphs (Streamlit's default colored circles clash
+# with the styled message cards).
+_AVATARS = {"user": "🧑", "assistant": "✨"}
+
 # When `GEMINI_MODEL` is NOT explicitly set in secrets, we walk this chain on
 # each request — picking the first model that's not currently rate-limited.
 # Ordered preferred → most-likely-available.  The first one to reply wins.
@@ -1028,33 +1032,27 @@ _FAB_CSS = """
     padding: 18px 18px 12px !important;
 }
 
-/* Chat bubbles — hand-styled so the panel reads like a real messenger:
-   assistant = white card on the left, user = warm red-tinted bubble pushed
-   to the right.  Default avatars are hidden (the header carries identity).
-   Hex values mirror the design tokens in styles.py. */
+/* Chat cards — clean full-width message cards: assistant = white, user = a
+   soft warm tint.  Avatars are the tidy emoji set via st.chat_message(avatar=)
+   (no colored default circles).  Hex values mirror styles.py tokens. */
 [data-testid="stPopoverBody"] [data-testid="stChatMessage"] {
     background: #FFFFFF;
     border: 1px solid #E6EAF1;
     border-radius: 14px;
-    padding: 10px 14px !important;
-    margin: 3px 0 !important;
-    width: fit-content;
-    max-width: 94%;
+    padding: 12px 14px !important;
+    margin: 4px 0 !important;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-    gap: 0 !important;
 }
-[data-testid="stPopoverBody"] [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
-    background: #FFF1F1;                 /* Dexter-red tint for the user side */
-    border-color: #FFD9D9;
-    margin-left: auto !important;        /* push user bubbles to the right */
-}
-[data-testid="stPopoverBody"] [data-testid="stChatMessage"] [data-testid^="chatAvatarIcon"],
-[data-testid="stPopoverBody"] [data-testid="stChatMessage"] img[alt="avatar"] {
-    display: none !important;
+/* User messages — both testid generations covered (old chatAvatarIcon-*,
+   new stChatMessageAvatar*). */
+[data-testid="stPopoverBody"] [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]),
+[data-testid="stPopoverBody"] [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+    background: #FFF6F6;
+    border-color: #FFDCDC;
 }
 [data-testid="stPopoverBody"] [data-testid="stChatMessage"] p {
     font-size: 13.5px;
-    line-height: 1.5;
+    line-height: 1.55;
 }
 
 /* Chat input — rounded field so it matches the bubbles. */
@@ -1091,7 +1089,7 @@ def _render_chat_panel() -> None:
     # bumps the session_id so widget keys change, forcing Streamlit to treat
     # every form/button as brand-new (avoids stale widget state leaking across
     # reruns inside the popover).
-    head_l, head_r = st.columns([3, 2], vertical_alignment="center")
+    head_l, head_r = st.columns([7, 3], vertical_alignment="center")
     head_l.markdown(
         f"<div style='display:flex;align-items:center;gap:10px'>"
         f"<div style='width:38px;height:38px;border-radius:12px;flex:0 0 auto;"
@@ -1100,14 +1098,14 @@ def _render_chat_panel() -> None:
         f"box-shadow:0 3px 10px rgba(255,75,75,0.35)'>✨</div>"
         f"<div>"
         f"<div style='font-size:17px;font-weight:800;color:{COLORS['ink']};"
-        f"letter-spacing:-0.01em;line-height:1.1'>Dexter</div>"
-        f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px'>"
-        f"AI coverage assistant · live TestRail data</div>"
+        f"letter-spacing:-0.01em;line-height:1.1;white-space:nowrap'>Dexter</div>"
+        f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px;"
+        f"white-space:nowrap'>AI coverage assistant</div>"
         f"</div></div>",
         unsafe_allow_html=True,
     )
     if msgs:
-        if head_r.button("🗑 Delete chat", key="ai_delete_chat",
+        if head_r.button("Delete chat", key="ai_delete_chat",
                          use_container_width=True):
             st.session_state["ai_chat_messages"]   = []
             st.session_state["ai_chat_session_id"] = sid + 1
@@ -1133,14 +1131,17 @@ def _render_chat_panel() -> None:
         )
 
     # ── conversation history ──────────────────────────────────────────────
+    # Explicit emoji avatars — clean glyphs instead of Streamlit's colored
+    # default circles (which clash with the bubble styling).
     for msg in msgs:
-        with st.chat_message(msg["role"]):
+        with st.chat_message(msg["role"], avatar=_AVATARS.get(msg["role"])):
             st.markdown(msg["content"])
 
     # ── generate the reply for a freshly-queued user message ──────────────
     if msgs and msgs[-1]["role"] == "user":
         n_before = len(msgs)
-        with st.chat_message("assistant"), st.spinner("Thinking…"):
+        with st.chat_message("assistant", avatar=_AVATARS["assistant"]), \
+                st.spinner("Thinking…"):
             _generate_pending_response()
         # Only rerun if a reply was actually appended — guards against an
         # infinite loop should generation ever return without a response.
