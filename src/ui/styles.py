@@ -236,33 +236,35 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     transform: translateY(-50%) !important;
     margin: 0 !important;
 }}
-/* Hidden by default; fades/scales in when the label area is hovered.
-   (Hovering the button itself keeps the parent :hover alive.) */
+/* Bare ↻ glyph — no circle, border or background (the previous circle rendered
+   oval because Streamlit's default button min-height beat our height).  Hidden
+   by default; fades/scales in when the label area is hovered.  (Hovering the
+   glyph itself keeps the parent :hover alive.) */
 [class*="st-key-refresh_mini"] button {{
-    width: 24px !important;
-    min-width: 24px !important;
-    max-width: 24px !important;
-    height: 24px !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
-    background: {c['surface']} !important;
-    border: 1px solid {c['border_2']} !important;
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 1px 2px !important;
+    border: none !important;
+    border-radius: 6px !important;
+    background: transparent !important;
     color: {c['muted']} !important;
-    font-size: 12px !important;
+    font-size: 15px !important;
     line-height: 1 !important;
     box-shadow: none !important;
     outline: none !important;
     opacity: 0;
     transform: scale(0.6);
     transition: opacity .16s ease, transform .2s cubic-bezier(0.34, 1.3, 0.5, 1),
-                color .15s ease, border-color .15s ease, background .15s ease !important;
+                color .15s ease !important;
 }}
 [class*="st-key-refresh_mini"] button:focus,
 [class*="st-key-refresh_mini"] button:focus-visible,
 [class*="st-key-refresh_mini"] button:active {{
     box-shadow: none !important;
     outline: none !important;
-    border-color: {c['border_2']} !important;
+    background: transparent !important;
 }}
 .st-key-freshness:hover [class*="st-key-refresh_mini"] button {{
     opacity: 1;
@@ -270,11 +272,10 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 .st-key-freshness [class*="st-key-refresh_mini"] button:hover {{
     color: {c['brand']} !important;
-    border-color: {c['brand']} !important;
-    background: {c['brand_soft']} !important;
-    transform: scale(1) rotate(90deg);
+    background: transparent !important;
+    transform: scale(1.12) rotate(90deg);
 }}
-[class*="st-key-refresh_mini"] button p {{ color: inherit !important; }}
+[class*="st-key-refresh_mini"] button p {{ color: inherit !important; font-size: inherit !important; }}
 
 /* ── Metric cards ─────────────────────────────────────────────────────────── */
 [data-testid="stMetric"] {{

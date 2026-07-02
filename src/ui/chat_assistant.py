@@ -1096,7 +1096,7 @@ def _render_chat_panel() -> None:
             f"letter-spacing:-0.01em'>Hi, I'm Dexter</div>"
             f"<div style='font-size:12.5px;color:{COLORS['muted']};margin-top:6px;"
             f"line-height:1.6'>Ask me anything about coverage, runs, bugs or flaky "
-            f"tests —<br>numbers come live from TestRail and match the dashboard.</div>"
+            f"tests <br>numbers come live from TestRail and match the dashboard.</div>"
             f"<div style='font-size:11.5px;color:{COLORS['faint']};margin-top:18px;"
             f"font-style:italic;line-height:1.8'>“How is Superdrug doing?”"
             f"&nbsp;&nbsp;·&nbsp;&nbsp;“Compare all BUs”"
