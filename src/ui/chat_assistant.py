@@ -1015,16 +1015,52 @@ _FAB_CSS = """
     white-space: nowrap !important;
 }
 
-/* ── 3. Size the chat panel that opens above the FAB ──────────────────── */
+/* ── 3. The chat panel that opens above the FAB ─────────────────────────── */
 /* Target ONLY Streamlit's popover body (st.popover content) — the chat panel
    is the app's only st.popover.  Selectbox/multiselect dropdowns use baseweb
    menu/listbox, NOT stPopoverBody, so they're untouched (previously a global
    popover min-width broke them into an oversized white box). */
 [data-testid="stPopoverBody"] {
-    min-width: 380px;
+    min-width: 400px;
     max-width: min(480px, 92vw);
-    max-height: min(640px, 75vh);
+    max-height: min(660px, 78vh);
     overflow-y: auto;
+    padding: 18px 18px 12px !important;
+}
+
+/* Chat bubbles — hand-styled so the panel reads like a real messenger:
+   assistant = white card on the left, user = warm red-tinted bubble pushed
+   to the right.  Default avatars are hidden (the header carries identity).
+   Hex values mirror the design tokens in styles.py. */
+[data-testid="stPopoverBody"] [data-testid="stChatMessage"] {
+    background: #FFFFFF;
+    border: 1px solid #E6EAF1;
+    border-radius: 14px;
+    padding: 10px 14px !important;
+    margin: 3px 0 !important;
+    width: fit-content;
+    max-width: 94%;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    gap: 0 !important;
+}
+[data-testid="stPopoverBody"] [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+    background: #FFF1F1;                 /* Dexter-red tint for the user side */
+    border-color: #FFD9D9;
+    margin-left: auto !important;        /* push user bubbles to the right */
+}
+[data-testid="stPopoverBody"] [data-testid="stChatMessage"] [data-testid^="chatAvatarIcon"],
+[data-testid="stPopoverBody"] [data-testid="stChatMessage"] img[alt="avatar"] {
+    display: none !important;
+}
+[data-testid="stPopoverBody"] [data-testid="stChatMessage"] p {
+    font-size: 13.5px;
+    line-height: 1.5;
+}
+
+/* Chat input — rounded field so it matches the bubbles. */
+[data-testid="stPopoverBody"] [data-baseweb="input"],
+[data-testid="stPopoverBody"] [data-baseweb="base-input"] {
+    border-radius: 12px !important;
 }
 </style>
 """
@@ -1057,10 +1093,17 @@ def _render_chat_panel() -> None:
     # reruns inside the popover).
     head_l, head_r = st.columns([3, 2], vertical_alignment="center")
     head_l.markdown(
-        f"<div style='font-size:19px;font-weight:800;color:{COLORS['ink']};"
-        f"letter-spacing:-0.01em'>✨ Dexter</div>"
-        f"<div style='font-size:11.5px;color:{COLORS['muted']};margin-top:1px'>"
-        f"AI coverage assistant</div>",
+        f"<div style='display:flex;align-items:center;gap:10px'>"
+        f"<div style='width:38px;height:38px;border-radius:12px;flex:0 0 auto;"
+        f"display:flex;align-items:center;justify-content:center;font-size:18px;"
+        f"background:linear-gradient(135deg,#FF6B6B 0%,#E63E3E 100%);"
+        f"box-shadow:0 3px 10px rgba(255,75,75,0.35)'>✨</div>"
+        f"<div>"
+        f"<div style='font-size:17px;font-weight:800;color:{COLORS['ink']};"
+        f"letter-spacing:-0.01em;line-height:1.1'>Dexter</div>"
+        f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px'>"
+        f"AI coverage assistant · live TestRail data</div>"
+        f"</div></div>",
         unsafe_allow_html=True,
     )
     if msgs:
@@ -1070,8 +1113,9 @@ def _render_chat_panel() -> None:
             st.session_state["ai_chat_session_id"] = sid + 1
             st.rerun()
 
-    st.caption(
-        "Ask about automation coverage, runs, bugs, or test stability."
+    st.markdown(
+        f"<div style='height:1px;background:{COLORS['border']};margin:10px 0 6px'></div>",
+        unsafe_allow_html=True,
     )
 
     # ── empty state: a quiet, non-clickable hint (no suggestion chips) ────────

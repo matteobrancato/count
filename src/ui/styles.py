@@ -173,16 +173,20 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     color: #fff;
 }}
 
-/* Chat input submit arrow — brand-filled so it reads as the primary action. */
+/* Chat input submit arrow — Dexter red (matches the FAB), the panel's primary
+   action. */
 [class*="st-key-ai_chat_form_"] [data-testid="stFormSubmitButton"] button {{
-    background: {c['brand']} !important;
-    border-color: {c['brand']} !important;
+    background: linear-gradient(135deg, #FF6B6B 0%, #E63E3E 100%) !important;
+    border: none !important;
     color: #fff !important;
-    border-radius: 10px !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 8px rgba(255, 75, 75, 0.30) !important;
+    transition: filter .15s ease, box-shadow .15s ease !important;
 }}
 [class*="st-key-ai_chat_form_"] [data-testid="stFormSubmitButton"] button:hover {{
-    background: {c['brand_strong']} !important;
-    border-color: {c['brand_strong']} !important;
+    filter: brightness(1.06) !important;
+    box-shadow: 0 4px 14px rgba(255, 75, 75, 0.42) !important;
     color: #fff !important;
 }}
 [class*="st-key-ai_chat_form_"] [data-testid="stFormSubmitButton"] button p {{ color: #fff !important; }}
@@ -211,17 +215,64 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 
 /* ── Data-freshness label — pinned to the top-right of the tab bar ───────────
    `tabs_zone` wraps the tab bar (position:relative).  The freshness label is
-   absolutely pinned to its top-right, level with the tabs.  Purely informational
-   (no manual refresh — data auto-refreshes hourly via the cache ttl). */
+   absolutely pinned to its top-right, level with the tabs.  Hovering the label
+   slides in a tiny ↻ button that refreshes just the numbers. */
 .st-key-tabs_zone {{ position: relative !important; }}
 .st-key-freshness {{
     position: absolute !important;
-    top: 26px !important;          /* low in the tab row, flush above the grey line */
+    top: 19px !important;          /* row centre ≈ old label position */
     right: 0 !important;
     width: auto !important;
     z-index: 20 !important;
-    pointer-events: none !important;
 }}
+/* Label + mini button on one row (targets every plausible wrapper level). */
+.st-key-freshness[data-testid="stVerticalBlockBorderWrapper"],
+.st-key-freshness > div,
+.st-key-freshness [data-testid="stVerticalBlock"] {{
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 7px !important;
+    width: auto !important;
+}}
+.st-key-freshness [data-testid="stElementContainer"] {{
+    width: auto !important;
+    flex: 0 0 auto !important;
+}}
+/* The mini refresh: a 26px ghost circle, hidden until the label row is hovered
+   — then it slides/scales in.  Keyboard users get it via :focus-visible too. */
+[class*="st-key-refresh_mini"] button {{
+    width: 26px !important;
+    min-width: 26px !important;
+    max-width: 26px !important;
+    height: 26px !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    background: {c['surface']} !important;
+    border: 1px solid {c['border_2']} !important;
+    color: {c['muted']} !important;
+    font-size: 13px !important;
+    line-height: 1 !important;
+    box-shadow: none !important;
+    opacity: 0;
+    transform: scale(0.55) translateX(8px);
+    transition: opacity .18s ease, transform .22s cubic-bezier(0.34, 1.3, 0.5, 1),
+                color .15s ease, border-color .15s ease, background .15s ease !important;
+}}
+.st-key-freshness:hover [class*="st-key-refresh_mini"] button,
+[class*="st-key-refresh_mini"] button:focus-visible {{
+    opacity: 1;
+    transform: scale(1) translateX(0);
+}}
+[class*="st-key-refresh_mini"] button:hover {{
+    color: {c['brand']} !important;
+    border-color: {c['brand']} !important;
+    background: {c['brand_soft']} !important;
+    transform: scale(1) rotate(90deg);
+}}
+[class*="st-key-refresh_mini"] button p {{ color: inherit !important; }}
 
 /* ── Metric cards ─────────────────────────────────────────────────────────── */
 [data-testid="stMetric"] {{
@@ -377,13 +428,15 @@ footer {{ visibility: hidden; height: 0; }}
       60%  {{ filter: blur(0); }}
       to   {{ opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }}
     }}
-    /* Animate over the element's whole approach and finish well INSIDE the
-       viewport (cover 45%), so the rise is clearly visible as you scroll —
-       not completed the instant it peeks in at the bottom edge. */
+    /* Entry-based range: the reveal completes as the element finishes ENTERING
+       the viewport.  (The previous `cover 45%` endpoint was unreachable for the
+       last blocks of a page — the scroll ends before they travel that far — so
+       they stayed stuck half-blurred.)  entry 85% leaves a little margin so
+       even the final block sharpens just before max scroll. */
     [class*="st-key-"][class*="_anim"] [data-testid="stElementContainer"] {{
       animation: covReveal cubic-bezier(0.22, 0.61, 0.36, 1) both;
       animation-timeline: view();
-      animation-range: cover 0% cover 45%;
+      animation-range: entry 0% entry 85%;
     }}
   }}
 }}

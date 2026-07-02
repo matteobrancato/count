@@ -64,9 +64,10 @@ def _header() -> None:
 
 
 def _freshness_label() -> None:
-    """Small data-freshness caption, CSS-pinned (`.st-key-freshness`) to the
-    top-right of the tab bar — level with the tabs.  Purely informational: there
-    is no manual refresh; the numbers auto-refresh hourly via the cache ttl."""
+    """Data-freshness caption pinned (`.st-key-freshness`) to the tab-bar's
+    top-right.  Hovering it reveals a tiny ↻ button (CSS animation) that
+    refreshes ONLY the numbers: clears the data caches and reruns — the page
+    chrome stays, the loader shows on the data."""
     updated_at = _numbers_fetched_at()
     with st.container(key="freshness"):
         st.markdown(
@@ -76,6 +77,28 @@ def _freshness_label() -> None:
             f"{_relative_time(updated_at)}</b></div>",
             unsafe_allow_html=True,
         )
+        if st.button("↻", key="refresh_mini",
+                     help="Refresh the numbers from TestRail (~30-60s)."):
+            tr.clear_all_caches()
+            try:
+                from src.rules_engine import evaluate_rules
+                evaluate_rules.clear()
+            except Exception:
+                pass
+            try:
+                from src.ui.backlog_tab import _backlog_data
+                _backlog_data.clear()
+            except Exception:
+                pass
+            try:
+                from src.ui.chat_assistant import _build_coverage_brief
+                _build_coverage_brief.clear()
+            except Exception:
+                pass
+            _numbers_fetched_at.clear()
+            tr._WARMED_AT = 0.0                       # re-run the parallel pre-warm
+            st.session_state["_warmed_ui"] = False    # show the verbose status
+            st.rerun()
 
 
 # -------------------------------------------------------------------- credentials gate
