@@ -1029,7 +1029,7 @@ _FAB_CSS = """
     max-width: min(500px, 92vw);
     max-height: min(620px, 76vh);
     overflow-y: auto;
-    padding: 16px 18px 10px !important;
+    padding: 16px 18px 18px !important;   /* bottom ≥ footer height, or it clips */
 }
 
 /* Hide the "Press Enter to submit form" helper — visual noise in a chat box. */
@@ -1173,9 +1173,12 @@ def _render_chat_panel() -> None:
         st.rerun()
 
     # ── footer ────────────────────────────────────────────────────────────
+    # padding-bottom (not margin) so the last line never sits flush against —
+    # or clipped by — the popover's bottom edge.
     st.markdown(
         f"<div style='text-align:right;font-size:10.5px;color:{COLORS['muted']};"
-        f"margin-top:6px'>{_display_model()} · Uses AI</div>",
+        f"margin-top:4px;padding-bottom:4px;line-height:1'>"
+        f"{_display_model()} · Uses AI</div>",
         unsafe_allow_html=True,
     )
 
