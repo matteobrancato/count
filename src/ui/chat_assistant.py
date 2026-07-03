@@ -1025,11 +1025,16 @@ _FAB_CSS = """
    menu/listbox, NOT stPopoverBody, so they're untouched (previously a global
    popover min-width broke them into an oversized white box). */
 [data-testid="stPopoverBody"] {
-    min-width: 400px;
-    max-width: min(480px, 92vw);
-    max-height: min(660px, 78vh);
+    min-width: 440px;
+    max-width: min(500px, 92vw);
+    max-height: min(620px, 76vh);
     overflow-y: auto;
-    padding: 18px 18px 12px !important;
+    padding: 16px 18px 10px !important;
+}
+
+/* Hide the "Press Enter to submit form" helper — visual noise in a chat box. */
+[data-testid="stPopoverBody"] [data-testid="InputInstructions"] {
+    display: none !important;
 }
 
 /* Chat cards — clean full-width message cards: assistant = white, user = a
@@ -1087,20 +1092,19 @@ def _render_chat_panel() -> None:
     if not msgs:
         # ── welcome hero (empty chat) — centred, airy, no grey box ────────────
         st.markdown(
-            f"<div style='text-align:center;padding:30px 10px 24px'>"
-            f"<div style='width:56px;height:56px;margin:0 auto 14px;border-radius:17px;"
-            f"display:inline-flex;align-items:center;justify-content:center;font-size:26px;"
+            f"<div style='text-align:center;padding:14px 6px 8px'>"
+            f"<div style='width:46px;height:46px;margin:0 auto 10px;border-radius:14px;"
+            f"display:inline-flex;align-items:center;justify-content:center;font-size:22px;"
             f"background:linear-gradient(135deg,#FF6B6B 0%,#E63E3E 100%);"
-            f"box-shadow:0 8px 22px rgba(255,75,75,0.35)'>✨</div>"
-            f"<div style='font-size:18px;font-weight:800;color:{COLORS['ink']};"
+            f"box-shadow:0 6px 16px rgba(255,75,75,0.32)'>✨</div>"
+            f"<div style='font-size:16.5px;font-weight:800;color:{COLORS['ink']};"
             f"letter-spacing:-0.01em'>Hi, I'm Dexter</div>"
-            f"<div style='font-size:12.5px;color:{COLORS['muted']};margin-top:6px;"
-            f"line-height:1.6'>Ask me anything about coverage, runs, bugs or flaky "
-            f"tests <br>numbers come live from TestRail and match the dashboard.</div>"
-            f"<div style='font-size:11.5px;color:{COLORS['faint']};margin-top:18px;"
-            f"font-style:italic;line-height:1.8'>“How is Superdrug doing?”"
-            f"&nbsp;&nbsp;·&nbsp;&nbsp;“Compare all BUs”"
-            f"&nbsp;&nbsp;·&nbsp;&nbsp;“Open bugs in Watsons”</div>"
+            f"<div style='font-size:12px;color:{COLORS['muted']};margin-top:5px;"
+            f"line-height:1.55'>Ask me anything about coverage, runs, bugs or flaky "
+            f"tests —<br>numbers come live from TestRail and match the dashboard.</div>"
+            f"<div style='font-size:11px;color:{COLORS['faint']};margin-top:12px;"
+            f"font-style:italic;white-space:nowrap'>“How is Superdrug doing?”"
+            f"&nbsp;·&nbsp;“Compare all BUs”&nbsp;·&nbsp;“Open bugs in Watsons”</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
