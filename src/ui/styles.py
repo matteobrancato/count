@@ -225,25 +225,45 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 .kpi-row {{
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;             /* one clean line, always */
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    overflow-x: auto;              /* worst case: scrolls, never wraps ugly */
+    scrollbar-width: none;
 }}
+.kpi-row::-webkit-scrollbar {{ display: none; }}
 .kpi-chip {{
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
+    flex: 0 0 auto;
     background: {c['canvas']};
     border: 1px solid {c['border']};
     border-radius: 999px;
-    padding: 6px 13px;
-    font-size: 12.5px;
+    padding: 5px 11px;
+    font-size: 12px;
     color: {c['text']};
     white-space: nowrap;
     cursor: default;
 }}
 .kpi-chip b {{ color: {c['ink']}; font-weight: 750; }}
-.kpi-chip .kpi-sub {{ color: {c['muted']}; font-size: 11.5px; }}
+.kpi-chip .kpi-sub {{ color: {c['muted']}; font-size: 11px; }}
+/* Skeleton placeholder — reserves the strip's space during the first load so
+   the page doesn't shift when the real chips arrive. */
+.kpi-skeleton {{
+    display: inline-flex;
+    height: 28px;
+    width: 170px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: linear-gradient(90deg, {c['canvas']} 25%, {c['border']} 50%, {c['canvas']} 75%);
+    background-size: 200% 100%;
+    animation: kpiShimmer 1.4s ease infinite;
+}}
+@keyframes kpiShimmer {{
+    from {{ background-position: 200% 0; }}
+    to   {{ background-position: -200% 0; }}
+}}
 
 /* ── Global scope + BU control bar (between header and tabs) ─────────────────
    One standardized selector every tab reads from — a light filter card.

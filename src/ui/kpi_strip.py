@@ -73,6 +73,19 @@ def _chip(dot: str, label: str, value: str, sub: str = "", tooltip: str = "") ->
             f"<b>{value}</b>{sub_html}</span>")
 
 
+def render_skeleton() -> None:
+    """Shimmering placeholder with the SAME footprint as the real strip —
+    rendered during the first load so the page layout doesn't shift (and the
+    strip can't visually merge with the filter bar) when the chips arrive."""
+    with st.container(key="kpi_strip"):
+        st.markdown(
+            "<div class='kpi-row'>"
+            + "".join("<span class='kpi-skeleton'></span>" for _ in range(5))
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def render() -> None:
     """Render the strip; hides itself (no gap) if the aggregates aren't ready."""
     try:

@@ -104,6 +104,7 @@ def _freshness_label() -> None:
             _numbers_fetched_at.clear()
             tr._WARMED_AT = 0.0                       # re-run the parallel pre-warm
             st.session_state["_warmed_ui"] = False    # show the verbose status
+            st.session_state["_kpi_filled"] = False   # re-swap skeleton -> strip
             st.rerun()
 
 
@@ -146,10 +147,21 @@ def main() -> None:
     # page chrome is visible immediately, the loader sits on the data area, and
     # every tab is pre-loaded — switching tabs stays instant.
 
-    # Group KPI strip — an empty slot reserved here (directly under the header)
-    # and FILLED after the warm-up below completes, so a cold start still paints
-    # the page skeleton instantly and the KPIs pop in with the data.
-    kpi_slot = st.container()
+    # Group KPI strip — an st.empty slot directly under the header.  Warm runs
+    # fill it immediately; on a cold start a same-size shimmering skeleton holds
+    # the space and is REPLACED after the warm-up, so the layout never shifts
+    # (inserting content above already-rendered elements mid-run is what made
+    # the strip visually merge with the filter bar).
+    kpi_slot = st.empty()
+    try:
+        if st.session_state.get("_warmed_ui"):
+            with kpi_slot.container():
+                kpi_strip.render()
+        else:
+            with kpi_slot.container():
+                kpi_strip.render_skeleton()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
 
     # Global scope + BU selector — the single control bar every tab reads from
     # (detail views follow it; all-BU overviews intentionally ignore the BU).
@@ -215,13 +227,15 @@ def main() -> None:
                     "⚠️ Part of the data pre-load failed — sections will load "
                     "lazily and may be slower on first view."
                 )
-            # Fill the KPI strip now that the data is warm (cache hits) —
-            # best-effort, the strip hides itself on failure.
-            try:
-                with kpi_slot:
-                    kpi_strip.render()
-            except Exception:  # noqa: BLE001
-                traceback.print_exc()
+            # Cold start: swap the skeleton for the real strip now that the
+            # data is warm — best-effort, the strip hides itself on failure.
+            if not st.session_state.get("_kpi_filled"):
+                try:
+                    with kpi_slot.container():
+                        kpi_strip.render()
+                except Exception:  # noqa: BLE001
+                    traceback.print_exc()
+            st.session_state["_kpi_filled"] = True
 
             # `*_anim` containers opt each tab into the scroll-reveal animation
             # (styles.py) — Coverage wraps itself internally.
