@@ -41,6 +41,7 @@ import streamlit as st
 
 from ..bu_rules import ALL_RULES, WEBSITE_BUS
 from ..rules_engine import evaluate_rules
+from . import global_filter
 from .styles import COLORS
 
 # ── constants ─────────────────────────────────────────────────────────────────
@@ -382,7 +383,7 @@ def _build_summary(
     return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False, persist="disk")
 def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                              dict[tuple[str, str], pd.DataFrame]]:
     """The heavy 11-BU baseline pipeline (expand + classify + stats), computed
@@ -632,26 +633,14 @@ def render() -> None:
 
     st.divider()
 
-    # ── Detail ────────────────────────────────────────────────────────────────
+    # ── Detail — follows the GLOBAL scope + BU selector ───────────────────────
     st.markdown("#### Detail by Business Unit")
-
-    all_pairs   = _scoped_bus()
-    pair_labels = [
-        f"{bu} (Next Gen)" if sc == "next_gen" else bu
-        for bu, sc in all_pairs
-    ]
-    pair_map    = dict(zip(pair_labels, all_pairs))
-
-    # Only show BUs that have data
-    summary_bus = set(summary["BU"].tolist())
-    available   = [lbl for lbl in pair_labels if pair_map[lbl][0] in summary_bus]
-
-    if not available:
+    scope, bu = global_filter.current()
+    if scope == "mobile_app":
+        st.info(
+            "The regression baseline covers **Website** and **Microservices** — "
+            "switch the scope above to see a BU's baseline detail."
+        )
         return
-
-    choice_lbl = st.selectbox(
-        "Business Unit", available, key="bl_bu_detail",
-        label_visibility="collapsed",
-    )
-    chosen_bu, chosen_scope = pair_map[choice_lbl]
-    _detail_view(chosen_bu, chosen_scope, expanded_by_bu, auto_by_bu)
+    st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
+    _detail_view(bu, scope, expanded_by_bu, auto_by_bu)

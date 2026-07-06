@@ -164,6 +164,8 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
       - get_active_runs(bu)    → currently open/running runs + pass rates
       - get_open_bugs(bu)      → open JIRA bugs and the tests that raised them
       - get_test_stability(bu) → flaky / always-fail analysis over recent runs
+    All three accept scope="mobile_app" when the user asks about the mobile
+    app / MAPP; the default covers website + Next Gen.
 
 # HOW THE METRICS ARE CALCULATED  (use this to answer "how / why / what does X mean")
 - Data is pulled from TestRail; DEPRECATED cases are ALWAYS excluded.
@@ -378,8 +380,17 @@ def get_bu_coverage(bu: str) -> dict:
     }
 
 
+
+def _scopes_for(scope: str) -> tuple[str, ...]:
+    """Map a tool's `scope` argument to rule scopes.  Web (default) also covers
+    Next Gen; 'mobile_app' isolates the dedicated MAPP projects."""
+    if (scope or "").strip().lower() in ("mobile_app", "mobile app", "mobile", "mapp", "app"):
+        return ("mobile_app",)
+    return ("website", "next_gen")
+
+
 @_safe_tool
-def get_active_runs(bu: str) -> dict:
+def get_active_runs(bu: str, scope: str = "website") -> dict:
     """Get the list of active (open) TestRail runs for a BU.
 
     Each run summary includes pass/fail/blocked counts, completion %,
@@ -387,12 +398,14 @@ def get_active_runs(bu: str) -> dict:
 
     Args:
         bu: BU name or alias.
+        scope: "website" (default, includes Next Gen) or "mobile_app" for the
+            BU's dedicated mobile-app (MAPP) project.
     """
     canonical = _resolve_bu_name(bu)
     if not canonical:
         return {"error": f"Unknown BU '{bu}'"}
 
-    project_ids = runs_tab._bu_project_ids().get(canonical, set())
+    project_ids = runs_tab._bu_project_ids(_scopes_for(scope)).get(canonical, set())
     if not project_ids:
         return {"error": f"No TestRail projects for {canonical}"}
 
@@ -436,7 +449,7 @@ def get_active_runs(bu: str) -> dict:
 
 
 @_safe_tool
-def get_open_bugs(bu: str) -> dict:
+def get_open_bugs(bu: str, scope: str = "website") -> dict:
     """List the open JIRA bug keys for a BU, with the test that generated each.
 
     Useful to answer "What bugs are open for Drogas?" — returns one record per
@@ -444,12 +457,14 @@ def get_open_bugs(bu: str) -> dict:
 
     Args:
         bu: BU name or alias.
+        scope: "website" (default, includes Next Gen) or "mobile_app" for the
+            BU's dedicated mobile-app (MAPP) project.
     """
     canonical = _resolve_bu_name(bu)
     if not canonical:
         return {"error": f"Unknown BU '{bu}'"}
 
-    project_ids = runs_tab._bu_project_ids().get(canonical, set())
+    project_ids = runs_tab._bu_project_ids(_scopes_for(scope)).get(canonical, set())
     if not project_ids:
         return {"error": f"No TestRail projects for {canonical}"}
 
@@ -481,7 +496,8 @@ def get_open_bugs(bu: str) -> dict:
 
 
 @_safe_tool
-def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5) -> dict:
+def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5,
+                       scope: str = "website") -> dict:
     """Analyse test stability over recent completed runs for a BU.
 
     Classifies each case as: Always pass, Always fail, Flaky, or Insufficient
@@ -492,12 +508,13 @@ def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5) -> dic
         bu:             BU name or alias.
         n_runs:         Most recent completed runs to walk (default 5).
         min_executions: Minimum results per case to receive a classification.
+        scope: "website" (default) or "mobile_app" for MAPP runs.
     """
     canonical = _resolve_bu_name(bu)
     if not canonical:
         return {"error": f"Unknown BU '{bu}'"}
 
-    project_ids = runs_tab._bu_project_ids().get(canonical, set())
+    project_ids = runs_tab._bu_project_ids(_scopes_for(scope)).get(canonical, set())
     if not project_ids:
         return {"error": f"No TestRail projects for {canonical}"}
 
@@ -567,7 +584,7 @@ def compare_bus() -> dict:
 _TOOLS = [get_active_runs, get_open_bugs, get_test_stability]
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False, persist="disk")
 def _build_coverage_brief() -> str:
     """Build a compact markdown snapshot of CURRENT coverage for every BU.
 

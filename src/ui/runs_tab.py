@@ -27,7 +27,8 @@ import streamlit as st
 from .. import testrail_client as tr
 from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
 from ..field_resolver import get_registry
-from ..rules_engine import _section_path_lookup
+from ..rules_engine import _get_multi_countries, _section_path_lookup
+from . import global_filter
 from .styles import COLORS
 
 
@@ -66,14 +67,23 @@ def _bus_for_run_name(name: str | None) -> set[str]:
     return {bu for pattern, bu in _BU_ALIAS_PATTERNS if pattern.search(name)}
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _bu_project_ids() -> dict[str, set[int]]:
-    """Map BU → set of TestRail project IDs (derived from each BU's rule suites).
+@st.cache_data(show_spinner=False, ttl=3600, persist="disk")
+def _bu_project_ids(
+    scopes: tuple[str, ...] = ("website", "next_gen"),
+) -> dict[str, set[int]]:
+    """Map BU → set of TestRail project IDs, derived from the BU's rule suites
+    **restricted to the given scopes**.
+
+    The scope filter matters: a BU like The Perfume Shop also has a dedicated
+    mobile-app project — without the filter its MAPP runs matched the BU alias
+    and leaked into the (web-focused) Runs tab.
 
     Cached: it loops every rule calling `resolve_project_id`, and is hit on every
     Runs-tab rerun plus every Dexter runs/bugs/stability tool call."""
     out: dict[str, set[int]] = {}
     for r in ALL_RULES:
+        if r.scope not in scopes:
+            continue
         try:
             pid = tr.resolve_project_id(r.suite_id)
         except Exception:
@@ -305,25 +315,37 @@ def _collect_bug_records(runs: list[dict]) -> list[dict]:
 
 
 # ── stability analysis ──────────────────────────────────────────────────────
-def _completed_runs_for_bu(bu: str, project_ids: set[int], limit: int) -> list[dict]:
-    """Most recent N completed runs that match the BU (standalone + plan-contained).
+def _completed_runs_for_bu(
+    bu: str | None, project_ids: set[int], limit: int,
+) -> list[dict]:
+    """Most recent N completed runs (standalone + plan-contained).
+
+    *bu* filters runs/plans by BU alias in the name; ``None`` keeps everything —
+    used by the case deep-dive, which already scopes to the case's own project
+    and must not drop runs whose names don't carry a BU alias.
 
     Plan detail fetches are parallelised — same reason as `_flatten_active_runs`:
     serial fetch_plan calls over a project with many plans is the dominant
     bottleneck on cold start.
     """
+    def _matches(name: str | None) -> bool:
+        return bu is None or bu in _bus_for_run_name(name)
+
     candidates: list[dict] = []
     for pid in project_ids:
         # 1) Standalone completed runs (single paginated call).
         for run in tr.fetch_runs(pid, is_completed=True):
-            if bu in _bus_for_run_name(run.get("name")):
+            if _matches(run.get("name")):
                 candidates.append({**run, "project_id": pid})
 
-        # 2) Completed plans matching this BU — parallelise the detail fetches.
-        matching_plans = [
-            p for p in tr.fetch_plans(pid, is_completed=True)
-            if bu in _bus_for_run_name(p.get("name"))
-        ]
+        # 2) Completed plans — parallelise the detail fetches, but only for the
+        #    most recent ones: we keep `limit` runs at the end, so fetching
+        #    details for hundreds of old plans is wasted work.
+        matching_plans = sorted(
+            (p for p in tr.fetch_plans(pid, is_completed=True)
+             if _matches(p.get("name"))),
+            key=lambda p: -int(p.get("completed_on") or p.get("created_on") or 0),
+        )[:max(limit, 20)]
         if not matching_plans:
             continue
         plan_ids = [int(p["id"]) for p in matching_plans]
@@ -762,36 +784,37 @@ def _case_field(case: dict, reg, label: str) -> str | None:
 
 @st.cache_data(show_spinner=False, ttl=600)
 def _case_run_universe(suite_id: int, depth: int) -> tuple[list[str], dict]:
-    """All runs (active + recent completed) for the BU(s) that own this suite.
+    """All runs (active + recent completed) in the case's OWN project.
 
-    Returns (bus, {run_id: {name, plan, ts, url, completed}}), capped to the
-    `depth` most-recent runs so the scan stays bounded.  Reuses the BU-filtered
-    gatherers, so we only touch runs that could contain the case.
+    In TestRail a run can only contain cases from its own project, so scanning
+    the suite's project is both complete and minimal.  (Previously this walked
+    every project mapped to the owning BUs — which pulled in unrelated projects,
+    e.g. a BU's mobile-app one — and filtered runs by BU-alias in the name,
+    silently dropping valid runs without an alias.)
+
+    Returns (bus, {run_id: {name, plan, ts, url}}), capped to the `depth`
+    most-recent runs so the per-run scan stays bounded.
     """
     bus = sorted({r.bu for r in ALL_RULES if r.suite_id == suite_id})
     base_url = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")
-    bu_to_pids = _bu_project_ids()
+    pid = tr.resolve_project_id(suite_id)
     meta: dict[int, dict] = {}
-    for bu in bus:
-        pids = bu_to_pids.get(bu, set())
-        if not pids:
-            continue
-        for r in _flatten_active_runs(pids, bu):
-            rid = int(r["id"])
-            meta.setdefault(rid, {
-                "name": r.get("name") or "(unnamed)",
-                "plan": r.get("plan_name") or "—",
-                "ts":   int(r.get("updated_on") or r.get("created_on") or 0),
-                "url":  f"{base_url}/index.php?/runs/view/{rid}",
-            })
-        for r in _completed_runs_for_bu(bu, pids, limit=depth):
-            rid = int(r["id"])
-            meta.setdefault(rid, {
-                "name": r.get("name") or "(unnamed)",
-                "plan": "—",
-                "ts":   int(r.get("completed_on") or r.get("created_on") or 0),
-                "url":  f"{base_url}/index.php?/runs/view/{rid}",
-            })
+    for r in _flatten_active_runs({pid}):
+        rid = int(r["id"])
+        meta.setdefault(rid, {
+            "name": r.get("name") or "(unnamed)",
+            "plan": r.get("plan_name") or "—",
+            "ts":   int(r.get("updated_on") or r.get("created_on") or 0),
+            "url":  f"{base_url}/index.php?/runs/view/{rid}",
+        })
+    for r in _completed_runs_for_bu(None, {pid}, limit=depth):
+        rid = int(r["id"])
+        meta.setdefault(rid, {
+            "name": r.get("name") or "(unnamed)",
+            "plan": "—",
+            "ts":   int(r.get("completed_on") or r.get("created_on") or 0),
+            "url":  f"{base_url}/index.php?/runs/view/{rid}",
+        })
     # Keep only the `depth` most-recent runs to bound the per-run scan.
     top = dict(sorted(meta.items(), key=lambda kv: -kv[1]["ts"])[:depth])
     return bus, top
@@ -851,6 +874,7 @@ def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) 
     except Exception:                                                   # noqa: BLE001
         reg = None
     type_name = prio_name = section = None
+    pid: int | None = None
     try:
         types = {int(t["id"]): t.get("name") for t in tr.fetch_case_types()}
         type_name = types.get(int(case.get("type_id") or 0))
@@ -880,11 +904,19 @@ def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) 
             ("Automation", "Automation Status"),
             ("Testim Desktop", "Automation Status Testim Desktop"),
             ("Testim Mobile", "Automation Status Testim Mobile View"),
-            ("Countries", "multi_countries"),
         ]:
             v = _case_field(case, reg, key)
             if v:
                 chips.append((lbl, v))
+        # Countries need the PROJECT-AWARE resolver: multi_countries has
+        # different dropdown items per project, so the global id→label map
+        # showed another project's labels (e.g. UK/IE rendered as KVBE/KVNL).
+        try:
+            tokens = _get_multi_countries(case, reg, pid)
+            if tokens:
+                chips.append(("Countries", ", ".join(tokens)))
+        except Exception:                                               # noqa: BLE001
+            pass
 
     chip_html = "".join(
         f"<span style='display:inline-flex;gap:6px;align-items:center;"
@@ -1065,12 +1097,17 @@ def render() -> None:
         "failed results, plus a stability classifier over recent completed runs."
     )
 
-    # BU selector — all BUs that have at least one rule.
-    all_bus = sorted({r.bu for r in ALL_RULES})
-    bu = st.selectbox("Business Unit", all_bus, key="runs_bu")
+    # Scope + BU come from the GLOBAL control bar.  The scope maps 1:1 to
+    # TestRail projects — web and mobile-app runs live in DIFFERENT projects
+    # (e.g. TPS has a dedicated MAPP project), so mixing scopes under one BU
+    # pulled mobile runs into the web view.
+    scope, bu = global_filter.current()
+    if not bu:
+        st.info("No Business Units in this scope.")
+        return
+    st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
 
-    bu_to_pids = _bu_project_ids()
-    project_ids = bu_to_pids.get(bu, set())
+    project_ids = _bu_project_ids((scope,)).get(bu, set())
     if not project_ids:
         st.warning(f"Could not resolve TestRail project IDs for **{bu}**.")
         return

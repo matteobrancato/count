@@ -5,13 +5,9 @@ import streamlit as st
 
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules, ExpansionResult
+from . import global_filter
 
 # ------------------------------------------------------------------ constants
-BU_ORDER = [
-    "Drogas", "ICI Paris XL", "Kruidvat", "Marionnaud", "Savers",
-    "Superdrug", "The Perfume Shop", "Trekpleister", "Watsons",
-]
-
 FRAMEWORK_LABELS = {
     "java":           "Java Testing Framework",
     "testim_desktop": "Testim.io | Desktop",
@@ -58,14 +54,6 @@ COL_LABELS: dict[str, str] = {
 
 
 # ------------------------------------------------------------------ helpers
-def _rules_for_choice(choice: str):
-    if choice == "Microservices":
-        return [r for r in ALL_RULES if r.scope == "next_gen"]
-    if choice == "Mobile Application":
-        return [r for r in ALL_RULES if r.scope == "mobile_app"]
-    return [r for r in ALL_RULES if r.bu == choice and r.scope == "website"]
-
-
 def _dedup_auto(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -434,17 +422,21 @@ def render() -> None:
     st.caption("Pivot the automated tests of a Business Unit by device, "
                "framework and country — plus the full suite status breakdown.")
 
-    # No fake "─" separator entry: it was a selectable option that blanked the
-    # whole tab via st.stop() when picked.
-    options = BU_ORDER + ["Microservices", "Mobile Application"]
-    choice  = st.selectbox("Business Unit", options, index=0, key="tab1_bu")
+    # Scope + BU come from the GLOBAL control bar (the old local dropdown mixed
+    # BUs with pseudo-entries like "Microservices" — the scope radio replaces
+    # those cleanly).
+    scope, bu = global_filter.current()
+    if not bu:
+        st.warning("No Business Units in this scope.")
+        return
+    st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
 
-    rules = _rules_for_choice(choice)
+    rules = [r for r in ALL_RULES if r.scope == scope and r.bu == bu]
     if not rules:
         st.warning("No rules defined for this BU.")
         return
 
-    with st.spinner(f"Loading {choice}…"):
+    with st.spinner(f"Loading {bu}…"):
         result: ExpansionResult = evaluate_rules(tuple(r.name for r in rules))
 
     raw      = result.raw_cases
@@ -455,11 +447,11 @@ def render() -> None:
         return
 
     # ---- Filters + Pivot (on automated expanded df)
-    # key_prefix includes choice so switching BU resets widget state to correct defaults
-    bu_key = choice.replace(" ", "_")
-    if choice == "Microservices":
+    # key_prefix includes scope+BU so switching resets widget state to defaults
+    bu_key = f"{scope}_{bu}".replace(" ", "_")
+    if scope == "next_gen":
         pv_rows, pv_cols = ["Framework"], ["Country"]
-    elif choice == "Mobile Application":
+    elif scope == "mobile_app":
         pv_rows, pv_cols = ["Country"], ["Automation Tool"]
     else:
         pv_rows, pv_cols = ["Device"], ["Framework", "Country"]

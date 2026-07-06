@@ -35,6 +35,7 @@ import streamlit as st
 
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
+from . import global_filter
 from .styles import COLORS, PIE_PALETTE
 
 # ── categorical palette for area breakdowns (sourced from design tokens) ──────
@@ -43,15 +44,6 @@ _PIE_PALETTE = PIE_PALETTE * 2
 
 
 # ── data loading ─────────────────────────────────────────────────────────────
-def _scope_label(scope: str) -> str:
-    return {"website": "🌐 Website", "mobile_app": "📱 Mobile App",
-            "next_gen": "🧩 Next Gen"}.get(scope, scope)
-
-
-def _bus_for_scope(scope: str) -> list[str]:
-    return sorted({r.bu for r in ALL_RULES if r.scope == scope})
-
-
 def _load_scope(scope: str):
     """Cached evaluate_rules call shared with other tabs."""
     rules = [r for r in ALL_RULES if r.scope == scope]
@@ -683,31 +675,12 @@ def render() -> None:
         "expanded rows for the automation totals, unique case IDs for the % coverage."
     )
 
-    # ── scope selector ───────────────────────────────────────────────────────
-    scopes = ["website", "mobile_app", "next_gen"]
-    scope_labels = [_scope_label(s) for s in scopes]
-    label_to_scope = dict(zip(scope_labels, scopes))
-
-    c1, c2 = st.columns([1, 2])
-    chosen_label = c1.radio(
-        "Scope", scope_labels, horizontal=True, key="cov_scope",
-        label_visibility="collapsed",
-    )
-    chosen_scope = label_to_scope[chosen_label]
-
-    bus = _bus_for_scope(chosen_scope)
-    if not bus:
+    # Scope + BU come from the GLOBAL control bar (global_filter) — no local
+    # selectors, one standardized method across every tab.
+    chosen_scope, bu_choice = global_filter.current()
+    if not bu_choice:
         st.info("No rules defined for this scope.")
         return
-
-    if len(bus) > 1:
-        bu_choice = c2.selectbox(
-            "Business Unit", bus, key=f"cov_bu_{chosen_scope}",
-            label_visibility="collapsed",
-        )
-    else:
-        bu_choice = bus[0]
-        c2.markdown(f"**{bu_choice}**")
 
     st.divider()
     # Keyed wrapper = scope hook for the scroll-reveal animation (see styles.py:

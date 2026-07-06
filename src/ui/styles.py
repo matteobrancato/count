@@ -213,6 +213,21 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
+/* ── Global scope + BU control bar (between header and tabs) ─────────────────
+   One standardized selector every tab reads from — a light filter card. */
+.st-key-global_filter {{
+    background: {c['surface']};
+    border: 1px solid {c['border']};
+    border-radius: 14px;
+    padding: 10px 16px 2px;
+    margin: 2px 0 6px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}}
+.st-key-global_filter [data-testid="stRadio"] label p {{
+    font-size: 13.5px;
+    font-weight: 600;
+}}
+
 /* ── Data-freshness label — pinned to the top-right of the tab bar ───────────
    `tabs_zone` wraps the tab bar (position:relative).  The freshness label is
    absolutely pinned to its top-right, level with the tabs.  Hovering the label

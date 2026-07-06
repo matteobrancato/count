@@ -7,7 +7,7 @@ import streamlit as st
 
 from src import testrail_client as tr
 from src.ui import (
-    backlog_tab, chat_assistant, coverage_tab, overview_tab,
+    backlog_tab, chat_assistant, coverage_tab, global_filter, overview_tab,
     pivot_tab, report_tab, runs_tab, styles,
 )
 from src.ui.styles import COLORS
@@ -22,7 +22,7 @@ st.set_page_config(
 
 
 # -------------------------------------------------------------------- header
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False, persist="disk")
 def _numbers_fetched_at() -> float:
     """Wall-clock time the current cached numbers were fetched.
 
@@ -141,6 +141,10 @@ def main() -> None:
     # page chrome is visible immediately, the loader sits on the data area, and
     # every tab is pre-loaded — switching tabs stays instant.
 
+    # Global scope + BU selector — the single control bar every tab reads from
+    # (detail views follow it; all-BU overviews intentionally ignore the BU).
+    global_filter.render()
+
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
     with st.container(key="tabs_zone"):
@@ -167,12 +171,32 @@ def main() -> None:
                 if st.session_state.get("_warmed_ui"):
                     warmup_cache()
                 else:
-                    with st.status("⚡ Loading dashboard data…",
-                                   expanded=True) as _status:
-                        warmup_cache(on_step=_status.write)
-                        _status.update(label="✅ Dashboard ready",
-                                       state="complete", expanded=False)
+                    with st.container(key="warmup_status"):
+                        with st.status("⚡ Loading dashboard data…",
+                                       expanded=True) as _status:
+                            warmup_cache(on_step=_status.write)
+                            _status.update(label="✅ Dashboard ready",
+                                           state="complete", expanded=False)
                     st.session_state["_warmed_ui"] = True
+                    # Auto-dismiss the collapsed "Dashboard ready" box: this CSS
+                    # is injected only AFTER completion, so the animation delay
+                    # counts from now (not from when loading started).  It fades
+                    # and collapses to zero height — no leftover gap.  The next
+                    # rerun skips the status entirely (_warmed_ui set).
+                    st.markdown(
+                        """<style>
+                        @keyframes warmupStatusAway {
+                            to { opacity: 0; max-height: 0;
+                                 margin: 0; padding: 0; }
+                        }
+                        .st-key-warmup_status {
+                            overflow: hidden;
+                            max-height: 400px;
+                            animation: warmupStatusAway 0.6s ease 2.5s forwards;
+                        }
+                        </style>""",
+                        unsafe_allow_html=True,
+                    )
             except ImportError:
                 pass
             except Exception:  # noqa: BLE001
