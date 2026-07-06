@@ -45,6 +45,12 @@ from . import global_filter
 from .styles import COLORS
 
 # ── constants ─────────────────────────────────────────────────────────────────
+# Baseline labels (website regression: desktop / mobile BROWSER view).
+# Mobile App has NO baseline label in TestRail yet (confirmed Jul 2026) — when
+# one is defined, wire it here: add the label constant, include "mobile_app" in
+# the scopes loaded by `_backlog_data`, and extend `_expand_baseline` with the
+# MAPP device/status/country mapping.  Until then the tab shows an explicit
+# notice when the Mobile App scope is selected.
 _LABEL_DESKTOP = "big_regr_desktop"
 _LABEL_MOBILE  = "big_regr_mobile"
 
@@ -638,8 +644,10 @@ def render() -> None:
     scope, bu = global_filter.current()
     if scope == "mobile_app":
         st.info(
-            "The regression baseline covers **Website** and **Microservices** — "
-            "switch the scope above to see a BU's baseline detail."
+            "Mobile App tests don't carry a regression-baseline label in "
+            "TestRail yet, so the baseline covers **Website** and "
+            "**Microservices** for now — switch the scope above to see a BU's "
+            "detail. Once a MAPP baseline label is defined, it can be wired in."
         )
         return
     st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
