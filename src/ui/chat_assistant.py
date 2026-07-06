@@ -584,7 +584,7 @@ def compare_bus() -> dict:
 _TOOLS = [get_active_runs, get_open_bugs, get_test_stability]
 
 
-@st.cache_data(ttl=3600, show_spinner=False, persist="disk")
+@st.cache_data(ttl=3600, show_spinner=False)
 def _build_coverage_brief() -> str:
     """Build a compact markdown snapshot of CURRENT coverage for every BU.
 

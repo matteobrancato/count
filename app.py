@@ -22,7 +22,7 @@ st.set_page_config(
 
 
 # -------------------------------------------------------------------- header
-@st.cache_data(ttl=3600, show_spinner=False, persist="disk")
+@st.cache_data(ttl=3600, show_spinner=False)
 def _numbers_fetched_at() -> float:
     """Wall-clock time the current cached numbers were fetched.
 

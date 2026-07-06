@@ -447,7 +447,7 @@ def _fetch_suite_data(sid: int, pid: int) -> tuple[int, list[dict], dict[int, st
 # No built-in spinner: the startup warm-up (warmup_cache) drives its own verbose
 # status, and after warm-up every call is a cache hit — so a spinner here would
 # only ever double up with the warm-up status.
-@st.cache_data(show_spinner=False, ttl=3600, persist="disk")
+@st.cache_data(show_spinner=False, ttl=3600)
 def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
     reg      = get_registry()
     rules    = [r for r in ALL_RULES if r.name in rule_names]

@@ -383,7 +383,7 @@ def _build_summary(
     return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
 
 
-@st.cache_data(ttl=3600, show_spinner=False, persist="disk")
+@st.cache_data(ttl=3600, show_spinner=False)
 def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                              dict[tuple[str, str], pd.DataFrame]]:
     """The heavy 11-BU baseline pipeline (expand + classify + stats), computed

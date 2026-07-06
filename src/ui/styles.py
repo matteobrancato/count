@@ -214,18 +214,38 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
 /* ── Global scope + BU control bar (between header and tabs) ─────────────────
-   One standardized selector every tab reads from — a light filter card. */
+   One standardized selector every tab reads from — a light filter card.
+   Symmetric padding + hard vertical centring of BOTH columns (radio and
+   selectbox have different natural heights, which made the bar look lopsided). */
 .st-key-global_filter {{
     background: {c['surface']};
     border: 1px solid {c['border']};
     border-radius: 14px;
-    padding: 10px 16px 2px;
+    padding: 8px 16px;
     margin: 2px 0 6px;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}}
+.st-key-global_filter [data-testid="stHorizontalBlock"] {{
+    align-items: center !important;
+}}
+.st-key-global_filter [data-testid="stElementContainer"] {{
+    margin: 0 !important;
+}}
+.st-key-global_filter [data-testid="stRadio"] > div {{
+    gap: 22px !important;                /* even spacing between the 3 options */
+    align-items: center !important;
+}}
+.st-key-global_filter [data-testid="stRadio"] label {{
+    margin: 0 !important;
+    padding: 0 !important;
 }}
 .st-key-global_filter [data-testid="stRadio"] label p {{
     font-size: 13.5px;
     font-weight: 600;
+    line-height: 1 !important;
+}}
+.st-key-global_filter [data-testid="stSelectbox"] {{
+    margin: 0 !important;
 }}
 
 /* ── Data-freshness label — pinned to the top-right of the tab bar ───────────
@@ -432,6 +452,41 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     border: 2px solid {c['canvas']};
 }}
 ::-webkit-scrollbar-thumb:hover {{ background: {c['faint']}; }}
+
+/* ── Warm-up status box: livelier loading (texts stay) ────────────────────────
+   1. An indeterminate gradient bar sweeps along the top edge (Linear/GitHub
+      style) while the box exists.
+   2. Each step line slides+fades in as it appears.
+   Scoped to `.st-key-warmup_status`, which only exists during the first load. */
+.st-key-warmup_status {{
+    position: relative;
+    overflow: hidden;
+    border-radius: 12px;
+}}
+.st-key-warmup_status::before {{
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    z-index: 5;
+    border-radius: 3px 3px 0 0;
+    background: linear-gradient(90deg,
+        transparent 0%, {c['brand']} 30%, #FF4B4B 55%, transparent 80%);
+    background-size: 220% 100%;
+    animation: warmupSweep 1.5s linear infinite;
+    pointer-events: none;
+}}
+@keyframes warmupSweep {{
+    from {{ background-position: 220% 0; }}
+    to   {{ background-position: -220% 0; }}
+}}
+.st-key-warmup_status [data-testid="stMarkdownContainer"] {{
+    animation: warmupStepIn 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}}
+@keyframes warmupStepIn {{
+    from {{ opacity: 0; transform: translateX(-10px); }}
+    to   {{ opacity: 1; transform: translateX(0); }}
+}}
 
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
