@@ -36,7 +36,7 @@ import streamlit as st
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
 from . import global_filter
-from .styles import COLORS, PIE_PALETTE
+from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, coverage_health
 
 # ── categorical palette for area breakdowns (sourced from design tokens) ──────
 # Repeated so very granular BUs (>12 areas) still get a colour for every slice.
@@ -458,6 +458,15 @@ def _render_coverage_section(
     c3.metric("Automated rows (D+M)", f"{auto_expanded_total:,}",
               help="Expanded rows: Desktop + Mobile. Same convention as Explorer / Report.")
     c4.metric("Coverage", f"{cov_pct:.1f}%")
+    _dot, _col = coverage_health(cov_pct)
+    c4.markdown(
+        f"<span style='display:inline-flex;align-items:center;gap:5px;"
+        f"padding:2px 9px;border-radius:999px;background:{COLORS['canvas']};"
+        f"border:1px solid {COLORS['border']};font-size:11px;font-weight:600;"
+        f"color:{_col}' title='Target {COVERAGE_TARGET:.0f}% — same thresholds "
+        f"as the KPI strip.'>{_dot} target {COVERAGE_TARGET:.0f}%</span>",
+        unsafe_allow_html=True,
+    )
 
     # ── section granularity ───────────────────────────────────────────────────
     st.markdown("")

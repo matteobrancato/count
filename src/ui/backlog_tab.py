@@ -42,7 +42,7 @@ import streamlit as st
 from ..bu_rules import ALL_RULES, WEBSITE_BUS
 from ..rules_engine import evaluate_rules
 from . import global_filter
-from .styles import COLORS
+from .styles import COLORS, COVERAGE_TARGET, coverage_health
 
 # ── constants ─────────────────────────────────────────────────────────────────
 # Baseline labels (website regression: desktop / mobile BROWSER view).
@@ -610,14 +610,20 @@ def render() -> None:
     # "Unknown" (rows with an automated status not attributed to this BU's
     # automated set, or no status at all) is shown only when it occurs, so
     # Total always equals the sum of the visible categories.
-    display = summary
-    if "Unknown" in summary.columns and int(summary["Unknown"].sum()) == 0:
-        display = summary.drop(columns=["Unknown"])
+    display = summary.copy()
+    if "Unknown" in display.columns and int(display["Unknown"].sum()) == 0:
+        display = display.drop(columns=["Unknown"])
+    # RAG health dot — same thresholds as the KPI strip / Coverage headlines.
+    display.insert(0, "Health",
+                   display["Cov. %"].map(lambda p: coverage_health(float(p))[0]))
     st.dataframe(
         display,
         use_container_width=True,
         hide_index=True,
         column_config={
+            "Health":    st.column_config.TextColumn(
+                "", width="small",
+                help=f"\U0001f7e2 \u2265 {COVERAGE_TARGET:.0f}% \u00b7 \U0001f7e1 \u2265 60% \u00b7 \U0001f534 below \u2014 same thresholds as the KPI strip."),
             "BU":        st.column_config.TextColumn("Business Unit", width="medium"),
             "Scope":     st.column_config.TextColumn("Scope",         width="small"),
             "Total":     st.column_config.NumberColumn("Total"),

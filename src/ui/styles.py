@@ -213,6 +213,38 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
+/* ── Group KPI strip (under the header, above the filter bar) ─────────────────
+   The 5-second "state of the world" for managers — chips with RAG dots. */
+.st-key-kpi_strip {{
+    background: {c['surface']};
+    border: 1px solid {c['border']};
+    border-radius: 14px;
+    padding: 10px 16px;
+    margin: 2px 0 6px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}}
+.kpi-row {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}}
+.kpi-chip {{
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: {c['canvas']};
+    border: 1px solid {c['border']};
+    border-radius: 999px;
+    padding: 6px 13px;
+    font-size: 12.5px;
+    color: {c['text']};
+    white-space: nowrap;
+    cursor: default;
+}}
+.kpi-chip b {{ color: {c['ink']}; font-weight: 750; }}
+.kpi-chip .kpi-sub {{ color: {c['muted']}; font-size: 11.5px; }}
+
 /* ── Global scope + BU control bar (between header and tabs) ─────────────────
    One standardized selector every tab reads from — a light filter card.
    Symmetric padding + hard vertical centring of BOTH columns (radio and
@@ -519,6 +551,33 @@ footer {{ visibility: hidden; height: 0; }}
 }}
 </style>
 """
+
+
+# ── health thresholds (RAG) ───────────────────────────────────────────────────
+# Shared by the KPI strip, the Backlog All-BU table and the Coverage headlines,
+# so a colour always means the same thing everywhere.
+COVERAGE_TARGET = 80.0   # 🟢 at/above target
+COVERAGE_WARN   = 60.0   # 🟡 at/above, 🔴 below
+BACKLOG_OK_PCT     = 3.0  # 🟢 backlog ≤ 3% of baseline rows (same rule as the card badge)
+BACKLOG_WARN_PCT   = 6.0  # 🟡 ≤ 6%, 🔴 above
+
+
+def coverage_health(pct: float) -> tuple[str, str]:
+    """(emoji, colour) for a coverage % against the group targets."""
+    if pct >= COVERAGE_TARGET:
+        return "🟢", COLORS["success"]
+    if pct >= COVERAGE_WARN:
+        return "🟡", COLORS["warning"]
+    return "🔴", COLORS["danger"]
+
+
+def backlog_health(pct: float) -> tuple[str, str]:
+    """(emoji, colour) for backlog as % of baseline rows."""
+    if pct <= BACKLOG_OK_PCT:
+        return "🟢", COLORS["success"]
+    if pct <= BACKLOG_WARN_PCT:
+        return "🟡", COLORS["warning"]
+    return "🔴", COLORS["danger"]
 
 
 def inject() -> None:

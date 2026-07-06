@@ -571,4 +571,10 @@ def warmup_cache(on_step=None) -> None:
         _build_coverage_brief()
     except Exception:                                                   # noqa: BLE001
         logger.exception("warmup: coverage brief pre-build failed")
+    step("📈 Computing group KPIs…")
+    try:
+        from .ui.kpi_strip import _kpis
+        _kpis()
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("warmup: KPI strip pre-build failed")
     step("✨ Building the dashboard…")

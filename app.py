@@ -7,8 +7,8 @@ import streamlit as st
 
 from src import testrail_client as tr
 from src.ui import (
-    backlog_tab, chat_assistant, coverage_tab, global_filter, overview_tab,
-    pivot_tab, report_tab, runs_tab, styles,
+    backlog_tab, chat_assistant, coverage_tab, global_filter, kpi_strip,
+    overview_tab, pivot_tab, report_tab, runs_tab, styles,
 )
 from src.ui.styles import COLORS
 
@@ -96,6 +96,11 @@ def _freshness_label() -> None:
                 _build_coverage_brief.clear()
             except Exception:
                 pass
+            try:
+                from src.ui.kpi_strip import _kpis
+                _kpis.clear()
+            except Exception:
+                pass
             _numbers_fetched_at.clear()
             tr._WARMED_AT = 0.0                       # re-run the parallel pre-warm
             st.session_state["_warmed_ui"] = False    # show the verbose status
@@ -140,6 +145,11 @@ def main() -> None:
     # before st.tabs(), which used to leave the tab area blank/white).  So the
     # page chrome is visible immediately, the loader sits on the data area, and
     # every tab is pre-loaded — switching tabs stays instant.
+
+    # Group KPI strip — an empty slot reserved here (directly under the header)
+    # and FILLED after the warm-up below completes, so a cold start still paints
+    # the page skeleton instantly and the KPIs pop in with the data.
+    kpi_slot = st.container()
 
     # Global scope + BU selector — the single control bar every tab reads from
     # (detail views follow it; all-BU overviews intentionally ignore the BU).
@@ -205,6 +215,14 @@ def main() -> None:
                     "⚠️ Part of the data pre-load failed — sections will load "
                     "lazily and may be slower on first view."
                 )
+            # Fill the KPI strip now that the data is warm (cache hits) —
+            # best-effort, the strip hides itself on failure.
+            try:
+                with kpi_slot:
+                    kpi_strip.render()
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+
             # `*_anim` containers opt each tab into the scroll-reveal animation
             # (styles.py) — Coverage wraps itself internally.
             with st.container(key="backlog_anim"):
