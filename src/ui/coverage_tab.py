@@ -36,7 +36,7 @@ import streamlit as st
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
 from . import global_filter
-from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, coverage_health
+from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE
 
 # ── categorical palette for area breakdowns (sourced from design tokens) ──────
 # Repeated so very granular BUs (>12 areas) still get a colour for every slice.
@@ -435,12 +435,17 @@ def _render_coverage_section(
     key_prefix: str,
     scope: str,
     show_tool_facet: bool = True,
+    show_target: bool = False,
 ) -> None:
     """Render the full coverage block (metrics + table + charts) for a subset.
 
     Pulled out of `_coverage_for` so the regression-baseline view can reuse the
     exact same layout without duplicating code.  *key_prefix* must be unique
     per call so Streamlit widgets don't collide.
+
+    *show_target* adds a vs-target delta inside the Coverage metric — enabled
+    only on the regression-baseline view, where the 80% target applies ("coverage"
+    targets are defined on the baseline, not on the whole case universe).
     """
     if non_dep.empty:
         st.info("No cases in this subset.")
@@ -457,16 +462,15 @@ def _render_coverage_section(
     c2.metric("Automated (unique)", f"{auto_unique:,}")
     c3.metric("Automated rows (D+M)", f"{auto_expanded_total:,}",
               help="Expanded rows: Desktop + Mobile. Same convention as Explorer / Report.")
-    c4.metric("Coverage", f"{cov_pct:.1f}%")
-    _dot, _col = coverage_health(cov_pct)
-    c4.markdown(
-        f"<span style='display:inline-flex;align-items:center;gap:5px;"
-        f"padding:2px 9px;border-radius:999px;background:{COLORS['canvas']};"
-        f"border:1px solid {COLORS['border']};font-size:11px;font-weight:600;"
-        f"color:{_col}' title='Target {COVERAGE_TARGET:.0f}% — same thresholds "
-        f"as the KPI strip.'>{_dot} target {COVERAGE_TARGET:.0f}%</span>",
-        unsafe_allow_html=True,
-    )
+    _cov_help = ("Unique automated cases ÷ total cases (case basis). "
+                 "The Backlog tab's 'Coverage vs total' divides the same automated "
+                 "rows by baseline ROWS instead — both are correct, different bases.")
+    if show_target:
+        c4.metric("Coverage", f"{cov_pct:.1f}%",
+                  delta=f"{cov_pct - COVERAGE_TARGET:+.1f}% vs {COVERAGE_TARGET:.0f}% target",
+                  delta_color="normal", help=_cov_help)
+    else:
+        c4.metric("Coverage", f"{cov_pct:.1f}%", help=_cov_help)
 
     # ── section granularity ───────────────────────────────────────────────────
     st.markdown("")
@@ -647,6 +651,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             key_prefix=f"cov_regr_{scope}_{bu_choice}",
             scope=scope,
             show_tool_facet=False,   # already shown in the full view
+            show_target=True,        # the 80% target is defined on the baseline
         )
 
     st.divider()

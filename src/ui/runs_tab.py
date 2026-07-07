@@ -965,24 +965,31 @@ def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) 
 def _render_case_deep_dive() -> None:
     st.markdown("#### 🔬 In-depth Test Analysis")
     st.caption(
-        "Paste a TestRail **test-case URL** (or its ID) to trace every run it went "
-        "through and how it ended, its bug history, and what it covers."
+        "The full story of **one test case**: every recent run it appeared in and "
+        "the status it ended with, how many times it was executed, the JIRA bugs "
+        "it raised over time, and the story/requirement it covers."
     )
 
     c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
     raw = c1.text_input(
-        "Test case URL or ID", key="deep_case_input",
-        placeholder="https://…/index.php?/cases/view/3500712   or   C3500712",
-        label_visibility="collapsed",
+        "🔗 Test case URL or ID", key="deep_case_input",
+        placeholder="Paste the case link from TestRail…  e.g. …/index.php?/cases/view/3500712, C3500712 or 3500712",
+        help="Open the test case in TestRail and copy the address bar URL — "
+             "or just type its ID (with or without the leading C).",
     )
     depth = int(c2.number_input(
         "Runs to scan", min_value=20, max_value=400, value=80, step=20,
-        key="deep_depth", help="How many of the most-recent runs to search."))
+        key="deep_depth",
+        help="How far back to look: the N most-recent runs of the case's "
+             "project. Increase it if an older run you expect is missing."))
 
     case_id = _parse_case_id(raw)
     if not case_id:
         if raw.strip():
             st.warning("Couldn't read a case ID — use the full case URL or e.g. `C3500712`.")
+        else:
+            st.caption("💡 Try it with any case from the stability table above — "
+                       "paste its ID to see its full execution history.")
         return
 
     try:
