@@ -237,15 +237,21 @@ def main() -> None:
         with tab_explore:
             with st.container(key="explorer_anim"):
                 pivot_tab.render()
-        with tab_runs:
-            with st.container(key="runs_anim"):
-                runs_tab.render()
         with tab_overview:
             with st.container(key="overview_anim"):
                 overview_tab.render()
         with tab_report:
             with st.container(key="report_anim"):
                 report_tab.render()
+        # Runs is rendered LAST on purpose (its position in the tab bar is
+        # unchanged — content binds to its tab regardless of execution order):
+        # on the first visit of a BU it fires 30-50s of TestRail calls (plan
+        # details, failed results, stability tests), and executing it last
+        # means every other tab is ready in seconds instead of queueing
+        # behind it.
+        with tab_runs:
+            with st.container(key="runs_anim"):
+                runs_tab.render()
     except Exception as exc:  # global safety net — never crash the whole app
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
