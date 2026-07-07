@@ -193,32 +193,23 @@ def main() -> None:
                 if st.session_state.get("_warmed_ui"):
                     warmup_cache()
                 else:
-                    with st.container(key="warmup_status"):
-                        with st.status("⚡ Loading dashboard data…",
-                                       expanded=True) as _status:
-                            warmup_cache(on_step=_status.write)
-                            _status.update(label="✅ Dashboard ready",
-                                           state="complete", expanded=False)
+                    # The status lives in an st.empty slot: it streams the
+                    # verbose steps WHILE loading, then is REMOVED from the DOM
+                    # and replaced by a transient toast.  (The previous
+                    # CSS-hide approach left the box in the DOM, and switching
+                    # tabs re-triggered its animation — "Dashboard ready" kept
+                    # reappearing.)
+                    _warm_slot = st.empty()
+                    with _warm_slot.container():
+                        with st.container(key="warmup_status"):
+                            with st.status("⚡ Loading dashboard data…",
+                                           expanded=True) as _status:
+                                warmup_cache(on_step=_status.write)
+                                _status.update(label="✅ Dashboard ready",
+                                               state="complete", expanded=False)
+                    _warm_slot.empty()                       # gone for good
+                    st.toast("Dashboard ready — data loaded", icon="✅")
                     st.session_state["_warmed_ui"] = True
-                    # Auto-dismiss the collapsed "Dashboard ready" box: this CSS
-                    # is injected only AFTER completion, so the animation delay
-                    # counts from now (not from when loading started).  It fades
-                    # and collapses to zero height — no leftover gap.  The next
-                    # rerun skips the status entirely (_warmed_ui set).
-                    st.markdown(
-                        """<style>
-                        @keyframes warmupStatusAway {
-                            to { opacity: 0; max-height: 0;
-                                 margin: 0; padding: 0; }
-                        }
-                        .st-key-warmup_status {
-                            overflow: hidden;
-                            max-height: 400px;
-                            animation: warmupStatusAway 0.6s ease 2.5s forwards;
-                        }
-                        </style>""",
-                        unsafe_allow_html=True,
-                    )
             except ImportError:
                 pass
             except Exception:  # noqa: BLE001
