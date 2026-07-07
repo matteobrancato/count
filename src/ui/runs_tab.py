@@ -17,6 +17,7 @@ has a 6-h TTL because results never change once a run is closed.
 """
 from __future__ import annotations
 
+import html
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -469,6 +470,56 @@ def _classify_stability(runs: list[dict], min_executions: int = 5) -> pd.DataFra
     return df
 
 
+# ── run-row rendering (TestRail-style visual list) ──────────────────────────
+# Segment colours: passed / failed / blocked / retest / untested.
+_BAR_COLORS = [
+    ("passed",   "#16A34A"),
+    ("failed",   "#DC2626"),
+    ("blocked",  "#64748B"),
+    ("retest",   "#F59E0B"),
+    ("untested", "#E2E8F0"),
+]
+
+
+def _run_bar_html(r: dict) -> str:
+    """Stacked result bar — one coloured segment per status, TestRail-style."""
+    total = r["total"] or 1
+    tip = html.escape(
+        f"✅ {r['passed']:,} passed · ❌ {r['failed']:,} failed · "
+        f"🚫 {r['blocked']:,} blocked · 🔁 {r['retest']:,} retest · "
+        f"⚪ {r['untested']:,} untested — completion {r['completion']:.0f}%"
+    )
+    segs = "".join(
+        f"<span style='width:{r[key] / total * 100:.2f}%;background:{color}'></span>"
+        for key, color in _BAR_COLORS if r[key] > 0
+    )
+    return f"<div class='run-bar' title=\"{tip}\">{segs}</div>"
+
+
+def _run_row_html(r: dict) -> str:
+    """One run row: name/meta · stacked bar · passed % (+ bug badge)."""
+    name = html.escape(r["name"])
+    plan = html.escape(r["plan"] or "—")
+    total = r["total"]
+    pct_passed = (r["passed"] / total * 100) if total else 0.0
+    idle = (f" · idle {r['days_idle']}d"
+            if r["days_idle"] not in (None, 0) else "")
+    bugs = r.get("bugs_count", 0)
+    bug_html = f"<span class='run-bugchip'>🐛 {bugs}</span>" if bugs else ""
+    return (
+        f"<div class='run-row'>"
+        f"<div class='run-info'>"
+        f"<a href='{r['url']}' target='_blank'>{name}</a>"
+        f"<div class='run-meta'>{plan} · created {r['created_str'] or '—'}"
+        f" · last activity {r['updated_str'] or '—'}{idle}</div>"
+        f"</div>"
+        f"{_run_bar_html(r)}"
+        f"<div class='run-right'><span class='run-pct'>{pct_passed:.0f}%</span>"
+        f"<span class='run-sub'>{r['passed']:,}/{total:,} passed</span>{bug_html}</div>"
+        f"</div>"
+    )
+
+
 # ── UI sections ─────────────────────────────────────────────────────────────
 _CLASS_ORDER = ["Always fail", "Flaky", "Always pass", "Insufficient data"]
 _CLASS_EMOJI = {
@@ -537,59 +588,105 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
               help=f"Created {_days_since(oldest_open)} days ago"
               if oldest_open else None)
 
-    # ── Runs table (sorted by recency) ─────────────────────────────────────
-    df = pd.DataFrame(rows)
-    st.dataframe(
-        df[["name", "plan", "updated_str", "created_str", "days_idle",
-            "total", "passed", "failed", "blocked",
-            "completion", "pass_rate", "bugs_count", "url"]],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "name":         st.column_config.TextColumn("Run", width="large"),
-            "plan":         st.column_config.TextColumn("Plan", width="medium"),
-            "updated_str":  st.column_config.TextColumn(
-                "Last activity", width="small",
-                help="When the last test result was logged."),
-            "created_str":  st.column_config.TextColumn("Created", width="small"),
-            "days_idle":    st.column_config.NumberColumn(
-                "Idle d", help="Days since last activity."),
-            "total":        st.column_config.NumberColumn("Total"),
-            "passed":       st.column_config.NumberColumn("✅"),
-            "failed":       st.column_config.NumberColumn("❌"),
-            "blocked":      st.column_config.NumberColumn("🚫"),
-            "completion":   st.column_config.ProgressColumn(
-                "Completion", format="%.1f%%", min_value=0, max_value=100),
-            "pass_rate":    st.column_config.ProgressColumn(
-                "Pass rate", format="%.1f%%", min_value=0, max_value=100),
-            "bugs_count":   st.column_config.NumberColumn(
-                "🐛", help="Unique JIRA keys from failed results."),
-            "url":          st.column_config.LinkColumn("Open", display_text="↗"),
-        },
+    # ── Runs list — TestRail-style visual rows ─────────────────────────────
+    # Each row: name (link) + plan/dates, a stacked result bar (passed green,
+    # failed red, blocked slate, retest amber, untested grey) and the passed %
+    # — the at-a-glance read TestRail gives, plus bug badges it doesn't.
+    flt = st.text_input(
+        "Filter runs", key=f"runs_filter_{bu}",
+        placeholder="🔎 Filter by run or plan name…",
+        label_visibility="collapsed",
     )
+    needle  = flt.strip().lower()
+    visible = [r for r in rows
+               if not needle
+               or needle in (r["name"] or "").lower()
+               or needle in (r["plan"] or "").lower()]
+    if not visible:
+        st.info("No runs match the filter.")
+    shown = visible[:60]
+    st.markdown(
+        "<div class='run-list'>" + "".join(_run_row_html(r) for r in shown) + "</div>",
+        unsafe_allow_html=True,
+    )
+    if len(visible) > len(shown):
+        st.caption(f"Showing the {len(shown)} most recent of {len(visible)} runs — "
+                   f"use the filter to narrow down.")
 
-    # ── Bug detail table: bug ↔ test ↔ run ↔ date ──────────────────────────
+    with st.expander("📋 Table view (sortable columns)"):
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df[["name", "plan", "updated_str", "created_str", "days_idle",
+                "total", "passed", "failed", "blocked",
+                "completion", "pass_rate", "bugs_count", "url"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "name":         st.column_config.TextColumn("Run", width="large"),
+                "plan":         st.column_config.TextColumn("Plan", width="medium"),
+                "updated_str":  st.column_config.TextColumn(
+                    "Last activity", width="small",
+                    help="When the last test result was logged."),
+                "created_str":  st.column_config.TextColumn("Created", width="small"),
+                "days_idle":    st.column_config.NumberColumn(
+                    "Idle d", help="Days since last activity."),
+                "total":        st.column_config.NumberColumn("Total"),
+                "passed":       st.column_config.NumberColumn("✅"),
+                "failed":       st.column_config.NumberColumn("❌"),
+                "blocked":      st.column_config.NumberColumn("🚫"),
+                "completion":   st.column_config.ProgressColumn(
+                    "Completion", format="%.1f%%", min_value=0, max_value=100),
+                "pass_rate":    st.column_config.ProgressColumn(
+                    "Pass rate", format="%.1f%%", min_value=0, max_value=100),
+                "bugs_count":   st.column_config.NumberColumn(
+                    "🐛", help="Unique JIRA keys from failed results."),
+                "url":          st.column_config.LinkColumn("Open", display_text="↗"),
+            },
+        )
+
+    # ── Bug detail table: bug ↔ test ↔ run ↔ date (+ live Jira state) ──────
     if not bug_records:
         return
     st.markdown("##### 🐛 Bug → Test linkage")
+    bdf = pd.DataFrame(bug_records)
+
+    jira_info: dict[str, dict] = {}
+    try:
+        from .. import jira_client as jc
+        if jc.available():
+            jira_info = jc.fetch_issues(tuple(sorted({r["bug"] for r in bug_records})))
+    except Exception:                                                   # noqa: BLE001
+        jira_info = {}
+
+    cols = ["bug_url", "case_id", "case_title", "run_name", "failed_str"]
+    col_cfg = {
+        "bug_url":     st.column_config.LinkColumn(
+            "Bug", display_text=r"[A-Z][A-Z0-9_]+-\d+", width="small"),
+        "case_id":     st.column_config.NumberColumn("Test ID", width="small"),
+        "case_title":  st.column_config.TextColumn("Test title", width="large"),
+        "run_name":    st.column_config.TextColumn("Run", width="medium"),
+        "failed_str":  st.column_config.TextColumn("Failed on", width="small"),
+    }
+    if jira_info:
+        bdf["jira_status"] = bdf["bug"].map(
+            lambda k: f"{jira_info[k]['glyph']} {jira_info[k]['status']}"
+            if k in jira_info else "—")
+        bdf["fix_versions"] = bdf["bug"].map(
+            lambda k: ", ".join(jira_info[k]["fix_versions"]) or "—"
+            if k in jira_info else "—")
+        cols = ["bug_url", "jira_status", "fix_versions",
+                "case_id", "case_title", "run_name", "failed_str"]
+        col_cfg["jira_status"]  = st.column_config.TextColumn(
+            "Jira status", width="small", help="Live from Jira (10-min cache).")
+        col_cfg["fix_versions"] = st.column_config.TextColumn(
+            "Fix version", width="small")
     st.caption(
         f"{n_unique_bugs} unique JIRA keys across {len(bug_records)} failure events. "
         "Each row is one logged failure; click the bug key to open it in JIRA."
+        + (" Status and fix version are live from Jira." if jira_info else "")
     )
-    bdf = pd.DataFrame(bug_records)
-    st.dataframe(
-        bdf[["bug_url", "case_id", "case_title", "run_name", "failed_str"]],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "bug_url":     st.column_config.LinkColumn(
-                "Bug", display_text=r"[A-Z][A-Z0-9_]+-\d+", width="small"),
-            "case_id":     st.column_config.NumberColumn("Test ID", width="small"),
-            "case_title":  st.column_config.TextColumn("Test title", width="large"),
-            "run_name":    st.column_config.TextColumn("Run", width="medium"),
-            "failed_str":  st.column_config.TextColumn("Failed on", width="small"),
-        },
-    )
+    st.dataframe(bdf[cols], use_container_width=True, hide_index=True,
+                 column_config=col_cfg)
 
 
 @st.fragment
@@ -962,6 +1059,90 @@ def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) 
 
 
 @st.fragment
+def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> None:
+    """'Is the release ready?' — TestRail's latest regression run joined with
+    Jira's fix-version state.  The TestRail half always works; the Jira half
+    appears only when the Atlassian secrets are configured."""
+    st.markdown("#### 🚦 Release readiness")
+    st.caption(
+        "The latest **completed regression run** for this BU, and — pick a Jira "
+        "fix version — how close its scope is to done."
+    )
+
+    # ── TestRail half: latest completed run with 'regr' in the name ─────────
+    try:
+        completed = _completed_runs_for_bu(bu, project_ids, limit=30)
+    except Exception:                                                   # noqa: BLE001
+        completed = []
+    regr = [r for r in completed if "regr" in (r.get("name") or "").lower()]
+    if regr:
+        row = _summarise_run(regr[0], base_url)
+        row["bugs_count"] = 0            # not computed here — keep the row light
+        st.markdown(f"<div class='run-list'>{_run_row_html(row)}</div>",
+                    unsafe_allow_html=True)
+    else:
+        st.info("No completed regression run found in the recent history.")
+
+    # ── Jira half: fix-version scope state ──────────────────────────────────
+    try:
+        from .. import jira_client as jc
+        jira_ok = jc.available()
+    except Exception:                                                   # noqa: BLE001
+        jira_ok = False
+    if not jira_ok:
+        st.caption("🔌 Configure the Atlassian secrets to see fix-version "
+                   "readiness from Jira here.")
+        return
+
+    c1, c2 = st.columns([1, 2], vertical_alignment="bottom")
+    project_key = c1.text_input(
+        "Jira project key", key="rr_project", placeholder="e.g. EE20",
+        help="The prefix of the bug keys (EE20-1234 → EE20).",
+    ).strip().upper()
+    if not project_key:
+        return
+    versions = jc.fetch_versions(project_key)
+    if not versions:
+        c2.warning(f"No versions found for Jira project **{project_key}** "
+                   f"(check the key and your Jira permissions).")
+        return
+    names = [v["name"] for v in versions]
+    chosen = c2.selectbox("Fix version", names, key=f"rr_version_{project_key}")
+    ver = next(v for v in versions if v["name"] == chosen)
+
+    base_jql  = f'project = "{project_key}" AND fixVersion = "{chosen}"'
+    n_total   = jc.count_issues(base_jql)
+    n_done    = jc.count_issues(base_jql + " AND statusCategory = Done")
+    n_bugs    = jc.count_issues(
+        base_jql + " AND issuetype = Bug AND statusCategory != Done")
+
+    if n_total is None:
+        st.warning("Couldn't query Jira for this version right now.")
+        return
+    done_pct = (n_done / n_total * 100) if (n_total and n_done is not None) else 0.0
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Issues in scope", f"{n_total:,}")
+    m2.metric("Done", f"{n_done:,}" if n_done is not None else "—",
+              delta=f"{done_pct:.0f}%", delta_color="off")
+    m3.metric("Open bugs", f"{n_bugs:,}" if n_bugs is not None else "—")
+    m4.metric("Release date", ver["release_date"] or "—",
+              help="Planned release date from Jira"
+                   + (" · already released" if ver["released"] else ""))
+
+    # Simple, honest verdict — same RAG language as the rest of the dashboard.
+    if (n_bugs == 0) and done_pct >= 95:
+        st.success(f"🟢 **{chosen} looks ready** — {done_pct:.0f}% done, "
+                   f"no open bugs in scope.")
+    elif (n_bugs is not None and n_bugs <= 3) and done_pct >= 80:
+        st.warning(f"🟡 **{chosen} is close** — {done_pct:.0f}% done, "
+                   f"{n_bugs} open bug{'s' if n_bugs != 1 else ''} left.")
+    else:
+        st.error(f"🔴 **{chosen} is not ready** — {done_pct:.0f}% done, "
+                 f"{n_bugs if n_bugs is not None else '?'} open bugs in scope.")
+
+
+@st.fragment
 def _render_case_deep_dive() -> None:
     st.markdown("#### 🔬 In-depth Test Analysis")
     st.caption(
@@ -1083,6 +1264,23 @@ def _render_case_deep_dive() -> None:
         for k, ts, rname in all_bugs:
             if k not in latest or ts > latest[k][0]:
                 latest[k] = (ts, rname)
+        # Live Jira state on each chip (best-effort — chips render without it).
+        jira_info: dict[str, dict] = {}
+        try:
+            from .. import jira_client as jc
+            if jc.available():
+                jira_info = jc.fetch_issues(tuple(uniq_bugs))
+        except Exception:                                               # noqa: BLE001
+            jira_info = {}
+
+        def _chip_state(k: str) -> str:
+            info = jira_info.get(k)
+            if not info:
+                return ""
+            fx = f" → {', '.join(info['fix_versions'])}" if info["fix_versions"] else ""
+            return (f"<span style='color:{COLORS['text']};font-weight:600'>"
+                    f"· {info['glyph']} {info['status']}{fx}</span>")
+
         chips = "".join(
             f"<a href='{JIRA_BROWSE_URL}{k}' target='_blank' "
             f"style='display:inline-flex;align-items:center;gap:6px;margin:0 6px 6px 0;"
@@ -1090,7 +1288,7 @@ def _render_case_deep_dive() -> None:
             f"border-radius:999px;padding:4px 11px;font-size:12px;font-weight:600;"
             f"color:{COLORS['brand']};text-decoration:none'>🐞 {k}"
             f"<span style='color:{COLORS['muted']};font-weight:500'>"
-            f"· {_ts_to_date(latest[k][0])}</span></a>"
+            f"· {_ts_to_date(latest[k][0])}</span>{_chip_state(k)}</a>"
             for k in uniq_bugs
         )
         st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
@@ -1124,5 +1322,7 @@ def render() -> None:
     _render_active_runs(bu, project_ids, base_url)
     st.divider()
     _render_stability(bu, project_ids)
+    st.divider()
+    _render_release_readiness(bu, project_ids, base_url)
     st.divider()
     _render_case_deep_dive()

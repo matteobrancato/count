@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import time
 import traceback
-
 import streamlit as st
-
 from src import testrail_client as tr
 from src.ui import (
     backlog_tab, chat_assistant, coverage_tab, global_filter, kpi_strip,
@@ -14,7 +12,7 @@ from src.ui.styles import COLORS
 
 
 st.set_page_config(
-    page_title="Automation Coverage",
+    page_title="Automation Dashboard",
     page_icon="🧪",
     layout="wide",
     initial_sidebar_state="collapsed",

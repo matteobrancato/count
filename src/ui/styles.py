@@ -505,6 +505,72 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 }}
 ::-webkit-scrollbar-thumb:hover {{ background: {c['faint']}; }}
 
+/* ── Runs list — TestRail-style visual rows ──────────────────────────────────
+   name/meta · stacked result bar · passed % — instant read of every run. */
+.run-list {{ display: flex; flex-direction: column; gap: 8px; }}
+.run-row {{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px 175px;
+    gap: 18px;
+    align-items: center;
+    background: {c['surface']};
+    border: 1px solid {c['border']};
+    border-radius: 12px;
+    padding: 10px 16px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    transition: box-shadow .15s ease, border-color .15s ease;
+}}
+.run-row:hover {{
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    border-color: {c['border_2']};
+}}
+.run-info a {{
+    font-weight: 700;
+    font-size: 13.5px;
+    color: {c['ink']};
+    text-decoration: none;
+}}
+.run-info a:hover {{ color: {c['brand']}; text-decoration: underline; }}
+.run-meta {{
+    font-size: 11.5px;
+    color: {c['muted']};
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}}
+.run-bar {{
+    display: flex;
+    height: 14px;
+    border-radius: 7px;
+    overflow: hidden;
+    background: {c['grid']};
+}}
+.run-bar span {{ display: block; height: 100%; }}
+.run-right {{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    white-space: nowrap;
+}}
+.run-pct {{ font-weight: 800; font-size: 15px; color: {c['ink']}; }}
+.run-sub {{ font-size: 11px; color: {c['muted']}; }}
+.run-bugchip {{
+    background: #FFF1F1;
+    border: 1px solid #FFD9D9;
+    color: #DC2626;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+}}
+/* Narrow screens: stack the three cells */
+@media (max-width: 1100px) {{
+    .run-row {{ grid-template-columns: 1fr; gap: 8px; }}
+    .run-right {{ justify-content: flex-start; }}
+}}
+
 /* ── Warm-up status box: livelier loading (texts stay) ────────────────────────
    1. An indeterminate gradient bar sweeps along the top edge (Linear/GitHub
       style) while the box exists.

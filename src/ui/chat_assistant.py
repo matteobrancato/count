@@ -163,6 +163,8 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
   • Call a tool ONLY for live detail NOT in the snapshot (at most one):
       - get_active_runs(bu)    → currently open/running runs + pass rates
       - get_open_bugs(bu)      → open JIRA bugs and the tests that raised them
+        (each bug includes live Jira status / resolution / fix versions
+        when the Jira integration is configured)
       - get_test_stability(bu) → flaky / always-fail analysis over recent runs
     All three accept scope="mobile_app" when the user asks about the mobile
     app / MAPP; the default covers website + Next Gen.
@@ -478,6 +480,23 @@ def get_open_bugs(bu: str, scope: str = "website") -> dict:
     rows = [runs_tab._summarise_run(r, base_url) for r in bu_runs]
     bug_records = runs_tab._collect_bug_records(rows)
 
+    # Best-effort Jira enrichment: status / resolution / fix versions, live.
+    jira_info: dict[str, dict] = {}
+    try:
+        from .. import jira_client as jc
+        if jc.available():
+            jira_info = jc.fetch_issues(tuple(sorted({r["bug"] for r in bug_records})))
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("get_open_bugs: Jira enrichment failed")
+
+    def _jira(rec: dict) -> dict:
+        info = jira_info.get(rec["bug"]) or {}
+        return {
+            "jira_status":  info.get("status"),
+            "resolution":   info.get("resolution"),
+            "fix_versions": info.get("fix_versions"),
+        } if info else {}
+
     return {
         "business_unit": canonical,
         "bug_count":     len({rec["bug"] for rec in bug_records}),
@@ -489,6 +508,7 @@ def get_open_bugs(bu: str, scope: str = "website") -> dict:
                 "test_title":  rec["case_title"],
                 "run_name":    rec["run_name"],
                 "failed_on":   rec["failed_str"],
+                **_jira(rec),
             }
             for rec in bug_records
         ],

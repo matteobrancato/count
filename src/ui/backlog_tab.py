@@ -658,3 +658,8 @@ def render() -> None:
         return
     st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
     _detail_view(bu, scope, expanded_by_bu, auto_by_bu)
+
+    # ── TestRail hygiene checklist (zero extra API calls) ────────────────────
+    st.divider()
+    from . import data_quality
+    data_quality.render()
