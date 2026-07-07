@@ -543,30 +543,22 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
 
-/* ── Apple-style scroll-reveal (all data tabs) ────────────────────────────────
-   Pure CSS scroll-driven animation — each block fades + rises as it scrolls into
-   view, so long pages feel alive instead of heavy.  Applies to any container
-   whose key ends in `_anim` (each tab wraps its body in one).  Gated behind
-   @supports so browsers WITHOUT scroll timelines (Safari/Firefox today) just
-   render everything normally — content can never get stuck invisible.  Anything
-   already on screen at load is past its entry range, so it shows instantly. */
-@supports (animation-timeline: view()) {{
-  @media (prefers-reduced-motion: no-preference) {{
-    @keyframes covReveal {{
-      from {{ opacity: 0; transform: translateY(64px) scale(0.96); filter: blur(6px); }}
-      60%  {{ filter: blur(0); }}
-      to   {{ opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }}
-    }}
-    /* Entry-based range: the reveal completes as the element finishes ENTERING
-       the viewport.  (The previous `cover 45%` endpoint was unreachable for the
-       last blocks of a page — the scroll ends before they travel that far — so
-       they stayed stuck half-blurred.)  entry 85% leaves a little margin so
-       even the final block sharpens just before max scroll. */
-    [class*="st-key-"][class*="_anim"] [data-testid="stElementContainer"] {{
-      animation: covReveal cubic-bezier(0.22, 0.61, 0.36, 1) both;
-      animation-timeline: view();
-      animation-range: entry 0% entry 85%;
-    }}
+/* ── Gentle entrance animation (all data tabs) ────────────────────────────────
+   TIME-based fade + rise on every block of a tab's body (`*_anim` containers) —
+   it always completes in half a second, by construction.
+
+   Deliberately NOT scroll-driven: `animation-timeline: view()` proved
+   unreliable with Streamlit's dynamic DOM — tab panels toggling display and
+   fragment rerenders left random blocks frozen mid-animation (half-blurred
+   headings, near-invisible sections).  A plain animation cannot get stuck, and
+   restarting when a tab becomes visible reads as a pleasant soft fade-in. */
+@media (prefers-reduced-motion: no-preference) {{
+  @keyframes blockIn {{
+    from {{ opacity: 0; transform: translateY(14px); }}
+    to   {{ opacity: 1; transform: none; }}
+  }}
+  [class*="st-key-"][class*="_anim"] [data-testid="stElementContainer"] {{
+    animation: blockIn 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
   }}
 }}
 </style>
