@@ -76,14 +76,18 @@ def _chip(dot: str, label: str, value: str, sub: str = "", tooltip: str = "") ->
 def render_skeleton() -> None:
     """Shimmering placeholder with the SAME footprint as the real strip —
     rendered during the first load so the page layout doesn't shift (and the
-    strip can't visually merge with the filter bar) when the chips arrive."""
-    with st.container(key="kpi_strip"):
-        st.markdown(
-            "<div class='kpi-row'>"
-            + "".join("<span class='kpi-skeleton'></span>" for _ in range(5))
-            + "</div>",
-            unsafe_allow_html=True,
-        )
+    strip can't visually merge with the filter bar) when the chips arrive.
+
+    Plain markdown (no keyed container): the strip and this skeleton live in
+    the same st.empty slot within one run, and two containers sharing a key
+    raise StreamlitDuplicateElementKey — which silently kept the skeleton
+    frozen on screen."""
+    st.markdown(
+        "<div class='kpi-card'><div class='kpi-row'>"
+        + "".join("<span class='kpi-skeleton'></span>" for _ in range(5))
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render() -> None:
@@ -134,6 +138,7 @@ def render() -> None:
     chips.append(_chip(dot, "Focus", f"{worst['bu']} {worst['pct']:.1f}%",
                        tooltip="Lowest overall coverage — needs attention."))
 
-    with st.container(key="kpi_strip"):
-        st.markdown(f"<div class='kpi-row'>{''.join(chips)}</div>",
-                    unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='kpi-card'><div class='kpi-row'>{''.join(chips)}</div></div>",
+        unsafe_allow_html=True,
+    )

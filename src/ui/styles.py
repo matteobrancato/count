@@ -215,7 +215,7 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 
 /* ── Group KPI strip (under the header, above the filter bar) ─────────────────
    The 5-second "state of the world" for managers — chips with RAG dots. */
-.st-key-kpi_strip {{
+.kpi-card {{
     background: {c['surface']};
     border: 1px solid {c['border']};
     border-radius: 14px;
