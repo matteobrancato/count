@@ -622,7 +622,7 @@ def render() -> None:
         hide_index=True,
         column_config={
             "Health":    st.column_config.TextColumn(
-                "", width="small",
+                "", width=44,   # pixels \u2014 a snug dot column, not the wide "small" preset
                 help=f"\U0001f7e2 \u2265 {COVERAGE_TARGET:.0f}% \u00b7 \U0001f7e1 \u2265 60% \u00b7 \U0001f534 below \u2014 same thresholds as the KPI strip."),
             "BU":        st.column_config.TextColumn("Business Unit", width="medium"),
             "Scope":     st.column_config.TextColumn("Scope",         width="small"),

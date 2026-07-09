@@ -111,6 +111,40 @@ def fetch_issues(keys: tuple[str, ...]) -> dict[str, dict]:
     return out
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_projects() -> list[dict]:
+    """All accessible Jira projects — [{key, name}], sorted by key.
+
+    Paginated through `project/search`; empty list on any failure."""
+    conf = _conf()
+    if not conf:
+        return []
+    base, user, token = conf
+    auth = HTTPBasicAuth(user, token)
+    out: list[dict] = []
+    start = 0
+    try:
+        while True:
+            resp = requests.get(
+                f"{base}/rest/api/3/project/search",
+                params={"startAt": start, "maxResults": 50},
+                auth=auth, timeout=_TIMEOUT,
+            )
+            if not resp.ok:
+                break
+            data = resp.json()
+            for p in data.get("values", []):
+                out.append({"key": p.get("key", ""), "name": p.get("name", "")})
+            if data.get("isLast", True) or not data.get("values"):
+                break
+            start += len(data["values"])
+        out.sort(key=lambda p: p["key"])
+        return out
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("Jira projects fetch failed")
+        return out
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_versions(project_key: str) -> list[dict]:
     """Fix versions of a Jira project — unreleased first, most recent first.

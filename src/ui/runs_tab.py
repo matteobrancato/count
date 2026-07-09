@@ -661,7 +661,9 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
     cols = ["bug_url", "case_id", "case_title", "run_name", "failed_str"]
     col_cfg = {
         "bug_url":     st.column_config.LinkColumn(
-            "Bug", display_text=r"[A-Z][A-Z0-9_]+-\d+", width="small"),
+            # Capture group extracts the key from the URL (…/browse/EE20-1234);
+            # a pattern WITHOUT a group makes Streamlit print the raw regex.
+            "Bug", display_text=r"/browse/([A-Z][A-Z0-9_]+-\d+)", width="small"),
         "case_id":     st.column_config.NumberColumn("Test ID", width="small"),
         "case_title":  st.column_config.TextColumn("Test title", width="large"),
         "run_name":    st.column_config.TextColumn("Run", width="medium"),
@@ -1095,12 +1097,24 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
         return
 
     c1, c2 = st.columns([1, 2], vertical_alignment="bottom")
-    project_key = c1.text_input(
-        "Jira project key", key="rr_project", placeholder="e.g. EE20",
-        help="The prefix of the bug keys (EE20-1234 → EE20).",
-    ).strip().upper()
-    if not project_key:
-        return
+    projects = jc.fetch_projects()
+    if projects:
+        labels = [f"{p['key']} — {p['name']}" for p in projects]
+        chosen_proj = c1.selectbox(
+            "Jira project", labels, key="rr_project",
+            index=None, placeholder="Choose a project…",
+            help="The Jira project whose fix versions you want to check.")
+        if not chosen_proj:
+            return
+        project_key = projects[labels.index(chosen_proj)]["key"]
+    else:
+        # Fallback (no project list / permission): free-text key entry.
+        project_key = c1.text_input(
+            "Jira project key", key="rr_project_txt", placeholder="e.g. EE20",
+            help="The prefix of the bug keys (EE20-1234 → EE20).",
+        ).strip().upper()
+        if not project_key:
+            return
     versions = jc.fetch_versions(project_key)
     if not versions:
         c2.warning(f"No versions found for Jira project **{project_key}** "
