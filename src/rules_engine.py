@@ -493,7 +493,14 @@ def _evaluate_rules_cached(rule_names: tuple[str, ...]) -> ExpansionResult:
         if _PROGRESS_HOOK:
             try:
                 _PROGRESS_HOOK(i_rule, len(rules), rule.name)
-            except Exception:                                           # noqa: BLE001
+            except BaseException:                                       # noqa: BLE001
+                # BaseException on purpose: when the session that started this
+                # computation is killed (browser refresh), Streamlit aborts its
+                # script with control-flow exceptions that BYPASS `Exception`.
+                # The hook only updates that session's UI — its death must not
+                # abort the SHARED computation other sessions are waiting on
+                # (single-flight).  The dead script still stops at its next
+                # top-level st call.
                 pass
         cases    = suite_cases.get(rule.suite_id, [])
         sect_map = suite_sections.get(rule.suite_id, {})

@@ -30,7 +30,7 @@ On-demand tools exposed to Gemini
 
 Internal helpers (NOT exposed — used to build the snapshot)
 ──────────────────────────────────────────────────────────
-    list_bus() · get_bu_coverage(bu) · compare_bus()
+    list_bus() · get_bu_coverage(bu)
 
 Privacy
 ───────
@@ -605,34 +605,6 @@ def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5,
         "classification_counts": counts,
         "top_failing_cases":     top_failing,
     }
-
-
-@_safe_tool
-def compare_bus() -> dict:
-    """Rank all Business Units by overall automation coverage %.
-
-    Returns a list sorted from highest to lowest coverage, so the user can see
-    at a glance who's ahead and who needs attention.
-    """
-    bus = sorted({r.bu for r in ALL_RULES})
-    rankings: list[dict[str, Any]] = []
-    _frames: dict = {}
-    for bu in bus:
-        try:
-            data = get_bu_coverage(bu, _frames=_frames)
-        except Exception as exc:                                        # noqa: BLE001
-            logger.warning("compare_bus: %s failed: %s", bu, exc)
-            continue
-        if "error" in data:
-            continue
-        rankings.append({
-            "business_unit":    data["business_unit"],
-            "coverage_pct":     data["coverage_pct"],
-            "total_cases":      data["total_cases"],
-            "automated_unique": data["automated_unique"],
-        })
-    rankings.sort(key=lambda r: -r["coverage_pct"])
-    return {"ranking": rankings}
 
 
 # Tools exposed to Gemini = ONLY the live/heavy detail that is NOT in the

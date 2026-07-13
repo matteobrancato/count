@@ -443,7 +443,7 @@ def clear_all_caches() -> None:
 
 
 # ----------------------------------------------------------------- startup pre-warm
-# Wall-clock of the last pre-warm.  Slightly shorter than the data TTL (3600s)
+# Wall-clock of the last pre-warm.  Slightly shorter than the data TTL (6h)
 # so the parallel pre-warm kicks in again just before the cache entries lapse —
 # the old boolean flag never reset, leaving every post-TTL refresh un-warmed.
 _WARMED_AT = 0.0
@@ -501,5 +501,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
             if on_progress:
                 try:
                     on_progress(n_done, n_total)
-                except Exception:                                       # noqa: BLE001
+                except BaseException:                                   # noqa: BLE001
+                    # See evaluate_rules' progress hook: a killed session's UI
+                    # callback must not abort the shared download.
                     pass

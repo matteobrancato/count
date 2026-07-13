@@ -1,19 +1,21 @@
-"""Runs tab — live status of active TestRail runs + test stability history.
+"""Runs tab — live TestRail runs, stability, release readiness & case deep-dive.
 
-Two sections, both filtered by the selected BU:
+Four sections, filtered by the global scope+BU selector:
 
-  1. **Active runs** — for each run currently open, show pass/fail counts,
-     completion %, and the unique JIRA-like defect keys extracted from failed
-     results' `defects` field (handles both raw "EE20-1234" keys and Jira links).
+  1. **Active runs** — TestRail-style visual rows (stacked result bar, passed %,
+     bug badges) with a name filter and a sortable table view; bugs are
+     enriched live from Jira (status / fix version) when configured.
+  2. **Stability history** — classify each case over the last *N* completed
+     runs: always pass / always fail / flaky / insufficient data.
+  3. **Release readiness** — the latest completed regression run joined with a
+     Jira fix version's scope state (done %, open bugs, RAG verdict).
+  4. **In-depth Test Analysis** — paste a case URL/ID to trace every run it
+     went through, its bug history and what it covers.
 
-  2. **Stability history** — analyse the last *N* completed runs, classify each
-     case as "always pass / always fail / flaky / insufficient data" based on
-     its status pattern across those runs.  Highlights stuck failures (always
-     fail) and flaky tests that pollute regression noise.
-
-Data lives entirely in TestRail, fetched via the cached helpers in
-`testrail_client.py`.  Active-run data has a 10-min TTL; completed-run data
-has a 6-h TTL because results never change once a run is closed.
+Sections 1-3 query TestRail LIVE, so they load ON DEMAND behind an explicit
+button (the page itself stays instant); the deep-dive is always available.
+Active-run data has a 10-min TTL; completed-run data never changes once a run
+is closed, so it gets a longer TTL.
 """
 from __future__ import annotations
 

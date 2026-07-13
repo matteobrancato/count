@@ -1,6 +1,9 @@
-streamlit>=1.39
-pandas>=2.2
-requests>=2.32
-tenacity>=8.5
-altair
-google-genai>=0.3
+# Pinned to the exact versions proven on Streamlit Cloud (2026-07-13) —
+# unpinned ranges let a silent dependency upgrade (e.g. a future pandas major)
+# break a working deploy.  Bump deliberately, test, then re-pin.
+streamlit==1.59.2
+pandas==3.0.3
+requests==2.34.2
+tenacity==9.1.4
+altair==6.2.2
+google-genai==2.11.0
