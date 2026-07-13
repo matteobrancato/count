@@ -444,6 +444,13 @@ def _fetch_suite_data(sid: int, pid: int) -> tuple[int, list[dict], dict[int, st
     return sid, cases, sections
 
 
+# Progress hook for the warm-up's live label: evaluate_rules is @st.cache_data,
+# so its signature must stay hashable — the warm-up injects a callback via this
+# module global instead (set → call → clear).  Cache HITS never invoke it, and
+# any UI error inside the hook is swallowed.
+_PROGRESS_HOOK = None
+
+
 # No built-in spinner: the startup warm-up (warmup_cache) drives its own verbose
 # status, and after warm-up every call is a cache hit — so a spinner here would
 # only ever double up with the warm-up status.
@@ -481,7 +488,12 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
     raw_rows:       list[dict] = []
     seen_raw: set[tuple[int, int]] = set()
 
-    for rule in rules:
+    for i_rule, rule in enumerate(rules, 1):
+        if _PROGRESS_HOOK:
+            try:
+                _PROGRESS_HOOK(i_rule, len(rules), rule.name)
+            except Exception:                                           # noqa: BLE001
+                pass
         cases    = suite_cases.get(rule.suite_id, [])
         sect_map = suite_sections.get(rule.suite_id, {})
         pid      = suite_to_project.get(rule.suite_id)
@@ -543,7 +555,9 @@ def warmup_cache(on_step=None, on_label=None) -> None:
         _t_phase = _time.time()
         if elapsed >= 0.05:
             msg = f"{msg}  `+{elapsed:.1f}s`"
-            logger.info("warmup: previous phase took %.1fs → %s", elapsed, msg)
+        # WARNING level so the lines actually show in Streamlit Cloud's log
+        # panel (root logger defaults to WARNING — info lines were invisible).
+        logger.warning("warmup: %s", msg)
         if on_step:
             on_step(msg)
 
@@ -582,12 +596,27 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     _pretty = {"website": "Website", "next_gen": "Next Gen", "mobile_app": "Mobile App"}
     scopes = [s for s in ("website", "next_gen")
               if any(r.scope == s for r in ALL_RULES)]
+    global _PROGRESS_HOOK
     for i, scope in enumerate(scopes, 1):
         step(f"🧮 Expanding coverage rules — {_pretty.get(scope, scope)} "
              f"({i}/{len(scopes)})…")
         rules = [r for r in ALL_RULES if r.scope == scope]
         if rules:
-            evaluate_rules(tuple(r.name for r in rules))
+            _t_exp = _time.time()
+            _scope_lbl = _pretty.get(scope, scope)
+
+            def _exp_progress(done: int, total: int, _name: str) -> None:
+                if on_label:
+                    on_label(f"⚡ Loading dashboard data… · 🧮 {_scope_lbl} "
+                             f"rule {done}/{total} · {int(_time.time() - _t_exp)}s")
+
+            _PROGRESS_HOOK = _exp_progress
+            try:
+                evaluate_rules(tuple(r.name for r in rules))
+            finally:
+                _PROGRESS_HOOK = None
+            if on_label:
+                on_label("⚡ Loading dashboard data…")
 
     # Phase 3 – pre-build the derived layers while the data is hot, so the
     # Backlog tab renders instantly and Dexter's first reply doesn't pay the
