@@ -97,13 +97,13 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
         t1, t2, t3 = st.tabs(["By BU", "By Country", "By Device"])
         with t1:
             st.dataframe(metrics.breakdown_by(subset, ["bu"]),
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
         with t2:
             st.dataframe(metrics.breakdown_by(subset, ["bu", "country_label"]),
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
         with t3:
             st.dataframe(metrics.breakdown_by(subset, ["bu", "country_label", "device"]),
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
 
 
 # --------------------------------------------------------------------- render

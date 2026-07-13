@@ -1206,7 +1206,7 @@ def _render_chat_panel() -> None:
             unsafe_allow_html=True,
         )
         if head_r.button("Delete chat", key="ai_delete_chat",
-                         use_container_width=True):
+                         width="stretch"):
             st.session_state["ai_chat_messages"]   = []
             st.session_state["ai_chat_session_id"] = sid + 1
             st.rerun()
@@ -1244,7 +1244,7 @@ def _render_chat_panel() -> None:
             "Message", placeholder="Ask anything…",
             label_visibility="collapsed", key=f"ai_input_{sid}",
         )
-        submitted = cols[1].form_submit_button("→", use_container_width=True)
+        submitted = cols[1].form_submit_button("→", width="stretch")
     if submitted and user_input.strip():
         _queue_user_message(user_input.strip())
         st.rerun()
@@ -1275,5 +1275,5 @@ def render_floating_button() -> None:
         # The popover trigger button IS the FAB — an always-expanded pill whose
         # label is plain "Ask Dexter"; the sparkle icon is CSS ::before.  No
         # animation, nothing to clip or drift.
-        with st.popover("Ask Dexter", use_container_width=False):
+        with st.popover("Ask Dexter", width="content"):
             _render_chat_panel()

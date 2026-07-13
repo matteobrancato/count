@@ -19,6 +19,7 @@ Output DataFrame columns:
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
@@ -455,7 +456,7 @@ _PROGRESS_HOOK = None
 # status, and after warm-up every call is a cache hit — so a spinner here would
 # only ever double up with the warm-up status.
 @st.cache_data(show_spinner=False, ttl=21600)
-def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
+def _evaluate_rules_cached(rule_names: tuple[str, ...]) -> ExpansionResult:
     reg      = get_registry()
     rules    = [r for r in ALL_RULES if r.name in rule_names]
     base_url = tr.TestRailCredentials.from_secrets().base_url
@@ -523,6 +524,25 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
         automated = pd.DataFrame(automated_rows) if automated_rows else pd.DataFrame(),
         raw_cases = pd.DataFrame(raw_rows)        if raw_rows       else pd.DataFrame(),
     )
+
+
+_EVAL_SF_GUARD = threading.Lock()
+_EVAL_SF_LOCKS: dict[tuple, threading.Lock] = {}
+
+
+def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
+    """Single-flight wrapper: concurrent sessions computing the same tuple
+    wait for the first computation instead of re-downloading + re-expanding
+    (st.cache_data does not deduplicate concurrent misses — a refresh during
+    the first load used to multiply the whole cold start)."""
+    with _EVAL_SF_GUARD:
+        lock = _EVAL_SF_LOCKS.setdefault(rule_names, threading.Lock())
+    with lock:
+        return _evaluate_rules_cached(rule_names)
+
+
+# The refresh button / watchdog clear the cache through the public name.
+evaluate_rules.clear = _evaluate_rules_cached.clear   # type: ignore[attr-defined]
 
 
 # ----------------------------------------------------------------- warmup
@@ -628,12 +648,9 @@ def warmup_cache(on_step=None, on_label=None) -> None:
         _backlog_data()
     except Exception:                                                   # noqa: BLE001
         logger.exception("warmup: backlog summary pre-build failed")
-    step("🤖 Preparing the AI assistant…")
-    try:
-        from .ui.chat_assistant import _build_coverage_brief
-        _build_coverage_brief()
-    except Exception:                                                   # noqa: BLE001
-        logger.exception("warmup: coverage brief pre-build failed")
+    # NOTE: Dexter's coverage brief is deliberately NOT built here — it costs
+    # ~30s on Cloud's vCPU and doesn't block any visible tab.  app.py builds
+    # it right AFTER the page has rendered (off the critical path).
     step("📈 Computing group KPIs…")
     try:
         from .ui.kpi_strip import _kpis

@@ -501,7 +501,7 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
             margins=True,
             margins_name="Total",
         )
-        st.dataframe(pv, use_container_width=True)
+        st.dataframe(pv, width="stretch")
     except Exception as exc:
         st.error(f"Pivot error: {exc}")
 
@@ -618,7 +618,7 @@ def render() -> None:
                    display["Cov. %"].map(lambda p: coverage_health(float(p))[0]))
     st.dataframe(
         display,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Health":    st.column_config.TextColumn(

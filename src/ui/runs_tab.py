@@ -620,7 +620,7 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
             df[["name", "plan", "updated_str", "created_str", "days_idle",
                 "total", "passed", "failed", "blocked",
                 "completion", "pass_rate", "bugs_count", "url"]],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "name":         st.column_config.TextColumn("Run", width="large"),
@@ -688,7 +688,7 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
         "Each row is one logged failure; click the bug key to open it in JIRA."
         + (" Status and fix version are live from Jira." if jira_info else "")
     )
-    st.dataframe(bdf[cols], use_container_width=True, hide_index=True,
+    st.dataframe(bdf[cols], width="stretch", hide_index=True,
                  column_config=col_cfg)
 
 
@@ -773,7 +773,7 @@ def _render_stability(bu: str, project_ids: set[int]) -> None:
             "Failed":   int(r.get("failed_count")  or 0),
             "Blocked":  int(r.get("blocked_count") or 0),
         } for r in ordered_runs])
-        st.dataframe(rdf, use_container_width=True, hide_index=True)
+        st.dataframe(rdf, width="stretch", hide_index=True)
 
     # Filter by classification (default: hide always-pass to surface the noise)
     pick = st.multiselect(
@@ -798,7 +798,7 @@ def _render_stability(bu: str, project_ids: set[int]) -> None:
     st.dataframe(
         sub[["case_url", "title", "pattern", "executions", "pass", "fail",
              "blocked", "classification", "failure_rate"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "case_url":       st.column_config.LinkColumn(
@@ -1261,7 +1261,7 @@ def _render_case_deep_dive() -> None:
     st.markdown("##### 🗓 Execution history")
     df = pd.DataFrame(records).drop(columns=["_ts", "_pass"])
     st.dataframe(
-        df, use_container_width=True, hide_index=True,
+        df, width="stretch", hide_index=True,
         column_config={
             "Run":          st.column_config.TextColumn("Run", width="large"),
             "Plan":         st.column_config.TextColumn("Plan", width="medium"),

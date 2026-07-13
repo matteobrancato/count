@@ -147,7 +147,7 @@ def _suite_status(raw: pd.DataFrame, rules: list, key_prefix: str) -> None:
             aggfunc="sum", fill_value=0,
             margins=True, margins_name="Total",
         )
-        st.dataframe(pv, use_container_width=True)
+        st.dataframe(pv, width="stretch")
     except Exception as exc:
         st.error(f"Pivot error: {exc}")
 
@@ -312,7 +312,7 @@ def _pivot_builder(
             margins=True,
             margins_name="Total",
         )
-        st.dataframe(pv, use_container_width=True)
+        st.dataframe(pv, width="stretch")
     except Exception as exc:
         st.error(f"Pivot error: {exc}")
 
@@ -404,7 +404,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
     for raw_col, disp_lbl in status_display.items():
         col_cfg[disp_lbl] = st.column_config.TextColumn(disp_lbl, width="small")
 
-    st.dataframe(disp, use_container_width=True, hide_index=True, column_config=col_cfg)
+    st.dataframe(disp, width="stretch", hide_index=True, column_config=col_cfg)
 
     n_cases = detail["case_id"].nunique()
     n_rows  = len(detail)

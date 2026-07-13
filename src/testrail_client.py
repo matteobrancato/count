@@ -42,6 +42,22 @@ _PACE_NEXT = 0.0
 _PACE_INTERVAL = 0.35
 
 
+# ── single-flight ─────────────────────────────────────────────────────────────
+# st.cache_data does NOT deduplicate concurrent MISSES: when several sessions
+# hit the same cold key together (e.g. the user refreshes during the first
+# load), each one recomputes — we measured FOUR parallel full downloads
+# queueing on the pacer (338s instead of ~70s).  These per-key locks make
+# every concurrent caller WAIT for the first computation and then hit the
+# fresh cache entry instead of re-downloading.
+_SF_GUARD = threading.Lock()
+_SF_LOCKS: dict[tuple, threading.Lock] = {}
+
+
+def _sf_lock(key: tuple) -> threading.Lock:
+    with _SF_GUARD:
+        return _SF_LOCKS.setdefault(key, threading.Lock())
+
+
 def _pace() -> None:
     """Block until this thread's reserved request slot arrives."""
     global _PACE_NEXT
@@ -305,8 +321,13 @@ def fetch_suite(suite_id: int) -> dict:
 
 
 @st.cache_data(show_spinner=False, ttl=21600)
-def fetch_sections(project_id: int, suite_id: int) -> list[dict]:
+def _fetch_sections_cached(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_sections(project_id, suite_id)
+
+
+def fetch_sections(project_id: int, suite_id: int) -> list[dict]:
+    with _sf_lock(("sections", project_id, suite_id)):
+        return _fetch_sections_cached(project_id, suite_id)
 
 
 # Heavy free-text fields stripped from the BULK case cache: nothing in the
@@ -329,15 +350,25 @@ def _slim_case(case: dict) -> dict:
 
 
 @st.cache_data(show_spinner=False, ttl=21600)
-def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
+def _fetch_cases_cached(project_id: int, suite_id: int) -> list[dict]:
     return [_slim_case(c) for c in _get_client().get_cases(project_id, suite_id)]
 
 
+def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
+    with _sf_lock(("cases", project_id, suite_id)):
+        return _fetch_cases_cached(project_id, suite_id)
+
+
 @st.cache_data(show_spinner=False, ttl=21600)
-def fetch_labels(project_id: int) -> dict[int, str]:
+def _fetch_labels_cached(project_id: int) -> dict[int, str]:
     """Return {label_id: label_name} for the given project."""
     raw = _get_client().get_labels(project_id)
     return {int(lbl["id"]): lbl.get("title", lbl.get("name", "")) for lbl in raw}
+
+
+def fetch_labels(project_id: int) -> dict[int, str]:
+    with _sf_lock(("labels", project_id)):
+        return _fetch_labels_cached(project_id)
 
 
 # ── runs / plans / results — shorter TTL because active state changes often ──
@@ -403,7 +434,8 @@ def resolve_project_id(suite_id: int) -> int:
 
 def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
-               fetch_suite, fetch_sections, fetch_cases, fetch_labels,
+               fetch_suite, _fetch_sections_cached, _fetch_cases_cached,
+               _fetch_labels_cached,
                fetch_runs, fetch_plans, fetch_plan, fetch_tests, fetch_tests_fresh,
                fetch_failed_results, fetch_case, fetch_results_for_case,
                fetch_statuses):

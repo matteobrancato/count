@@ -308,7 +308,7 @@ def render() -> None:
                     unsafe_allow_html=True,
                 )
                 st.altair_chart(_build_bu_chart(df[df["bu"] == bu]),
-                                use_container_width=True)
+                                width="stretch")
 
     st.markdown(
         f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px'>"

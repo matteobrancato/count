@@ -522,7 +522,7 @@ def _render_coverage_section(
 
     st.dataframe(
         display[cols],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "section":      st.column_config.TextColumn(
@@ -557,14 +557,14 @@ def _render_coverage_section(
         if pie is None:
             st.info("No automated cases yet.")
         else:
-            st.altair_chart(pie, use_container_width=True)
+            st.altair_chart(pie, width="stretch")
 
     with right:
         st.markdown("##### 📊 Coverage % per area")
         st.caption("Sorted by coverage % (zero-automated areas pushed to the bottom). "
                    "Colors match the pie chart — same color = same area.")
         bar = _build_coverage_bar(cov, color_map)
-        st.altair_chart(bar, use_container_width=True)
+        st.altair_chart(bar, width="stretch")
 
     # ── mobile-app facet (only shown in the full view to avoid duplication) ──
     if show_tool_facet and scope == "mobile_app" and not auto_bu.empty \
@@ -578,7 +578,7 @@ def _render_coverage_section(
             .reset_index(name="count")
         )
         if not tool.empty:
-            st.dataframe(tool, use_container_width=True, hide_index=True)
+            st.dataframe(tool, width="stretch", hide_index=True)
         else:
             st.caption("No `Automation Tool` values populated on matching cases.")
 

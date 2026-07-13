@@ -70,6 +70,11 @@ def _background_refresh() -> None:
             _numbers_fetched_at.clear()
             tr._WARMED_AT = 0.0
             warmup_cache()             # silent — blocks only this fragment
+            try:
+                from src.ui.chat_assistant import _build_coverage_brief
+                _build_coverage_brief()   # keep Dexter warm across refreshes
+            except Exception:  # noqa: BLE001
+                pass
             _numbers_fetched_at()      # stamp the new freshness
         finally:
             _AUTOREFRESH_LOCK.release()
@@ -305,6 +310,15 @@ def main() -> None:
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
+
+    # Dexter's snapshot builds OFF the critical path: everything above has
+    # already rendered; this line only costs time when its cache is cold
+    # (~30s on Cloud, once per TTL) and Dexter's first reply stays instant.
+    try:
+        from src.ui.chat_assistant import _build_coverage_brief
+        _build_coverage_brief()
+    except Exception:  # noqa: BLE001
+        pass
 
     # Invisible: pre-expiry background re-warm while the app has viewers.
     _background_refresh()

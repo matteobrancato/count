@@ -168,7 +168,7 @@ def render() -> None:
             if "url" in df.columns:
                 col_cfg["url"] = st.column_config.LinkColumn(
                     "Open", display_text="↗", width="small")
-            st.dataframe(df, use_container_width=True, hide_index=True,
+            st.dataframe(df, width="stretch", hide_index=True,
                          column_config=col_cfg)
             frames_for_csv.append(df.assign(check=key))
 
