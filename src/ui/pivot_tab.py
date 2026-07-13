@@ -436,11 +436,22 @@ def render() -> None:
         st.warning("No rules defined for this BU.")
         return
 
+    # Evaluate at SCOPE level — the exact same cache entry Backlog/Coverage/
+    # Overview already use — then slice to this BU.  (Per-BU tuples used to
+    # create up to 11 extra cached ExpansionResults: significant memory on
+    # Streamlit Cloud's ~1GB container, plus a full re-expansion on every BU
+    # switch.  Slicing a shared frame is instant and adds zero cache entries.)
+    scope_rules = [r for r in ALL_RULES if r.scope == scope]
     with st.spinner(f"Loading {bu}…"):
-        result: ExpansionResult = evaluate_rules(tuple(r.name for r in rules))
+        result: ExpansionResult = evaluate_rules(
+            tuple(r.name for r in scope_rules))
 
-    raw      = result.raw_cases
-    auto_all = _dedup_auto(result.automated)
+    suite_ids = {r.suite_id for r in rules}
+    raw  = result.raw_cases
+    raw  = raw[raw["suite_id"].isin(suite_ids)] if not raw.empty else raw
+    auto = result.automated
+    auto = auto[auto["bu"] == bu] if not auto.empty else auto
+    auto_all = _dedup_auto(auto)
 
     if auto_all.empty and raw.empty:
         st.warning("No cases loaded — data refreshes automatically every hour.")

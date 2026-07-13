@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -1308,6 +1309,17 @@ def _render_case_deep_dive() -> None:
         st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
 
 
+# Process-wide marker of (scope, bu) whose live-runs data was fetched recently.
+# When fresh (within the runs TTL) the sections auto-render on cache hits;
+# otherwise they load ON DEMAND behind an explicit button — the 30-50s live
+# TestRail burst used to run eagerly on EVERY full rerun, keeping the browser's
+# "running" spinner alive long after the page looked ready (the exact symptom
+# management saw), and stretching the window where a dropped websocket forces
+# a refresh.
+_RUNS_WARM: dict[tuple[str, str], float] = {}
+_RUNS_WARM_TTL = 540    # seconds — just under the 600s TTL of the run fetchers
+
+
 @st.fragment
 def render() -> None:
     st.subheader("🏃 Runs & Stability")
@@ -1333,6 +1345,22 @@ def render() -> None:
 
     base_url = tr.TestRailCredentials.from_secrets().base_url
 
+    warm = (time.time() - _RUNS_WARM.get((scope, bu), 0.0)) < _RUNS_WARM_TTL
+    if not (warm or st.session_state.get(f"runs_go_{scope}_{bu}")):
+        st.info(
+            "**Live runs data loads on demand** — it's the only section that "
+            "queries TestRail live, and the first load for a BU takes "
+            "~30-45 seconds. Everything else on this page stays instant."
+        )
+        if st.button("⚡ Load live runs, stability & release readiness",
+                     key=f"runs_load_{scope}_{bu}", type="primary"):
+            st.session_state[f"runs_go_{scope}_{bu}"] = True
+            st.rerun()
+        # The case deep-dive is URL-driven and independent of the runs data.
+        st.divider()
+        _render_case_deep_dive()
+        return
+
     _render_active_runs(bu, project_ids, base_url)
     st.divider()
     _render_stability(bu, project_ids)
@@ -1340,3 +1368,4 @@ def render() -> None:
     _render_release_readiness(bu, project_ids, base_url)
     st.divider()
     _render_case_deep_dive()
+    _RUNS_WARM[(scope, bu)] = time.time()

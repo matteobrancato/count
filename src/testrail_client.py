@@ -277,9 +277,28 @@ def fetch_sections(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_sections(project_id, suite_id)
 
 
+# Heavy free-text fields stripped from the BULK case cache: nothing in the
+# dashboard renders them, and they dominate memory (a case's steps often weigh
+# more than every other field combined — dropping them cuts the cached payload
+# several-fold, which matters on Streamlit Cloud's ~1GB container: memory
+# pressure there means OOM restarts, i.e. "the spinner never stops").
+# The single-case `fetch_case` (deep-dive) is intentionally NOT slimmed.
+_HEAVY_CASE_FIELDS = (
+    "custom_steps_separated", "custom_steps", "custom_preconds",
+    "custom_expected", "custom_mission", "custom_goals",
+    "custom_testrail_bdd_scenario", "custom_automation_snippet",
+)
+
+
+def _slim_case(case: dict) -> dict:
+    for f in _HEAVY_CASE_FIELDS:
+        case.pop(f, None)
+    return case
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
-    return _get_client().get_cases(project_id, suite_id)
+    return [_slim_case(c) for c in _get_client().get_cases(project_id, suite_id)]
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
