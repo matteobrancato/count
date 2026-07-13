@@ -203,7 +203,10 @@ def main() -> None:
                         with st.container(key="warmup_status"):
                             with st.status("⚡ Loading dashboard data…",
                                            expanded=True) as _status:
-                                warmup_cache(on_step=_status.write)
+                                warmup_cache(
+                                    on_step=_status.write,
+                                    on_label=lambda lbl: _status.update(label=lbl),
+                                )
                                 _status.update(label="✅ Dashboard ready",
                                                state="complete", expanded=False)
                     _warm_slot.empty()                       # gone for good

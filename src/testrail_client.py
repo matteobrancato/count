@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
@@ -418,12 +418,16 @@ _WARMED_AT = 0.0
 _WARM_INTERVAL = 3300.0
 
 
-def prefetch_all_suites(suite_ids: list[int]) -> None:
+def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
     """Pre-warm fetch_cases + fetch_sections caches for every known suite.
 
     Fault-tolerant per suite: one deleted/renamed suite must not blank the
     whole dashboard — its failure is logged and skipped here, and if the suite
     genuinely matters, `evaluate_rules` will surface a visible error for it.
+
+    *on_progress* is an optional callback(done, total) fired as each suite's
+    case download completes — the UI uses it for a live "suite 7/16" counter,
+    so the (rate-limit-bound, ~1 min) download never looks frozen.
     """
     global _WARMED_AT
     if time.time() - _WARMED_AT < _WARM_INTERVAL:
@@ -445,9 +449,25 @@ def prefetch_all_suites(suite_ids: list[int]) -> None:
     # Failures here are harmless: these calls only warm the cache, and any
     # suite that failed will simply be fetched (with retries) on first use.
     project_ids = set(suite_to_project.values())
+    n_total = len(suite_to_project)
+    n_done  = 0
     with ThreadPoolExecutor(max_workers=min(len(suite_ids) * 2 + len(project_ids), 16)) as pool:
+        case_futures = {pool.submit(fetch_cases, pid, sid): sid
+                        for sid, pid in suite_to_project.items()}
         for sid, pid in suite_to_project.items():
-            pool.submit(fetch_cases, pid, sid)
             pool.submit(fetch_sections, pid, sid)
         for pid in project_ids:
             pool.submit(fetch_labels, pid)
+        for fut in as_completed(case_futures):
+            n_done += 1
+            try:
+                fut.result()
+            except Exception:                                           # noqa: BLE001
+                logging.getLogger(__name__).exception(
+                    "prefetch: suite %s failed — will retry on first use",
+                    case_futures[fut])
+            if on_progress:
+                try:
+                    on_progress(n_done, n_total)
+                except Exception:                                       # noqa: BLE001
+                    pass

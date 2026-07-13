@@ -514,7 +514,7 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
 
 
 # ----------------------------------------------------------------- warmup
-def warmup_cache(on_step=None) -> None:
+def warmup_cache(on_step=None, on_label=None) -> None:
     """Pre-fetch ALL data and pre-cache ALL rule evaluations at startup.
 
     Two-phase warm-up:
@@ -525,6 +525,8 @@ def warmup_cache(on_step=None) -> None:
 
     *on_step* is an optional callback(str) — the UI passes one to surface a
     verbose, step-by-step loading status so the wait feels shorter.
+    *on_label* is an optional callback(str) that live-updates the status box
+    TITLE (e.g. "📥 suite 7/16 · 48s" during the download).
     """
     import time as _time
 
@@ -555,7 +557,18 @@ def warmup_cache(on_step=None) -> None:
     # ~1 minute regardless of our parallelism.  That ceiling is TestRail's.
     step("🔌 Connecting to TestRail…")
     step(f"📥 Downloading {len(suite_ids)} test suites across {n_bu} Business Units…")
-    tr.prefetch_all_suites(suite_ids)
+    # Live counter in the status LABEL while the (rate-limit-bound) download
+    # runs — the user must always see it moving, never a frozen spinner.
+    _t_dl = _time.time()
+
+    def _dl_progress(done: int, total: int) -> None:
+        if on_label:
+            on_label(f"⚡ Loading dashboard data… · 📥 suite {done}/{total} "
+                     f"· {int(_time.time() - _t_dl)}s")
+
+    tr.prefetch_all_suites(suite_ids, on_progress=_dl_progress)
+    if on_label:
+        on_label("⚡ Loading dashboard data…")
     step("🏷 Resolving custom fields, labels & sections…")
 
     # Phase 2 – pre-cache the Python processing per scope.  Same rule-name tuples
