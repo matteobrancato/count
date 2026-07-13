@@ -156,6 +156,16 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
 ("I don't have that exact number") instead of guessing.
 
 # HOW TO ANSWER
+  • "Coverage" on this dashboard means REGRESSION-BASELINE coverage (the KPI
+    strip / Backlog convention) unless the user EXPLICITLY asks about the
+    overall case universe.  For best/worst/ranking questions, quote the
+    "PRIMARY RANKING" line from the snapshot VERBATIM — do not re-rank.
+  • NEVER state a number that is not literally present in the snapshot or in a
+    tool result.  If the exact figure is not there, say you don't have it —
+    a made-up percentage is the worst possible answer.
+  • Mobile-App-only entries (e.g. "Superdrug / Savers") have NO regression
+    baseline: never name them best/worst for coverage; bring them up only for
+    Mobile App questions.
   • Coverage, totals, automated counts, comparisons, rankings, gaps, the
     No-Regression baseline, the backlog breakdown (Backlog / To-update / N/A),
     frameworks (Java / Testim) → answer DIRECTLY from the snapshot.  Do NOT call
@@ -653,11 +663,7 @@ def _build_coverage_brief() -> str:
         ranking.append((d["business_unit"], d["coverage_pct"]))
         grand_total += int(d.get("total_cases") or 0)
         grand_auto  += int(d.get("automated_unique") or 0)
-        lines = [
-            f"## {d['business_unit']}",
-            f"- Overall coverage: {d['coverage_pct']}% "
-            f"({d['automated_unique']:,} automated of {d['total_cases']:,} cases)",
-        ]
+        lines = [f"## {d['business_unit']}"]
         bk = backlog_by_bu.get(d["business_unit"])
         if bk:
             lines.append(
@@ -674,6 +680,11 @@ def _build_coverage_brief() -> str:
                     f"- No-Regression baseline: {rb['coverage_pct']}% "
                     f"({rb['automated_unique']:,}/{rb['total_cases']:,})"
                 )
+        lines.append(
+            f"- Overall coverage (whole case universe — secondary): "
+            f"{d['coverage_pct']}% ({d['automated_unique']:,} automated of "
+            f"{d['total_cases']:,} cases)"
+        )
         ps = d.get("production_sanity") or {}
         if ps:
             lines.append(
@@ -695,9 +706,34 @@ def _build_coverage_brief() -> str:
         blocks.append("\n".join(lines))
 
     ranking.sort(key=lambda x: -x[1])
-    rank_line = "Coverage ranking (high → low): " + " > ".join(
-        f"{bu} {pct}%" for bu, pct in ranking
+    # PRIMARY ranking = regression-baseline Cov.% — the dashboard's convention
+    # (KPI strip + All-BU table).  The overall-universe ranking stays only as a
+    # clearly-labeled secondary line: it was the source of "worst BU" answers
+    # that contradicted the dashboard.
+    regr_ranking = sorted(
+        ((bu, float(v.get("Cov. %") or 0.0)) for bu, v in backlog_by_bu.items()),
+        key=lambda x: -x[1],
     )
+    mobile_only = [bu for bu, _ in ranking if bu not in backlog_by_bu]
+    rank_lines = []
+    if regr_ranking:
+        rank_lines.append(
+            "PRIMARY RANKING — regression-baseline coverage (the dashboard's "
+            "convention; USE THIS for best/worst/ranking questions): "
+            + " > ".join(f"{bu} {pct:.1f}%" for bu, pct in regr_ranking)
+        )
+    rank_lines.append(
+        "Secondary — overall coverage of the whole case universe (use ONLY "
+        "when the user explicitly asks about overall/universe coverage): "
+        + " > ".join(f"{bu} {pct}%" for bu, pct in ranking)
+    )
+    if mobile_only:
+        rank_lines.append(
+            "Mobile-App-only entries (NO regression baseline — exclude from "
+            "coverage rankings; relevant only to Mobile App questions): "
+            + ", ".join(mobile_only)
+        )
+    rank_line = "\n".join(rank_lines)
 
     # Precomputed group totals — LLM arithmetic over many BUs is error-prone, so
     # cross-BU aggregates are computed here in Python and handed over verbatim.
@@ -714,8 +750,11 @@ def _build_coverage_brief() -> str:
             f"- Average coverage across the {len(ranking)} BUs: {avg:.1f}% "
             f"(simple mean of per-BU percentages)"
         )
-        agg_lines.append(f"- Best: {ranking[0][0]} ({ranking[0][1]}%) · "
-                         f"Worst: {ranking[-1][0]} ({ranking[-1][1]}%)")
+    if regr_ranking:
+        agg_lines.append(
+            f"- Best (regression coverage): {regr_ranking[0][0]} "
+            f"({regr_ranking[0][1]:.1f}%) · Worst: {regr_ranking[-1][0]} "
+            f"({regr_ranking[-1][1]:.1f}%)")
     if backlog_by_bu:
         bk_tot  = sum(int(v.get("Total") or 0)     for v in backlog_by_bu.values())
         bk_auto = sum(int(v.get("Automated") or 0) for v in backlog_by_bu.values())
@@ -730,7 +769,7 @@ def _build_coverage_brief() -> str:
 
     header = (
         "These are the CURRENT automation-coverage numbers, live from TestRail "
-        "(refreshed at most 1 hour ago — same data the dashboard shows). "
+        "— the exact same data the dashboard shows. "
         "Use them directly to answer coverage / comparison / gap questions.\n"
     )
     return (f"{header}\n{rank_line}\n\n" + "\n".join(agg_lines) + "\n\n"
