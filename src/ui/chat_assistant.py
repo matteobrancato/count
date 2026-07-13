@@ -294,7 +294,7 @@ def list_bus() -> dict:
 
 
 @_safe_tool
-def get_bu_coverage(bu: str) -> dict:
+def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
     """Get automation coverage for a Business Unit.
 
     Returns total non-deprecated cases, automated count, coverage percentage,
@@ -316,8 +316,18 @@ def get_bu_coverage(bu: str) -> dict:
         rules = [r for r in ALL_RULES if r.bu == canonical and r.scope == scope]
     else:
         rules = [r for r in ALL_RULES if r.scope == scope]
-    result = evaluate_rules(tuple(r.name for r in rules))
-    raw, auto = result.raw_cases, result.automated
+    # _frames: per-call-site memo (the brief passes one dict for its whole
+    # loop).  Every st.cache_data HIT deserializes a full COPY of the giant
+    # ExpansionResult — 11 BUs used to mean 11 copies of the same object;
+    # sharing the frames within one build makes it 1 copy per scope.
+    key = tuple(r.name for r in rules)
+    if _frames is not None and key in _frames:
+        raw, auto = _frames[key]
+    else:
+        result = evaluate_rules(key)
+        raw, auto = result.raw_cases, result.automated
+        if _frames is not None:
+            _frames[key] = (raw, auto)
 
     rules_bu  = [r for r in rules if r.bu == canonical]
     bu_suites = {r.suite_id for r in rules_bu}
@@ -350,19 +360,41 @@ def get_bu_coverage(bu: str) -> dict:
                 "coverage_pct":   float(row["coverage_pct"]),
             })
 
-    # Regression baseline via the Backlog-aligned method (this is only the
-    # FALLBACK — the brief normally carries the Backlog tab's own summary).
-    nd_base, ab_base, ids_base = coverage_tab._regression_baseline_like_backlog(
-        non_dep, auto_bu, rules_bu)
+    # Regression baseline (FALLBACK field — the brief normally carries the
+    # Backlog tab's own summary).  Look it up from the Backlog pipeline's
+    # CACHED expansion first — identical numbers, zero recompute; only re-run
+    # the per-BU expansion for BUs the backlog doesn't cover (e.g. MAPP-only).
     regression: dict[str, Any] = {}
-    if not nd_base.empty:
-        regr_total = int(nd_base["case_id"].nunique())
-        regr_auto  = int(nd_base["case_id"].isin(ids_base).sum())
-        regression = {
-            "total_cases":      regr_total,
-            "automated_unique": regr_auto,
-            "coverage_pct":     round((regr_auto / regr_total * 100) if regr_total else 0.0, 1),
-        }
+    try:
+        from . import backlog_tab as bl
+        _summary, expanded_by_bu, _auto_by_bu = bl._backlog_data()
+        for scope_key in ("website", "next_gen"):
+            exp = expanded_by_bu.get((canonical, scope_key))
+            if exp is not None and not exp.empty:
+                regr_total = int(exp["case_id"].nunique())
+                regr_auto  = int(exp.loc[exp["category"] == "automated",
+                                         "case_id"].nunique())
+                regression = {
+                    "total_cases":      regr_total,
+                    "automated_unique": regr_auto,
+                    "coverage_pct":     round((regr_auto / regr_total * 100)
+                                              if regr_total else 0.0, 1),
+                }
+                break
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("get_bu_coverage: backlog lookup failed for %s", canonical)
+    if not regression:
+        nd_base, _ab_base, ids_base = coverage_tab._regression_baseline_like_backlog(
+            non_dep, auto_bu, rules_bu)
+        if not nd_base.empty:
+            regr_total = int(nd_base["case_id"].nunique())
+            regr_auto  = int(nd_base["case_id"].isin(ids_base).sum())
+            regression = {
+                "total_cases":      regr_total,
+                "automated_unique": regr_auto,
+                "coverage_pct":     round((regr_auto / regr_total * 100)
+                                          if regr_total else 0.0, 1),
+            }
 
     nd_ps, ab_ps, ids_ps = coverage_tab._filter_to_prod_sanity(non_dep, auto_bu)
     prod_sanity: dict[str, Any] = {}
@@ -584,9 +616,10 @@ def compare_bus() -> dict:
     """
     bus = sorted({r.bu for r in ALL_RULES})
     rankings: list[dict[str, Any]] = []
+    _frames: dict = {}
     for bu in bus:
         try:
-            data = get_bu_coverage(bu)
+            data = get_bu_coverage(bu, _frames=_frames)
         except Exception as exc:                                        # noqa: BLE001
             logger.warning("compare_bus: %s failed: %s", bu, exc)
             continue
@@ -639,8 +672,9 @@ def _build_coverage_brief() -> str:
 
     grand_total = grand_auto = 0   # accumulate for precomputed group totals
 
+    _frames: dict = {}             # one giant-frame copy per SCOPE, not per BU
     for bu in bus:
-        d = get_bu_coverage(bu)
+        d = get_bu_coverage(bu, _frames=_frames)
         if not isinstance(d, dict) or "error" in d:
             blocks.append(f"## {bu}\n- (no data available right now)")
             continue

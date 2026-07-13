@@ -67,16 +67,22 @@ def _scan() -> dict[str, pd.DataFrame]:
             unmatched = sub[~sub["multi_countries"].apply(
                 lambda mc: bool(_tokens(mc) & all_toks))]
             bus_lbl = " / ".join(sorted(suite_bus.get(sid, set())))
-            for _, row in unmatched.iterrows():
+            # to_dict("records") instead of iterrows: shared suites can have
+            # thousands of unmatched rows, and iterrows is ~100× slower.
+            cols = [c for c in ("case_id", "title", "multi_countries",
+                                "labels", "url") if c in unmatched.columns]
+            for row in unmatched[cols].to_dict("records"):
+                labels = row.get("labels")
                 rec = {
                     "case_id":         int(row["case_id"]),
                     "title":           str(row.get("title", ""))[:80],
                     "suite":           f"{sid} ({bus_lbl})",
-                    "multi_countries": ", ".join(_tokens(row["multi_countries"])) or "(empty)",
+                    "multi_countries": ", ".join(_tokens(row.get("multi_countries")))
+                                       or "(empty)",
                     "url":             row.get("url", ""),
                 }
-                is_baseline = isinstance(row["labels"], list) and (
-                    "big_regr_desktop" in row["labels"] or "big_regr_mobile" in row["labels"])
+                is_baseline = isinstance(labels, list) and (
+                    "big_regr_desktop" in labels or "big_regr_mobile" in labels)
                 (no_token_rows if is_baseline else orphan_rows).append(rec)
     out["baseline_no_token"] = pd.DataFrame(no_token_rows)
     out["orphan_cases"]      = pd.DataFrame(orphan_rows)
