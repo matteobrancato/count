@@ -309,7 +309,13 @@ def get_bu_coverage(bu: str) -> dict:
         return {"error": f"Unknown BU '{bu}'. Call list_bus() to see options."}
 
     scope = next((r.scope for r in ALL_RULES if r.bu == canonical), "website")
-    rules = [r for r in ALL_RULES if r.scope == scope]
+    if scope == "mobile_app":
+        # Mobile App is NOT pre-warmed (deferred scope): evaluate only THIS
+        # BU's own suites — a tiny fetch — instead of pulling all 7 MAPP
+        # suites into the warm-up via the coverage brief.
+        rules = [r for r in ALL_RULES if r.bu == canonical and r.scope == scope]
+    else:
+        rules = [r for r in ALL_RULES if r.scope == scope]
     result = evaluate_rules(tuple(r.name for r in rules))
     raw, auto = result.raw_cases, result.automated
 

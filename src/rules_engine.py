@@ -547,8 +547,14 @@ def warmup_cache(on_step=None, on_label=None) -> None:
         if on_step:
             on_step(msg)
 
-    suite_ids = sorted({r.suite_id for r in ALL_RULES})
-    n_bu = len({r.bu for r in ALL_RULES})
+    # CORE scopes only: website + next_gen (the Backlog baseline, KPI strip and
+    # every default view need them).  Mobile App — 7 of 16 suites, nearly half
+    # the rate-limit-bound download — is DEFERRED: it loads on demand the first
+    # time someone selects the Mobile App scope (Coverage/Explorer show a
+    # spinner for that one-time fetch).
+    core_rules = [r for r in ALL_RULES if r.scope in ("website", "next_gen")]
+    suite_ids = sorted({r.suite_id for r in core_rules})
+    n_bu = len({r.bu for r in core_rules})
 
     # Phase 1 – parallelised API fetch.  These two messages bracket the single
     # (longest) blocking call, so the accurate "Downloading…" line is what shows
@@ -574,7 +580,7 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     # Phase 2 – pre-cache the Python processing per scope.  Same rule-name tuples
     # the Overview / Backlog tabs use, so every render shares one cached result.
     _pretty = {"website": "Website", "next_gen": "Next Gen", "mobile_app": "Mobile App"}
-    scopes = [s for s in ("website", "next_gen", "mobile_app")
+    scopes = [s for s in ("website", "next_gen")
               if any(r.scope == s for r in ALL_RULES)]
     for i, scope in enumerate(scopes, 1):
         step(f"🧮 Expanding coverage rules — {_pretty.get(scope, scope)} "

@@ -584,7 +584,15 @@ def _render_coverage_section(
 
 
 def _coverage_for(scope: str, bu_choice: str) -> None:
-    raw, auto, rules = _load_scope(scope)
+    # Mobile App is not pre-warmed (deferred from the start-up download): the
+    # first visit fetches its 7 suites live — show an honest spinner for that
+    # one-time wait.  Warm visits fall through instantly.
+    if scope == "mobile_app":
+        with st.spinner("📱 Loading Mobile App data — first time can take "
+                        "~30-60s, then it's cached…"):
+            raw, auto, rules = _load_scope(scope)
+    else:
+        raw, auto, rules = _load_scope(scope)
     if raw is None or raw.empty:
         st.info("No data loaded for this scope.")
         return
