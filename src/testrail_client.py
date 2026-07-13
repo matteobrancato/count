@@ -7,6 +7,7 @@ When "next" is null we are done. We follow the next link (relative) until exhaus
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -22,6 +23,34 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 class TestRailError(RuntimeError):
     pass
+
+
+# ── global request pacer ──────────────────────────────────────────────────────
+# TestRail Cloud rate-limits at ~180 requests/minute PER USER.  Firing our
+# parallel warm-up (up to ~80 concurrent requests) at that limiter causes a
+# 429 avalanche: every worker sleeps its Retry-After (up to 30s), retries into
+# ANOTHER 429, and the download looks frozen — and a browser refresh makes it
+# worse, because the old run's threads keep downloading while the new session
+# starts more.  The cure is to never exceed the limit in the first place:
+# every request from every thread and session (same process) reserves a time
+# slot ~0.35s apart → ~170/min, just under the cap.  Parallel workers simply
+# queue on the pacer; the cold download becomes deterministic (~requests ×
+# 0.35s) with essentially zero 429s.  Warm loads make few API calls, so the
+# pacing cost there is negligible.
+_PACE_LOCK = threading.Lock()
+_PACE_NEXT = 0.0
+_PACE_INTERVAL = 0.35
+
+
+def _pace() -> None:
+    """Block until this thread's reserved request slot arrives."""
+    global _PACE_NEXT
+    with _PACE_LOCK:
+        now = time.time()
+        wait = _PACE_NEXT - now
+        _PACE_NEXT = max(now, _PACE_NEXT) + _PACE_INTERVAL
+    if wait > 0:
+        time.sleep(wait)
 
 
 @dataclass(frozen=True)
@@ -81,16 +110,19 @@ class TestRailClient:
         retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout)),
     )
     def _get(self, endpoint: str) -> Any:
+        _pace()
         resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         if resp.status_code == 429:
             # Rate limit — honour Retry-After (seconds form; RFC 7231 also
             # allows an HTTP-date, which int() can't parse) and retry once.
             # Capped so a hostile/buggy header can't stall a worker thread.
+            # Rare with the global pacer, but kept as the safety net.
             try:
                 wait = min(int(resp.headers.get("Retry-After", "5")), 30)
             except ValueError:
                 wait = 5
             time.sleep(wait)
+            _pace()
             resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         if not resp.ok:
             raise TestRailError(f"GET {endpoint} → {resp.status_code}: {resp.text[:300]}")

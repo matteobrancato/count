@@ -198,6 +198,7 @@ def main() -> None:
                     # tabs re-triggered its animation — "Dashboard ready" kept
                     # reappearing.)
                     _warm_slot = st.empty()
+                    _t0 = time.time()
                     with _warm_slot.container():
                         with st.container(key="warmup_status"):
                             with st.status("⚡ Loading dashboard data…",
@@ -206,7 +207,9 @@ def main() -> None:
                                 _status.update(label="✅ Dashboard ready",
                                                state="complete", expanded=False)
                     _warm_slot.empty()                       # gone for good
-                    st.toast("Dashboard ready — data loaded", icon="✅")
+                    _elapsed = time.time() - _t0
+                    st.toast(f"Dashboard ready — loaded in {_elapsed:.0f}s",
+                             icon="✅")
                     st.session_state["_warmed_ui"] = True
             except ImportError:
                 pass

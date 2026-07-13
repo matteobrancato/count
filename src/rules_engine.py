@@ -526,9 +526,22 @@ def warmup_cache(on_step=None) -> None:
     *on_step* is an optional callback(str) — the UI passes one to surface a
     verbose, step-by-step loading status so the wait feels shorter.
     """
+    import time as _time
+
     from .bu_rules import ALL_RULES
 
+    _t_phase = _time.time()
+
     def step(msg: str) -> None:
+        """Emit the next step line, stamping the PREVIOUS phase's duration —
+        the timings show up both in the loading box and in the Cloud logs, so
+        a slow load tells us exactly which phase ate the time."""
+        nonlocal _t_phase
+        elapsed = _time.time() - _t_phase
+        _t_phase = _time.time()
+        if elapsed >= 0.05:
+            msg = f"{msg}  `+{elapsed:.1f}s`"
+            logger.info("warmup: previous phase took %.1fs → %s", elapsed, msg)
         if on_step:
             on_step(msg)
 
@@ -537,7 +550,9 @@ def warmup_cache(on_step=None) -> None:
 
     # Phase 1 – parallelised API fetch.  These two messages bracket the single
     # (longest) blocking call, so the accurate "Downloading…" line is what shows
-    # while it runs.
+    # while it runs.  NOTE: TestRail Cloud rate-limits at ~180 requests/minute
+    # and ~44k cases paginate into ~180 requests — a cold download is therefore
+    # ~1 minute regardless of our parallelism.  That ceiling is TestRail's.
     step("🔌 Connecting to TestRail…")
     step(f"📥 Downloading {len(suite_ids)} test suites across {n_bu} Business Units…")
     tr.prefetch_all_suites(suite_ids)
