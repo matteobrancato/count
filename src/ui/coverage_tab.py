@@ -651,7 +651,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     if nd_base.empty:
         st.info(
             "No cases tagged with `big_regr_desktop` / `big_regr_mobile` for this BU. "
-            "Add the labels in TestRail — they appear at the next hourly data refresh."
+            "Add the labels in TestRail — they appear at the next data refresh (↻ next to the tabs)."
         )
     else:
         _render_coverage_section(
@@ -676,7 +676,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         st.info(
             "No Production Sanity cases found for this BU. "
             "Mark cases with the `Test Automation PRD Run` checkbox in TestRail "
-            "— new flags appear at the next hourly data refresh."
+            "— new flags appear at the next data refresh (↻ next to the tabs)."
         )
     else:
         _render_coverage_section(

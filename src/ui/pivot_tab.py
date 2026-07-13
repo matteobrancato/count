@@ -454,7 +454,7 @@ def render() -> None:
     auto_all = _dedup_auto(auto)
 
     if auto_all.empty and raw.empty:
-        st.warning("No cases loaded — data refreshes automatically every hour.")
+        st.warning("No cases loaded — data refreshes automatically every few hours (or use the ↻ next to the tabs).")
         return
 
     # ---- Filters + Pivot (on automated expanded df)

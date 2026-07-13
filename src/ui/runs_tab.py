@@ -69,7 +69,7 @@ def _bus_for_run_name(name: str | None) -> set[str]:
     return {bu for pattern, bu in _BU_ALIAS_PATTERNS if pattern.search(name)}
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def _bu_project_ids(
     scopes: tuple[str, ...] = ("website", "next_gen"),
 ) -> dict[str, set[int]]:

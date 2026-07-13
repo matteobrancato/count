@@ -31,7 +31,7 @@ from .styles import (
 logger = logging.getLogger(__name__)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=21600, show_spinner=False)
 def _kpis() -> dict:
     """Cross-BU regression-baseline aggregates (cached with the data's TTL).
 

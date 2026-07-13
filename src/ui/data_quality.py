@@ -39,7 +39,7 @@ def _tokens(mc) -> set[str]:
     return set(mc) if isinstance(mc, list) else set()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=21600, show_spinner=False)
 def _scan() -> dict[str, pd.DataFrame]:
     """All checks over the cached website-scope frames.  Raises on failure so
     st.cache_data never caches an error (retried next rerun)."""

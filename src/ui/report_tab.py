@@ -250,7 +250,7 @@ def render() -> None:
         web_auto, all_auto = _load()
 
     if all_auto.empty:
-        st.warning("No automated data available — data refreshes automatically every hour.")
+        st.warning("No automated data available — data refreshes automatically every few hours (or use the ↻ next to the tabs).")
         return
 
     s_tot = metrics.totals(metrics.select_smoke(web_auto))

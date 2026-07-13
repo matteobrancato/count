@@ -284,27 +284,27 @@ def _get_client() -> TestRailClient:
     return _SESSION_CACHE[key]
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_case_fields() -> list[dict]:
     return _get_client().get_case_fields()
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_case_types() -> list[dict]:
     return _get_client().get_case_types()
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_priorities() -> list[dict]:
     return _get_client().get_priorities()
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_suite(suite_id: int) -> dict:
     return _get_client().get_suite(suite_id)
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_sections(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_sections(project_id, suite_id)
 
@@ -328,12 +328,12 @@ def _slim_case(case: dict) -> dict:
     return case
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
     return [_slim_case(c) for c in _get_client().get_cases(project_id, suite_id)]
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_labels(project_id: int) -> dict[int, str]:
     """Return {label_id: label_name} for the given project."""
     raw = _get_client().get_labels(project_id)
@@ -368,7 +368,7 @@ def fetch_tests_fresh(run_id: int) -> list[dict]:
     return _get_client().get_tests(run_id)
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_statuses() -> dict[int, str]:
     """{status_id: display label} incl. custom statuses (id ≥ 6)."""
     return {
@@ -383,7 +383,7 @@ def fetch_failed_results(run_id: int) -> list[dict]:
     return _get_client().get_results_for_run(run_id, status_id=5)
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=21600)
 def fetch_case(case_id: int) -> dict:
     """A single case by ID — used by the Runs tab's in-depth analysis."""
     return _get_client().get_case(case_id)
@@ -415,7 +415,7 @@ def clear_all_caches() -> None:
 # so the parallel pre-warm kicks in again just before the cache entries lapse —
 # the old boolean flag never reset, leaving every post-TTL refresh un-warmed.
 _WARMED_AT = 0.0
-_WARM_INTERVAL = 3300.0
+_WARM_INTERVAL = 21300.0   # data TTL (6h) minus 5 min — re-warm just before expiry
 
 
 def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:

@@ -389,7 +389,7 @@ def _build_summary(
     return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=21600, show_spinner=False)
 def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                              dict[tuple[str, str], pd.DataFrame]]:
     """The heavy 11-BU baseline pipeline (expand + classify + stats), computed
@@ -519,7 +519,7 @@ def _detail_view(
         st.info(
             "No big_regr cases found for this BU. "
             "Check that cases have the 'big_regr_desktop' / 'big_regr_mobile' "
-            "label — new labels appear at the next hourly data refresh."
+            "label — new labels appear at the next data refresh (↻ next to the tabs)."
         )
         return
     auto = auto_by_bu.get((bu, scope))
@@ -601,7 +601,7 @@ def render() -> None:
         st.warning(
             "No baseline data found. Ensure cases have the big_regr_desktop / "
             "big_regr_mobile labels in TestRail — new labels appear at the "
-            "next hourly data refresh."
+            "next data refresh (↻ next to the tabs)."
         )
         return
 

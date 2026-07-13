@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import traceback
 import streamlit as st
@@ -20,7 +21,7 @@ st.set_page_config(
 
 
 # -------------------------------------------------------------------- header
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=21600, show_spinner=False)
 def _numbers_fetched_at() -> float:
     """Wall-clock time the current cached numbers were fetched.
 
@@ -30,6 +31,50 @@ def _numbers_fetched_at() -> float:
     resets to 'now' on a manual refresh.
     """
     return time.time()
+
+
+_DATA_TTL = 21600          # keep in sync with the ttl= on the data caches (6h)
+_AUTOREFRESH_LOCK = threading.Lock()
+
+
+@st.fragment(run_every="900s")
+def _background_refresh() -> None:
+    """Invisible watchdog (renders nothing, ticks every 15 min per session).
+
+    While ANYONE has the app open, it re-warms the data ~30 min BEFORE the 6h
+    TTL expires — so during active use no human ever lands on an expired cache
+    and pays the 1-2 min reload interactively.  Single-flight across sessions
+    via a module lock: one session does the work, the others skip."""
+    try:
+        age = time.time() - _numbers_fetched_at()
+        if age < _DATA_TTL - 1800:
+            return
+        if not _AUTOREFRESH_LOCK.acquire(blocking=False):
+            return                     # another session is already refreshing
+        try:
+            from src.rules_engine import warmup_cache
+            tr.clear_all_caches()
+            try:
+                from src.rules_engine import evaluate_rules
+                evaluate_rules.clear()
+            except Exception:  # noqa: BLE001
+                pass
+            for _mod, _fn in (("src.ui.backlog_tab", "_backlog_data"),
+                              ("src.ui.chat_assistant", "_build_coverage_brief"),
+                              ("src.ui.kpi_strip", "_kpis")):
+                try:
+                    import importlib
+                    getattr(importlib.import_module(_mod), _fn).clear()
+                except Exception:  # noqa: BLE001
+                    pass
+            _numbers_fetched_at.clear()
+            tr._WARMED_AT = 0.0
+            warmup_cache()             # silent — blocks only this fragment
+            _numbers_fetched_at()      # stamp the new freshness
+        finally:
+            _AUTOREFRESH_LOCK.release()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
 
 
 def _relative_time(ts: float) -> str:
@@ -260,6 +305,9 @@ def main() -> None:
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
+
+    # Invisible: pre-expiry background re-warm while the app has viewers.
+    _background_refresh()
 
 
 if __name__ == "__main__":
