@@ -28,7 +28,7 @@ import pandas as pd
 import streamlit as st
 
 from . import testrail_client as tr
-from .bu_rules import Rule, ALL_RULES
+from .bu_rules import Rule, ALL_RULES, filter_conditional_tokens
 from .field_resolver import FieldRegistry, get_registry
 
 logger = logging.getLogger(__name__)
@@ -272,6 +272,9 @@ def _rule_matches(
         tokens = set(_get_country_tokens(case, reg, rule.country_field_label, project_id))
         if not tokens and rule.country_fallback_field_label:
             tokens = set(_get_country_tokens(case, reg, rule.country_fallback_field_label, project_id))
+        # Conditional tokens (e.g. ICI's LU counts only for Highest priority).
+        prio = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
+        tokens = set(filter_conditional_tokens(list(tokens), prio))
         matched = [c for c in rule.countries_filter if c in tokens]
         if not matched:
             return False, []

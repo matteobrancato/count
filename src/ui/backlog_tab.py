@@ -39,7 +39,7 @@ import html
 import pandas as pd
 import streamlit as st
 
-from ..bu_rules import ALL_RULES, WEBSITE_BUS
+from ..bu_rules import ALL_RULES, WEBSITE_BUS, filter_conditional_tokens
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, coverage_health
@@ -183,13 +183,20 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
 
     # ── Country expansion ─────────────────────────────────────────────────────
     if all_tokens:
-        raw["_countries"] = raw[country_col].apply(
-            lambda mc: list({
+        # Conditional tokens (e.g. ICI's LU only for Highest priority) are
+        # dropped per-row BEFORE the BU-token match — same rule as the
+        # automated set, so baseline and automation stay consistent.
+        prios = (raw["priority_label"] if "priority_label" in raw.columns
+                 else pd.Series([None] * len(raw), index=raw.index))
+        raw["_countries"] = [
+            list({
                 token_label[t]
-                for t in (mc if isinstance(mc, list) else [])
+                for t in filter_conditional_tokens(
+                    mc if isinstance(mc, list) else [], prio)
                 if t in all_tokens
             })
-        )
+            for mc, prio in zip(raw[country_col], prios)
+        ]
         raw = raw[raw["_countries"].map(len) > 0]
     else:
         raw["_countries"] = raw.apply(lambda _: ["__ALL__"], axis=1)

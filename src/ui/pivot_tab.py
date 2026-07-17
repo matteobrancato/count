@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from ..bu_rules import ALL_RULES
+from ..bu_rules import ALL_RULES, filter_conditional_tokens
 from ..rules_engine import evaluate_rules, ExpansionResult
 from . import global_filter
 
@@ -93,13 +93,17 @@ def _suite_status(raw: pd.DataFrame, rules: list, key_prefix: str) -> None:
     df = raw.copy()
     n_total = len(df)
     if all_tokens and country_col in df.columns:
-        df["_ctry"] = df[country_col].apply(
-            lambda mc: list({
+        prios = (df["priority_label"] if "priority_label" in df.columns
+                 else pd.Series([None] * len(df), index=df.index))
+        df["_ctry"] = [
+            list({
                 token_label[t]
-                for t in (mc if isinstance(mc, list) else [])
+                for t in filter_conditional_tokens(
+                    mc if isinstance(mc, list) else [], prio)
                 if t in all_tokens
             })
-        )
+            for mc, prio in zip(df[country_col], prios)
+        ]
         n_excluded = int((df["_ctry"].map(len) == 0).sum())
         df = df[df["_ctry"].map(len) > 0]
     else:

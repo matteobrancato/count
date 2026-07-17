@@ -33,7 +33,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from ..bu_rules import ALL_RULES
+from ..bu_rules import ALL_RULES, filter_conditional_tokens
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE
@@ -363,8 +363,13 @@ def _filter_to_bu_countries(
         all_tokens.update(r.countries_filter or [])
     if not all_tokens or non_dep.empty or country_col not in non_dep.columns:
         return non_dep, 0
-    has_tok = non_dep[country_col].apply(
-        lambda mc: any(t in all_tokens for t in (mc if isinstance(mc, list) else []))
+    prios = (non_dep["priority_label"] if "priority_label" in non_dep.columns
+             else pd.Series([None] * len(non_dep), index=non_dep.index))
+    has_tok = pd.Series(
+        [any(t in all_tokens for t in filter_conditional_tokens(
+            mc if isinstance(mc, list) else [], prio))
+         for mc, prio in zip(non_dep[country_col], prios)],
+        index=non_dep.index,
     )
     return non_dep[has_tok], int((~has_tok).sum())
 

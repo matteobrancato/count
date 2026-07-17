@@ -69,6 +69,30 @@ BU_RUN_ALIASES: dict[str, list[str]] = {
 }
 
 
+# ── conditional country tokens ────────────────────────────────────────────────
+# A token listed here counts ONLY when the case's Priority label satisfies the
+# requirement (substring match, case-insensitive: "Highest" matches "Highest"
+# and "4 - Highest" but NOT "High").  Applied at EVERY expansion site — the
+# automated set (rules_engine), the regression baseline (backlog_tab), the
+# Coverage denominator and the Explorer status breakdown — so all numbers stay
+# consistent.  Currently: ICI's LU counts only for Highest-priority cases.
+CONDITIONAL_COUNTRY_TOKENS: dict[str, str] = {
+    "IPXL LU": "Highest",
+}
+
+
+def filter_conditional_tokens(tokens, priority_label) -> list:
+    """Drop conditional tokens whose priority requirement isn't met."""
+    if not tokens:
+        return []
+    plab = (priority_label or "").strip().lower()
+    return [
+        t for t in tokens
+        if t not in CONDITIONAL_COUNTRY_TOKENS
+        or CONDITIONAL_COUNTRY_TOKENS[t].lower() in plab
+    ]
+
+
 @dataclass(frozen=True)
 class Rule:
     name: str
@@ -175,6 +199,10 @@ def build_rules() -> list[Rule]:
     # No type_filter — ICI cases are not consistently typed as Regression/Functional.
     IPXL_SUITE   = 30122
     # Global config (28-value): 6=IPXL NL, 7=IPXL BE, 8=IPXL LU  (with spaces!)
+    # "IPXL LU" is a CONDITIONAL token (see CONDITIONAL_COUNTRY_TOKENS): it
+    # counts ONLY for Highest-priority cases (user decision, Jul 2026).
+    # Example: a case tagged NL+BE+LU expands to 2 rows per device normally,
+    # 3 rows per device when its Priority is Highest.
     IPXL_TOKENS  = ["IPXL NL", "IPXL BE", "IPXL LU"]
     IPXL_LABELS  = {"IPXL NL": "NL", "IPXL BE": "BE", "IPXL LU": "LU"}
 
