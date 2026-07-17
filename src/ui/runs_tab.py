@@ -1347,17 +1347,31 @@ def render() -> None:
 
     base_url = tr.TestRailCredentials.from_secrets().base_url
 
-    warm = (time.time() - _RUNS_WARM.get((scope, bu), 0.0)) < _RUNS_WARM_TTL
-    if not (warm or st.session_state.get(f"runs_go_{scope}_{bu}")):
-        st.info(
-            "**Live runs data loads on demand** — it's the only section that "
-            "queries TestRail live, and the first load for a BU takes "
-            "~30-45 seconds. Everything else on this page stays instant."
-        )
-        if st.button("⚡ Load live runs, stability & release readiness",
-                     key=f"runs_load_{scope}_{bu}", type="primary"):
-            st.session_state[f"runs_go_{scope}_{bu}"] = True
-            st.rerun()
+    flag   = f"runs_go_{scope}_{bu}"
+    warm   = (time.time() - _RUNS_WARM.get((scope, bu), 0.0)) < _RUNS_WARM_TTL
+    loaded = warm or bool(st.session_state.get(flag))
+    if not loaded:
+        # Gate lives in an st.empty so the click makes it vanish and the data
+        # loads IN THIS SAME RUN — no st.rerun() round-trip (rerun-from-
+        # fragment semantics proved too fragile for the click to reliably
+        # reach the loading path).
+        gate = st.empty()
+        with gate.container():
+            st.info(
+                f"📡 **Live TestRail data for {bu}** (active runs, stability, "
+                f"release readiness) **loads on demand** — the first fetch "
+                f"takes **~30-45 seconds**, then stays warm for 10 minutes. "
+                f"The rest of the dashboard is not affected."
+            )
+            clicked = st.button(
+                f"📡 Fetch {bu} live data now",
+                key=f"runs_load_{scope}_{bu}", type="primary",
+            )
+        if clicked:
+            st.session_state[flag] = True
+            gate.empty()               # button disappears, loading starts below
+            loaded = True
+    if not loaded:
         # The case deep-dive is URL-driven and independent of the runs data.
         st.divider()
         _render_case_deep_dive()
