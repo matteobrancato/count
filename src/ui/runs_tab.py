@@ -12,21 +12,35 @@ Four sections, filtered by the global scope+BU selector:
   4. **In-depth Test Analysis** — paste a case URL/ID to trace every run it
      went through, its bug history and what it covers.
 
-Sections 1-3 query TestRail LIVE, so they load ON DEMAND behind an explicit
-button (the page itself stays instant); the deep-dive is always available.
-Active-run data has a 10-min TTL; completed-run data never changes once a run
-is closed, so it gets a longer TTL.
+Sections 1-3 query TestRail LIVE (~30-45s on a cold BU).  They load AUTOMATICALLY
+IN A BACKGROUND THREAD: a tiny polling fragment shows progress while the daemon
+warms the caches, so the session thread stays free and the rest of the dashboard
+is fully usable meanwhile — no blocking, no button.  The deep-dive is always
+available.  Active-run data has a 10-min TTL; completed-run data never changes
+once a run is closed, so it gets a longer TTL.
 """
 from __future__ import annotations
 
 import html
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
+
+# Attach the Streamlit script context to our background loader thread so the
+# @st.cache_data fetchers work cleanly (and share the global cache) off-thread.
+try:
+    from streamlit.runtime.scriptrunner import (
+        add_script_run_ctx,
+        get_script_run_ctx,
+    )
+    _HAS_SCRIPT_CTX = True
+except Exception:                                                       # noqa: BLE001
+    _HAS_SCRIPT_CTX = False
 
 from .. import testrail_client as tr
 from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
@@ -1312,14 +1326,88 @@ def _render_case_deep_dive() -> None:
 
 
 # Process-wide marker of (scope, bu) whose live-runs data was fetched recently.
-# When fresh (within the runs TTL) the sections auto-render on cache hits;
-# otherwise they load ON DEMAND behind an explicit button — the 30-50s live
-# TestRail burst used to run eagerly on EVERY full rerun, keeping the browser's
-# "running" spinner alive long after the page looked ready (the exact symptom
-# management saw), and stretching the window where a dropped websocket forces
-# a refresh.
+# When fresh (within the runs TTL) the sections render instantly on cache hits.
 _RUNS_WARM: dict[tuple[str, str], float] = {}
 _RUNS_WARM_TTL = 540    # seconds — just under the 600s TTL of the run fetchers
+
+# ── background loader ─────────────────────────────────────────────────────────
+# The live sections query TestRail (~30-45s on a cold BU).  A synchronous fetch
+# would freeze the whole session for that time — so instead we warm the caches
+# in a DAEMON THREAD and a tiny polling fragment shows progress.  The main
+# session thread stays free, so the rest of the dashboard is fully usable while
+# a BU's runs load.  Once warm, the sections render instantly from cache.
+_RUNS_BG_LOCK = threading.Lock()
+_RUNS_BG: dict[tuple[str, str], dict] = {}   # key -> {status, started, error}
+
+
+def _bg_get(key: tuple[str, str]) -> dict | None:
+    with _RUNS_BG_LOCK:
+        return _RUNS_BG.get(key)
+
+
+def _bg_set(key: tuple[str, str], **fields) -> None:
+    with _RUNS_BG_LOCK:
+        _RUNS_BG.setdefault(key, {}).update(fields)
+
+
+def _bg_clear(key: tuple[str, str]) -> None:
+    with _RUNS_BG_LOCK:
+        _RUNS_BG.pop(key, None)
+
+
+def _warm_runs_data(bu: str, project_ids: set[int], base_url: str) -> None:
+    """Pre-fetch everything the three live sections need, so the later render is
+    all cache hits.  Runs OFF the session thread (daemon) — no `st.*` UI here."""
+    active = _flatten_active_runs(project_ids, bu=bu)
+    rows = [_summarise_run(r, base_url) for r in active
+            if bu in _bus_for_run_name(r.get("name"))
+            or bu in _bus_for_run_name(r.get("plan_name"))]
+    recs = _collect_bug_records(rows)
+    try:
+        from .. import jira_client as jc
+        if jc.available() and recs:
+            jc.fetch_issues(tuple(sorted({r["bug"] for r in recs})))
+    except Exception:                                                   # noqa: BLE001
+        pass
+    completed = _completed_runs_for_bu(bu, project_ids, limit=30)       # release readiness
+    if completed:
+        _classify_stability(completed[:5], min_executions=5)           # stability default
+
+
+def _start_bg_load(key: tuple[str, str], bu: str,
+                   project_ids: set[int], base_url: str) -> None:
+    ctx = get_script_run_ctx() if _HAS_SCRIPT_CTX else None
+    _bg_set(key, status="loading", started=time.time(), error=None)
+
+    def _target() -> None:
+        try:
+            _warm_runs_data(bu, project_ids, base_url)
+            _bg_set(key, status="done")
+        except BaseException as exc:                                    # noqa: BLE001
+            _bg_set(key, status="error", error=f"{type(exc).__name__}: {exc}")
+
+    t = threading.Thread(target=_target, daemon=True)
+    if ctx is not None:
+        add_script_run_ctx(t, ctx)
+    t.start()
+
+
+@st.fragment(run_every=2)
+def _runs_loading_poller(key: tuple[str, str], bu: str) -> None:
+    """Tiny fragment that reruns every 2s while the background load is in flight.
+    When it finishes it escalates to a full rerun so the parent renders the
+    data (or the error).  Only THIS small card reruns while loading — the rest
+    of the page (and dashboard) stays put."""
+    job = _bg_get(key) or {}
+    if job.get("status") in ("done", "error"):
+        st.rerun()   # app-scope: parent render() picks up the finished state
+        return
+    elapsed = int(time.time() - job.get("started", time.time()))
+    st.info(
+        f"⏳ **Loading {bu} live data in the background… ({elapsed}s)** — active "
+        f"runs, stability & release readiness. You can keep using the rest of "
+        f"the dashboard while this loads; results appear here automatically."
+    )
 
 
 @st.fragment
@@ -1346,37 +1434,36 @@ def render() -> None:
         return
 
     base_url = tr.TestRailCredentials.from_secrets().base_url
+    key = (scope, bu)
+    warm = (time.time() - _RUNS_WARM.get(key, 0.0)) < _RUNS_WARM_TTL
 
-    flag   = f"runs_go_{scope}_{bu}"
-    warm   = (time.time() - _RUNS_WARM.get((scope, bu), 0.0)) < _RUNS_WARM_TTL
-    loaded = warm or bool(st.session_state.get(flag))
-    if not loaded:
-        # Gate lives in an st.empty so the click makes it vanish and the data
-        # loads IN THIS SAME RUN — no st.rerun() round-trip (rerun-from-
-        # fragment semantics proved too fragile for the click to reliably
-        # reach the loading path).
-        gate = st.empty()
-        with gate.container():
-            st.info(
-                f"📡 **Live TestRail data for {bu}** (active runs, stability, "
-                f"release readiness) **loads on demand** — the first fetch "
-                f"takes **~30-45 seconds**, then stays warm for 10 minutes. "
-                f"The rest of the dashboard is not affected."
+    if not warm:
+        job = _bg_get(key)
+        status = job.get("status") if job else None
+        if status == "done":
+            _RUNS_WARM[key] = time.time()   # promote to warm; TTL expiry restarts later
+            _bg_clear(key)
+            warm = True
+        elif status == "error":
+            st.warning(
+                f"⚠️ Couldn't load **{bu}** live data: `{job.get('error', '')[:160]}`"
             )
-            clicked = st.button(
-                f"📡 Fetch {bu} live data now",
-                key=f"runs_load_{scope}_{bu}", type="primary",
-            )
-        if clicked:
-            st.session_state[flag] = True
-            gate.empty()               # button disappears, loading starts below
-            loaded = True
-    if not loaded:
-        # The case deep-dive is URL-driven and independent of the runs data.
-        st.divider()
-        _render_case_deep_dive()
-        return
+            if st.button("↻ Retry", key=f"runs_retry_{scope}_{bu}"):
+                _bg_clear(key)
+                st.rerun()
+            st.divider()
+            _render_case_deep_dive()   # deep-dive is independent (URL-driven)
+            return
+        else:
+            # None → kick off the background warm; loading → keep polling.
+            if status is None:
+                _start_bg_load(key, bu, project_ids, base_url)
+            _runs_loading_poller(key, bu)
+            st.divider()
+            _render_case_deep_dive()
+            return
 
+    # Warm → everything is a cache hit, so this renders instantly.
     _render_active_runs(bu, project_ids, base_url)
     st.divider()
     _render_stability(bu, project_ids)
@@ -1384,4 +1471,4 @@ def render() -> None:
     _render_release_readiness(bu, project_ids, base_url)
     st.divider()
     _render_case_deep_dive()
-    _RUNS_WARM[(scope, bu)] = time.time()
+    _RUNS_WARM[key] = time.time()
