@@ -594,7 +594,8 @@ def _detail_view(
 # ── render ────────────────────────────────────────────────────────────────────
 @st.fragment
 def render() -> None:
-    st.subheader("📋 Backlog & Coverage")
+    # Section title removed (redundant with the "Backlog" tab label) — the
+    # caption alone keeps the baseline definition visible.
     st.caption(
         "Baseline: cases with the label 'big_regr_desktop' / 'big_regr_mobile'. "
     )

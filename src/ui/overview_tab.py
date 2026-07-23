@@ -109,7 +109,7 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
 # --------------------------------------------------------------------- render
 @st.fragment
 def render() -> None:
-    st.subheader("🧭 Automation Coverage Overview")
+    # Section title removed (redundant with the "Overview" tab label).
     st.caption(
         "Scope-wide automated counts (Smoke · Regression · Production Sanity). "
         "For coverage broken down by area, see the **📐 Coverage** tab."

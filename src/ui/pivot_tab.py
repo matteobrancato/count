@@ -422,7 +422,7 @@ def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
 @st.fragment
 def render() -> None:
     # Heading matches the tab name so navigation and content agree.
-    st.subheader("📊 Explorer")
+    # Section title removed (redundant with the "Explorer" tab label).
     st.caption("Pivot the automated tests of a Business Unit by device, "
                "framework and country — plus the full suite status breakdown.")
 

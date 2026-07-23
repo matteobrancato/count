@@ -1412,7 +1412,7 @@ def _runs_loading_poller(key: tuple[str, str], bu: str) -> None:
 
 @st.fragment
 def render() -> None:
-    st.subheader("🏃 Runs & Stability")
+    # Section title removed (redundant with the "Runs" tab label).
     st.caption(
         "Live view of active TestRail runs per BU, with bugs extracted from "
         "failed results, plus a stability classifier over recent completed runs."

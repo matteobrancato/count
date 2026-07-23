@@ -239,7 +239,7 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
 @st.fragment
 def render() -> None:
     # Standard tab opener (subheader + caption) — same pattern as every other tab.
-    st.subheader("📄 Frameworks & Status")
+    # Section title removed (redundant with the "Report" tab label).
     st.caption(
         "Automated tests per Business Unit, split by framework and device. "
         "Solid bar segments are the regression baseline; faded segments are "
