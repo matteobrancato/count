@@ -695,6 +695,43 @@ def _detail_view(
 
 
 # ── render ────────────────────────────────────────────────────────────────────
+def _summary_table_html(df: pd.DataFrame, num_cols: list[str]) -> str:
+    """Presentation-grade HTML for the All-BU summary — same data as the native
+    dataframe, with an RAG coverage bar and tidy typography.  Styling lives in
+    the `.bl-summary` CSS block in styles.py."""
+    strong_cols = {"Total", "Automated", "Backlog"}   # numbers a manager reads first
+    head = (
+        '<thead><tr>'
+        '<th class="l"></th><th class="l">Business Unit</th><th class="l">Scope</th>'
+        + "".join(f'<th>{col}</th>' for col in num_cols)
+        + '<th class="l">Coverage</th></tr></thead>'
+    )
+    body_rows = []
+    for _, r in df.iterrows():
+        cov = float(r["Cov. %"])
+        dot, color = coverage_health(cov)
+        nums = "".join(
+            f'<td class="{"strong" if col in strong_cols else "mut"}">'
+            f'{int(r[col]):,}</td>'
+            for col in num_cols
+        )
+        cov_cell = (
+            f'<td class="l"><div class="cov-wrap">'
+            f'<div class="cov-track"><div class="cov-fill" '
+            f'style="width:{min(cov, 100):.0f}%;background:{color}"></div></div>'
+            f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
+            f'</div></td>'
+        )
+        body_rows.append(
+            f'<tr><td class="l">{dot}</td>'
+            f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
+            f'<td class="l"><span class="scope-pill">{html.escape(str(r["Scope"]))}</span></td>'
+            f'{nums}{cov_cell}</tr>'
+        )
+    return (f'<div class="bl-summary"><table>{head}'
+            f'<tbody>{"".join(body_rows)}</tbody></table></div>')
+
+
 @st.fragment
 def render() -> None:
     # Scope drives which baseline we show: Mobile App uses a priority-based
@@ -738,35 +775,32 @@ def render() -> None:
     display = summary.copy()
     if "Unknown" in display.columns and int(display["Unknown"].sum()) == 0:
         display = display.drop(columns=["Unknown"])
-    # RAG health dot — same thresholds as the KPI strip / Coverage headlines.
-    display.insert(0, "Health",
-                   display["Cov. %"].map(lambda p: coverage_health(float(p))[0]))
-    st.dataframe(
-        display,
-        width="stretch",
-        hide_index=True,
-        column_config={
-            "Health":    st.column_config.TextColumn(
-                "", width=44,   # pixels \u2014 a snug dot column, not the wide "small" preset
-                help=f"\U0001f7e2 \u2265 {COVERAGE_TARGET:.0f}% \u00b7 \U0001f7e1 \u2265 60% \u00b7 \U0001f534 below \u2014 same thresholds as the KPI strip."),
-            "BU":        st.column_config.TextColumn("Business Unit", width="medium"),
-            "Scope":     st.column_config.TextColumn("Scope",         width="small"),
-            "Total":     st.column_config.NumberColumn("Total"),
-            "Automated": st.column_config.NumberColumn("Automated"),
-            "Java":      st.column_config.NumberColumn("Java"),
-            "TestIM":    st.column_config.NumberColumn("TestIM"),
-            "Backlog":   st.column_config.NumberColumn("Backlog"),
-            "To update": st.column_config.NumberColumn(
-                "To update", help="Status 'To be updated' — split out of Backlog."),
-            "N/A":       st.column_config.NumberColumn("N/A"),
-            "Unknown":   st.column_config.NumberColumn(
-                "Unknown",
-                help="Rows whose status is automated but not attributed to this "
-                     "BU's automated set (country mismatch), or with no status. "
-                     "Shown only when > 0 so Total = sum of the columns."),
-            "Cov. %":    st.column_config.NumberColumn("Coverage %", format="%.1f%%"),
-        },
+    num_cols = [col for col in ["Total", "Automated", "Java", "TestIM", "Backlog",
+                                "To update", "N/A", "Unknown"]
+                if col in display.columns]
+    # Premium presentation table (RAG coverage bar); the native sortable /
+    # downloadable dataframe is kept one click away in the expander below.
+    st.markdown(_summary_table_html(display, num_cols), unsafe_allow_html=True)
+    st.caption(
+        f"🟢 ≥ {COVERAGE_TARGET:.0f}% · 🟡 ≥ 60% "
+        f"· 🔴 below — same thresholds as the KPI strip.  "
+        f"'Unknown' (shown only when > 0) keeps Total = sum of the columns."
     )
+    with st.expander("⤢ Table view — sort, resize & download"):
+        tbl = display.copy()
+        tbl.insert(0, "Health",
+                   tbl["Cov. %"].map(lambda p: coverage_health(float(p))[0]))
+        st.dataframe(
+            tbl, width="stretch", hide_index=True,
+            column_config={
+                "Health":    st.column_config.TextColumn("", width=44),
+                "BU":        st.column_config.TextColumn("Business Unit", width="medium"),
+                "Scope":     st.column_config.TextColumn("Scope", width="small"),
+                "To update": st.column_config.NumberColumn(
+                    "To update", help="Status 'To be updated' — split out of Backlog."),
+                "Cov. %":    st.column_config.NumberColumn("Coverage %", format="%.1f%%"),
+            },
+        )
 
     st.divider()
 

@@ -607,6 +607,75 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     to   {{ opacity: 1; transform: translateX(0); }}
 }}
 
+/* ── Backlog "All Business Units" summary table (premium, custom HTML) ────────
+   Same data as the native dataframe (kept in an expander) but presentation-grade
+   for managers: RAG coverage bar, tidy number typography, hover rows. */
+.bl-summary {{
+    overflow-x: auto;
+    border: 1px solid {c['border']};
+    border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    background: {c['surface']};
+}}
+.bl-summary table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}}
+.bl-summary th {{
+    text-align: right;
+    padding: 11px 14px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: {c['muted']};
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid {c['border']};
+    white-space: nowrap;
+    background: {c['canvas']};
+    position: sticky;
+    top: 0;
+}}
+.bl-summary td {{
+    text-align: right;
+    padding: 11px 14px;
+    color: {c['text']};
+    border-bottom: 1px solid {c['grid']};
+    white-space: nowrap;
+}}
+.bl-summary tr:last-child td {{ border-bottom: none; }}
+.bl-summary tbody tr {{ transition: background .12s ease; }}
+.bl-summary tbody tr:hover td {{ background: {c['canvas']}; }}
+.bl-summary th.l, .bl-summary td.l {{ text-align: left; }}
+.bl-summary .bu {{ font-weight: 700; color: {c['ink']}; }}
+.bl-summary .strong {{ font-weight: 700; color: {c['ink']}; }}
+.bl-summary .mut {{ color: {c['muted']}; }}
+.bl-summary .scope-pill {{
+    display: inline-block;
+    font-size: 11px;
+    color: {c['muted']};
+    background: {c['canvas']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    padding: 1px 8px;
+}}
+.bl-summary .cov-wrap {{
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 150px;
+}}
+.bl-summary .cov-track {{
+    flex: 1;
+    height: 7px;
+    border-radius: 4px;
+    background: {c['grid']};
+    overflow: hidden;
+}}
+.bl-summary .cov-fill {{ height: 100%; border-radius: 4px; }}
+.bl-summary .cov-val {{ font-weight: 700; font-size: 12.5px; min-width: 46px; text-align: right; }}
+
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
 
