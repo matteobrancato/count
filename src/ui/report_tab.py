@@ -7,7 +7,7 @@ import streamlit as st
 from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
-from .styles import COLORS
+from .styles import COLORS, COVERAGE_TARGET, coverage_health
 
 # ── palette (sourced from the global design tokens) ─────────────────────────────
 _BLUE   = COLORS["mobile"]       # Mobile
@@ -239,6 +239,76 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
     )
 
 
+def _section_title(text: str) -> None:
+    """Consistent left-accented section header used across the Report."""
+    st.markdown(
+        f'<div style="font-weight:700;font-size:15px;color:{COLORS["ink"]};'
+        f'border-left:3px solid {COLORS["brand"]};padding-left:10px;'
+        f'margin:6px 0 12px">{text}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _leaderboard_chart(summary: pd.DataFrame) -> alt.LayerChart:
+    """Executive glance: one RAG-coloured bar per BU, sorted by regression
+    coverage %, with a dashed 80%-target line.  Same numbers as the Backlog tab
+    and the KPI strip (single source of truth)."""
+    d = summary[["BU", "Cov. %", "Automated", "Total"]].copy()
+    d["cov"]   = d["Cov. %"].astype(float)
+    d["color"] = d["cov"].map(lambda p: coverage_health(p)[1])
+    d["label"] = d["cov"].map(lambda p: f"{p:.1f}%")
+    order = d.sort_values("cov", ascending=False)["BU"].tolist()
+
+    base = alt.Chart(d)
+    bars = base.mark_bar(height=17, cornerRadiusEnd=3).encode(
+        y=alt.Y("BU:N", sort=order,
+                axis=alt.Axis(title=None, labelFontSize=12, labelFont="Inter",
+                              labelColor=COLORS["ink"], labelLimit=180,
+                              ticks=False, domain=False)),
+        x=alt.X("cov:Q", scale=alt.Scale(domain=[0, 100]),
+                axis=alt.Axis(title=None, grid=True, gridColor=COLORS["grid"],
+                              values=[0, 20, 40, 60, 80, 100], format="d",
+                              labelFontSize=11, domain=False,
+                              labelColor=COLORS["muted"])),
+        color=alt.Color("color:N", scale=None),
+        tooltip=[alt.Tooltip("BU:N", title="BU"),
+                 alt.Tooltip("cov:Q", title="Coverage %", format=".1f"),
+                 alt.Tooltip("Automated:Q", title="Automated", format=","),
+                 alt.Tooltip("Total:Q", title="Baseline rows", format=",")],
+    )
+    text = base.mark_text(align="left", dx=4, fontSize=11, font="Inter",
+                          fontWeight="bold", color=COLORS["ink"]).encode(
+        y=alt.Y("BU:N", sort=order), x=alt.X("cov:Q"), text="label:N")
+    target = (
+        alt.Chart(pd.DataFrame({"t": [COVERAGE_TARGET]}))
+        .mark_rule(strokeDash=[4, 4], color=COLORS["muted"], size=1)
+        .encode(x="t:Q")
+    )
+    return (
+        (bars + text + target)
+        .properties(height=max(130, len(d) * 30))
+        .configure_view(strokeWidth=0)
+    )
+
+
+def _panel_header(bu: str, n_auto: int, cov: float | None) -> None:
+    """Per-BU panel header: name + RAG coverage + automated-case count, so each
+    detail chart carries its own executive summary and magnitude."""
+    if cov is not None:
+        dot, color = coverage_health(float(cov))
+        sub = (f'<span style="color:{color};font-weight:700">{dot} {float(cov):.1f}%'
+               f'</span><span style="color:{COLORS["muted"]}"> coverage · '
+               f'{n_auto:,} automated cases</span>')
+    else:
+        sub = f'<span style="color:{COLORS["muted"]}">{n_auto:,} automated cases</span>'
+    st.markdown(
+        f'<div style="margin:10px 0 2px">'
+        f'<span style="font-weight:700;font-size:13.5px;color:{COLORS["ink"]}">{bu}</span>'
+        f'<div style="font-size:11.5px;margin-top:1px">{sub}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 # ── render ────────────────────────────────────────────────────────────────────
 @st.fragment
 def render() -> None:
@@ -274,9 +344,29 @@ def render() -> None:
     _metric_badge(c_m1, f"+{s_tot['total']:,}", "Test Cases", "Smoke Suite")
     _metric_badge(c_m2, f"+{a_tot['total']:,}", "Test Cases", "Total Count")
 
-    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-    # ── Section header + legend on the same row ───────────────────────────────
+    # ── EXECUTIVE SUMMARY: coverage leaderboard ───────────────────────────────
+    # The 5-second "who's ahead / who needs attention" — one RAG bar per BU,
+    # sorted by regression coverage %.  Per-BU coverage is also reused below to
+    # annotate each detail panel.
+    cov_by_bu: dict[str, float] = {}
+    try:
+        from . import backlog_tab as bl
+        summary, _exp, _auto = bl._backlog_data()
+    except Exception:                                                   # noqa: BLE001
+        summary = pd.DataFrame()
+    if not summary.empty and "Cov. %" in summary.columns:
+        cov_by_bu = {str(r["BU"]): float(r["Cov. %"]) for _, r in summary.iterrows()}
+        _section_title("🏆 Regression coverage by Business Unit")
+        st.altair_chart(_leaderboard_chart(summary), width="stretch")
+        st.caption(
+            f"Automated share of the regression baseline per BU — same numbers "
+            f"as the Backlog tab. Dashed line = {COVERAGE_TARGET:.0f}% target."
+        )
+        st.markdown("<div style='height:22px'></div>", unsafe_allow_html=True)
+
+    # ── DETAIL: automated tests by country & device ───────────────────────────
     def _dot(color: str) -> str:
         return (f'<span style="display:inline-block;width:11px;height:11px;'
                 f'border-radius:2px;background:{color};margin-right:5px;'
@@ -287,7 +377,7 @@ def render() -> None:
         f'font-size:12px;color:{COLORS["text"]}">'
         f'{_dot(_BLUE)}<span>Mobile</span>'
         f'{_dot(_ORANGE)}<span>Desktop</span>'
-        f'{_dot(_GREY)}<span style="color:{COLORS["muted"]}">Unspecified</span>'
+        f'{_dot(_GREY)}<span style="color:{COLORS["muted"]}">Unspecified / API</span>'
         f'<span style="color:{COLORS["muted"]};font-size:11px;margin-left:6px;'
         f'border-left:1px solid {COLORS["border"]};padding-left:10px">'
         f'solid = regression&nbsp;·&nbsp;faded = other</span>'
@@ -298,7 +388,7 @@ def render() -> None:
         f'margin-bottom:10px">'
         f'<div style="font-weight:700;font-size:15px;color:{COLORS["ink"]};'
         f'border-left:3px solid {COLORS["brand"]};padding-left:10px">'
-        f'📊 Automated Tests by Business Unit</div>'
+        f'📊 Automated tests by country &amp; device</div>'
         f'{legend_html}'
         f'</div>',
         unsafe_allow_html=True,
@@ -307,15 +397,20 @@ def render() -> None:
     # ── Charts — one responsive panel per BU, in aligned 2-column rows ────────
     bus = _ordered_bus(set(all_auto["bu"].unique()))
     df  = _prepare_chart_data(all_auto, bus)
+    # Unique automated cases per BU (NOT the sum of the per-country bars — a
+    # multi-country case is counted once).
+    auto_by_bu = all_auto.groupby("bu")["case_id"].nunique().to_dict()
+    # Sort panels by how many (country × device) bars they carry, tallest first,
+    # so adjacent 2-column panels are close in height and the grid has no big
+    # empty gaps (a 16-row BU no longer sits next to a 2-row one).
+    rows_by_bu = (df.drop_duplicates(subset=["bu", "country", "device"])
+                    .groupby("bu").size().to_dict())
+    bus = sorted(bus, key=lambda b: -rows_by_bu.get(b, 0))
     for row_start in range(0, len(bus), 2):
         cols = st.columns(2, gap="large")
         for col, bu in zip(cols, bus[row_start:row_start + 2]):
             with col:
-                st.markdown(
-                    f"<div style='font-weight:700;font-size:13px;"
-                    f"color:{COLORS['ink']};margin:8px 0 2px'>{bu}</div>",
-                    unsafe_allow_html=True,
-                )
+                _panel_header(bu, int(auto_by_bu.get(bu, 0)), cov_by_bu.get(bu))
                 st.altair_chart(_build_bu_chart(df[df["bu"] == bu]),
                                 width="stretch")
 
