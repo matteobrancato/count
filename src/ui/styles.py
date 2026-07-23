@@ -49,8 +49,9 @@ COLORS: dict[str, str] = {
     "warning": "#F59E0B",
     "danger":  "#DC2626",
     # soft card tints
-    "java_bg":   "#FEF6E7",
-    "testim_bg": "#EAEEFF",
+    "java_bg":       "#FEF6E7",   # amber (Java / Selenium)
+    "testim_bg":     "#EAEEFF",   # indigo (TestIM)
+    "playwright_bg": "#E7F6EE",   # green (TypeScript / Playwright)
 }
 
 # Categorical palette for area/section breakdowns (pie + bars).  Vivid yet

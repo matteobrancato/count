@@ -208,12 +208,14 @@ def _build_bu_chart(df_bu: pd.DataFrame) -> alt.LayerChart:
 def _fw_card(col, icon: str, name: str, subtitle: str, bg: str) -> None:
     col.markdown(
         f"""<div style="background:{bg};border:1px solid {COLORS['border']};border-radius:14px;
-                    padding:15px 18px;display:flex;align-items:center;gap:13px;min-height:70px;
-                    box-shadow:0 1px 2px rgba(15,23,42,0.04)">
-            <span style="font-size:26px;line-height:1">{icon}</span>
-            <div>
-                <div style="font-weight:700;font-size:13.5px;color:{COLORS['ink']}">{name}</div>
-                <div style="font-size:11px;color:{COLORS['muted']};margin-top:2px">{subtitle}</div>
+                    padding:14px 16px;display:flex;align-items:center;gap:12px;min-height:74px;
+                    box-sizing:border-box;box-shadow:0 1px 2px rgba(15,23,42,0.04)">
+            <span style="font-size:25px;line-height:1;flex:0 0 auto">{icon}</span>
+            <div style="min-width:0">
+                <div style="font-weight:700;font-size:13px;color:{COLORS['ink']};
+                            line-height:1.25">{name}</div>
+                <div style="font-size:11px;color:{COLORS['muted']};margin-top:2px;
+                            line-height:1.3">{subtitle}</div>
             </div>
         </div>""",
         unsafe_allow_html=True,
@@ -225,8 +227,8 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
                 if sub else "")
     col.markdown(
         f"""<div style="background:{COLORS['surface']};border:1px solid {COLORS['border']};
-                    border-radius:14px;padding:12px 14px;text-align:center;min-height:70px;
-                    box-shadow:0 1px 2px rgba(15,23,42,0.04);
+                    border-radius:14px;padding:12px 14px;text-align:center;min-height:74px;
+                    box-sizing:border-box;box-shadow:0 1px 2px rgba(15,23,42,0.04);
                     display:flex;flex-direction:column;justify-content:center">
             <div style="font-size:23px;font-weight:800;color:{COLORS['brand']};line-height:1.1">{value}</div>
             <div style="font-size:11px;font-weight:600;color:{COLORS['ink']};margin-top:2px;
@@ -258,12 +260,17 @@ def render() -> None:
     s_tot = metrics.totals(metrics.select_smoke(web_auto))
     a_tot = metrics.totals(all_auto)
 
-    # ── Header row: frameworks + metric badges ────────────────────────────────
-    c_fw1, c_fw2, _sp, c_m1, c_m2 = st.columns([2.3, 2.3, 0.15, 1.3, 1.3])
-    _fw_card(c_fw1, "☕", "Java  /  Selenium  /  Cucumber",
+    # ── Header row: 3 framework cards + a spacer + 2 metric badges ─────────────
+    # Equal widths within each group + one thin spacer between groups, so the
+    # blocks line up in a clean, evenly-spaced grid (all cards share min-height).
+    c_fw1, c_fw2, c_fw3, _sp, c_m1, c_m2 = st.columns(
+        [2, 2, 2, 0.2, 1.35, 1.35], gap="small")
+    _fw_card(c_fw1, "☕", "Java / Selenium / Cucumber",
              "Legacy framework used by aLab", COLORS["java_bg"])
     _fw_card(c_fw2, "🤖", "TestIM",
-             "AI powered test automation platform", COLORS["testim_bg"])
+             "AI-powered test automation platform", COLORS["testim_bg"])
+    _fw_card(c_fw3, "🎭", "TypeScript / Playwright",
+             "Modern end-to-end web automation", COLORS["playwright_bg"])
     _metric_badge(c_m1, f"+{s_tot['total']:,}", "Test Cases", "Smoke Suite")
     _metric_badge(c_m2, f"+{a_tot['total']:,}", "Test Cases", "Total Count")
 
