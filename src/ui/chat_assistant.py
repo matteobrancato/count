@@ -177,7 +177,7 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
         when the Jira integration is configured)
       - get_test_stability(bu) → flaky / always-fail analysis over recent runs
     All three accept scope="mobile_app" when the user asks about the mobile
-    app / MAPP; the default covers website + Next Gen.
+    app / MAPP; the default covers website + Microservices.
 
 # HOW THE METRICS ARE CALCULATED  (use this to answer "how / why / what does X mean")
 - Data is pulled from TestRail; DEPRECATED cases are ALWAYS excluded.
@@ -433,7 +433,7 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
 
 def _scopes_for(scope: str) -> tuple[str, ...]:
     """Map a tool's `scope` argument to rule scopes.  Web (default) also covers
-    Next Gen; 'mobile_app' isolates the dedicated MAPP projects."""
+    Microservices; 'mobile_app' isolates the dedicated MAPP projects."""
     if (scope or "").strip().lower() in ("mobile_app", "mobile app", "mobile", "mapp", "app"):
         return ("mobile_app",)
     return ("website", "next_gen")
@@ -448,7 +448,7 @@ def get_active_runs(bu: str, scope: str = "website") -> dict:
 
     Args:
         bu: BU name or alias.
-        scope: "website" (default, includes Next Gen) or "mobile_app" for the
+        scope: "website" (default, includes Microservices) or "mobile_app" for the
             BU's dedicated mobile-app (MAPP) project.
     """
     canonical = _resolve_bu_name(bu)
@@ -507,7 +507,7 @@ def get_open_bugs(bu: str, scope: str = "website") -> dict:
 
     Args:
         bu: BU name or alias.
-        scope: "website" (default, includes Next Gen) or "mobile_app" for the
+        scope: "website" (default, includes Microservices) or "mobile_app" for the
             BU's dedicated mobile-app (MAPP) project.
     """
     canonical = _resolve_bu_name(bu)

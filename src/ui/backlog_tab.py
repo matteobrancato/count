@@ -15,7 +15,7 @@ Device expansion
 Country expansion
 ─────────────────
   Website BUs  : multi_countries filtered to BU tokens (same as Explorer)
-  Next Gen     : custom_country_coverage filtered to ALL_COUNTRY_TOKENS
+  Microservices     : custom_country_coverage filtered to ALL_COUNTRY_TOKENS
 
 Classification (per expanded row)
 ──────────────────────────────────
@@ -394,7 +394,7 @@ def _build_summary(
         s = _stats(expanded, auto)
         rows.append({
             "BU":        bu,
-            "Scope":     "Next Gen" if scope == "next_gen" else "Website",
+            "Scope":     "Microservices" if scope == "next_gen" else "Website",
             "Total":     s["total"],
             "Automated": s["automated"],
             "Java":      s["java"],

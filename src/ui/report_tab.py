@@ -12,12 +12,12 @@ from .styles import COLORS
 # ── palette (sourced from the global design tokens) ─────────────────────────────
 _BLUE   = COLORS["mobile"]       # Mobile
 _ORANGE = COLORS["desktop"]      # Desktop
-_GREY   = COLORS["unspecified"]  # Unspecified (Next Gen)
+_GREY   = COLORS["unspecified"]  # Unspecified (Microservices)
 
 _BU_ORDER = [
     "The Perfume Shop", "Savers", "Superdrug",
     "Kruidvat", "Trekpleister", "Watsons", "Drogas",
-    "Marionnaud", "ICI Paris XL", "Next Gen",
+    "Marionnaud", "ICI Paris XL", "Microservices",
 ]
 
 
@@ -28,7 +28,7 @@ def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
     A row is regression when its (case, country, device) is an *automated*
     baseline row per the Backlog method (`big_regr` labels × multi_countries) —
     the single source of truth, so the solid segments reconcile with the
-    Backlog / Coverage baseline numbers.  Unspecified-device rows (Next Gen)
+    Backlog / Coverage baseline numbers.  Unspecified-device rows (Microservices)
     fall back to case-level membership since the baseline is device-labelled.
     """
     if auto.empty:
@@ -121,7 +121,7 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
     grp["dev_rank"]  = grp["device"].map(
         {"Mobile": 0, "Desktop": 1, "Unspecified": 2, "API": 2}).fillna(2).astype(int)
     grp["sort_key"]  = grp["ctry_rank"] * 10 + grp["dev_rank"]
-    # For device-less rows (Next Gen "API" / Unspecified) show just the country
+    # For device-less rows (Microservices "API" / Unspecified) show just the country
     # code — no device prefix.
     grp["label"] = grp.apply(
         lambda r: r["country_label"] if r["device"] in ("Unspecified", "API")
@@ -149,8 +149,8 @@ def _build_bu_chart(df_bu: pd.DataFrame) -> alt.LayerChart:
     y_sort = alt.EncodingSortField(field="sort_key", order="ascending")
 
     color_scale = alt.Scale(
-        domain=["Mobile", "Desktop", "Unspecified"],
-        range=[_BLUE, _ORANGE, _GREY],
+        domain=["Mobile", "Desktop", "Unspecified", "API"],
+        range=[_BLUE, _ORANGE, _GREY, _GREY],   # API (Microservices) = grey, device-less
     )
 
     y_axis = alt.Axis(title=None, labelFontSize=11, labelFont="Inter",

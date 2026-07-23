@@ -18,7 +18,7 @@ _TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" s
 # --------------------------------------------------------------------- global token map
 # Single source of truth: every country token that can appear in any TestRail field,
 # mapped to its ISO display code.
-# Used by cross-BU rules (e.g. Next Gen) so they pick up new tokens automatically
+# Used by cross-BU rules (e.g. Microservices) so they pick up new tokens automatically
 # without requiring per-rule changes — just add the token here.
 ALL_COUNTRY_TOKENS: dict[str, str] = {
     # Kruidvat / Trekpleister
@@ -65,7 +65,7 @@ BU_RUN_ALIASES: dict[str, list[str]] = {
     "ICI Paris XL":     ["IPXL"],
     "Marionnaud":       ["MFR", "MRN", "EE"],   # MRN CEE countries
     "Drogas":           ["DRG", "EE"],          # Baltic — Eastern Europe
-    "Next Gen":         ["NG", "NEXTGEN"],
+    "Microservices":         ["NG", "NEXTGEN"],
 }
 
 
@@ -367,15 +367,15 @@ def build_rules() -> list[Rule]:
     rules += _testim_pair("Drogas", "DRG", DRG_SUITE, DRG_TOKENS,
                           country_labels=DRG_LABELS)
 
-    # ==================================================================== Next Gen
+    # ==================================================================== Microservices
     # Type filter: API only.
     # Country: "country_coverage_automation" field (custom_country_coverage_automation).
     # Tokens and ISO codes confirmed from CSV export (microservices.csv).
-    # Next Gen uses the global token map — no manual update needed when new BUs are added.
+    # Microservices uses the global token map — no manual update needed when new BUs are added.
     # System name confirmed from TestRail: custom_country_coverage
     NEXTGEN_SUITE = 9570
     rules.append(Rule(
-        name="NEXTGEN ALL", bu="Next Gen", scope="next_gen", framework="java",
+        name="NEXTGEN ALL", bu="Microservices", scope="next_gen", framework="java",
         suite_id=NEXTGEN_SUITE,
         status_field_label="Automation Status",
         automated_values=list(AUTOMATED_FULL),

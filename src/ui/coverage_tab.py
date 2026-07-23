@@ -179,7 +179,7 @@ def _coverage_table(
             if dev_name in dev_grp.columns:
                 target.update(dev_grp[dev_name].to_dict())
         # "Unspecified" is a catch-all for any non-Desktop/Mobile device —
-        # including Next Gen's "API" — so the automated total stays correct
+        # including Microservices's "API" — so the automated total stays correct
         # (automated = desktop + mobile + unspecified).
         other_cols = [c for c in dev_grp.columns if c not in ("Desktop", "Mobile")]
         if other_cols:
@@ -535,7 +535,7 @@ def _render_coverage_section(
     }])
     display = pd.concat([display, total_row], ignore_index=True)
 
-    # Only show Unspecified column if any value is non-zero (typically Next Gen)
+    # Only show Unspecified column if any value is non-zero (typically Microservices)
     show_unspecified = bool(display["unspecified"].sum() > 0)
     cols = ["section", "total", "desktop", "mobile"]
     if show_unspecified:

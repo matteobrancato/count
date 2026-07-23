@@ -289,7 +289,7 @@ def _expand_rows(
     matched_countries: list[str], base_url: str,
     project_id: int | None = None,
 ) -> list[dict]:
-    # TYPE-driven device: an "API"-type case (microservices / Next Gen) has no
+    # TYPE-driven device: an "API"-type case (Microservices scope) has no
     # desktop/mobile dimension, so its device is "API" regardless of any
     # big_regr_desktop/mobile label.  This keeps the automated set and the
     # regression baseline in agreement (both key off the type) — otherwise these
@@ -634,7 +634,7 @@ def warmup_cache(on_step=None, on_label=None) -> None:
 
     # Phase 2 – pre-cache the Python processing per scope.  Same rule-name tuples
     # the Overview / Backlog tabs use, so every render shares one cached result.
-    _pretty = {"website": "Website", "next_gen": "Next Gen", "mobile_app": "Mobile App"}
+    _pretty = {"website": "Website", "next_gen": "Microservices", "mobile_app": "Mobile App"}
     scopes = [s for s in ("website", "next_gen")
               if any(r.scope == s for r in ALL_RULES)]
     global _PROGRESS_HOOK
