@@ -588,6 +588,25 @@ def _render_coverage_section(
             st.caption("No `Automation Tool` values populated on matching cases.")
 
 
+# ── the three coverage subsets, selected by one radio (default: No-Regression) ─
+_VIEW_TOTAL = "🌐 Total"
+_VIEW_REGR  = "📋 No-Regression"
+_VIEW_PS    = "🚀 Production Sanity"
+_VIEW_OPTIONS = [_VIEW_TOTAL, _VIEW_REGR, _VIEW_PS]
+_VIEW_DEFAULT_INDEX = 1                                  # No-Regression
+
+_VIEW_DESC = {
+    _VIEW_TOTAL: "Coverage over the **full universe** of non-deprecated cases "
+                 "for this BU — the broadest picture of automation reach.",
+    _VIEW_REGR:  "Restricted to the **regression baseline** "
+                 "(`big_regr_desktop` / `big_regr_mobile`) — computed exactly "
+                 "like the Backlog tab, so the numbers line up 1:1 with it.",
+    _VIEW_PS:    "Restricted to **Production Sanity** cases (the "
+                 "`Test Automation PRD Run` checkbox) — the automation "
+                 "coverage of the prod-sanity scope specifically.",
+}
+
+
 def _coverage_for(scope: str, bu_choice: str) -> None:
     # Mobile App is not pre-warmed (deferred from the start-up download): the
     # first visit fetches its 7 suites live — show an honest spinner for that
@@ -628,68 +647,54 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         )
     auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
-    # ── View 1: full universe ────────────────────────────────────────────────
-    st.markdown("### 🌐 All Automated Cases")
-    st.caption(
-        "Coverage over the full universe of non-deprecated cases for this BU. "
-        "Useful for the broadest picture of automation reach."
+    # ── ONE view, selected by a radio (default: No-Regression) ────────────────
+    # The three subsets used to stack vertically; now the layout is constant and
+    # only the underlying data changes with the selection.  Each option keeps
+    # its own widget state via a distinct key_prefix, so switching is clean.
+    view = st.radio(
+        "Coverage view", _VIEW_OPTIONS, index=_VIEW_DEFAULT_INDEX,
+        horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
+        label_visibility="collapsed",
     )
-    _render_coverage_section(
-        non_dep, auto_bu, auto_ids,
-        key_prefix=f"cov_full_{scope}_{bu_choice}",
-        scope=scope,
-        show_tool_facet=True,
-    )
+    st.caption(_VIEW_DESC[view])
+    st.markdown("")
 
-    st.divider()
-
-    # ── View 2: regression baseline only ─────────────────────────────────────
-    st.markdown("### 📋 No-Regression Baseline Only")
-    st.caption(
-        "Same breakdown, restricted to cases with the **`big_regr_desktop`** / "
-        "**`big_regr_mobile`** labels — computed **exactly like the Backlog tab** "
-        "(expanded over `multi_countries` × label-device), so the numbers line up "
-        "1:1 with it."
-    )
-    nd_base, ab_base, ids_base = _regression_baseline_like_backlog(
-        non_dep, auto_bu, rules_bu)
-    if nd_base.empty:
-        st.info(
-            "No cases tagged with `big_regr_desktop` / `big_regr_mobile` for this BU. "
-            "Add the labels in TestRail — they appear at the next data refresh (↻ next to the tabs)."
-        )
-    else:
+    if view == _VIEW_TOTAL:
         _render_coverage_section(
-            nd_base, ab_base, ids_base,
-            key_prefix=f"cov_regr_{scope}_{bu_choice}",
-            scope=scope,
-            show_tool_facet=False,   # already shown in the full view
-            show_target=True,        # the 80% target is defined on the baseline
+            non_dep, auto_bu, auto_ids,
+            key_prefix=f"cov_total_{scope}_{bu_choice}",
+            scope=scope, show_tool_facet=True,
         )
-
-    st.divider()
-
-    # ── View 3: production sanity only ───────────────────────────────────────
-    st.markdown("### 🚀 Production Sanity Only")
-    st.caption(
-        "Same breakdown, restricted to **Production Sanity** cases — tests run "
-        "only in production (the `Test Automation PRD Run` checkbox).  Tells you "
-        "the automation coverage of the prod-sanity scope specifically."
-    )
-    nd_ps, ab_ps, ids_ps = _filter_to_prod_sanity(non_dep, auto_bu)
-    if nd_ps.empty:
-        st.info(
-            "No Production Sanity cases found for this BU. "
-            "Mark cases with the `Test Automation PRD Run` checkbox in TestRail "
-            "— new flags appear at the next data refresh (↻ next to the tabs)."
-        )
-    else:
-        _render_coverage_section(
-            nd_ps, ab_ps, ids_ps,
-            key_prefix=f"cov_ps_{scope}_{bu_choice}",
-            scope=scope,
-            show_tool_facet=False,   # already shown in the full view
-        )
+    elif view == _VIEW_REGR:
+        nd_base, ab_base, ids_base = _regression_baseline_like_backlog(
+            non_dep, auto_bu, rules_bu)
+        if nd_base.empty:
+            st.info(
+                "No cases tagged with `big_regr_desktop` / `big_regr_mobile` for "
+                "this BU. Add the labels in TestRail — they appear at the next "
+                "data refresh (↻ next to the tabs)."
+            )
+        else:
+            _render_coverage_section(
+                nd_base, ab_base, ids_base,
+                key_prefix=f"cov_regr_{scope}_{bu_choice}",
+                scope=scope, show_tool_facet=True,
+                show_target=True,        # the 80% target is defined on the baseline
+            )
+    else:  # _VIEW_PS
+        nd_ps, ab_ps, ids_ps = _filter_to_prod_sanity(non_dep, auto_bu)
+        if nd_ps.empty:
+            st.info(
+                "No Production Sanity cases found for this BU. Mark cases with "
+                "the `Test Automation PRD Run` checkbox in TestRail — new flags "
+                "appear at the next data refresh (↻ next to the tabs)."
+            )
+        else:
+            _render_coverage_section(
+                nd_ps, ab_ps, ids_ps,
+                key_prefix=f"cov_ps_{scope}_{bu_choice}",
+                scope=scope, show_tool_facet=True,
+            )
 
 
 # ── render ───────────────────────────────────────────────────────────────────

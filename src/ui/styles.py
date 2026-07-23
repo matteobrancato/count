@@ -610,21 +610,24 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 footer {{ visibility: hidden; height: 0; }}
 
 /* ── Gentle entrance animation (all data tabs) ────────────────────────────────
-   TIME-based fade + rise on every block of a tab's body (`*_anim` containers) —
-   it always completes in half a second, by construction.
+   TIME-based fade on every block of a tab's body (`*_anim` containers) — it
+   always completes in half a second, by construction.
 
-   Deliberately NOT scroll-driven: `animation-timeline: view()` proved
-   unreliable with Streamlit's dynamic DOM — tab panels toggling display and
-   fragment rerenders left random blocks frozen mid-animation (half-blurred
-   headings, near-invisible sections).  A plain animation cannot get stuck, and
-   restarting when a tab becomes visible reads as a pleasant soft fade-in. */
+   OPACITY ONLY — deliberately no `transform`.  A transform on an ancestor
+   makes `position: fixed` descendants resolve against that ancestor instead of
+   the viewport, which BROKE the dataframe/chart fullscreen overlay every time
+   a fragment rerun restarted the animation.  Opacity creates only a stacking
+   context (harmless for fixed positioning), so fullscreen works everywhere.
+
+   Deliberately NOT scroll-driven either: `animation-timeline: view()` proved
+   unreliable with Streamlit's dynamic DOM (blocks frozen mid-animation). */
 @media (prefers-reduced-motion: no-preference) {{
   @keyframes blockIn {{
-    from {{ opacity: 0; transform: translateY(14px); }}
-    to   {{ opacity: 1; transform: none; }}
+    from {{ opacity: 0; }}
+    to   {{ opacity: 1; }}
   }}
   [class*="st-key-"][class*="_anim"] [data-testid="stElementContainer"] {{
-    animation: blockIn 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+    animation: blockIn 0.4s ease both;
   }}
 }}
 </style>
