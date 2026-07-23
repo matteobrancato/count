@@ -175,10 +175,15 @@ def _coverage_table(
         )
         dev_grp = ap.groupby(["section", "device"]).size().unstack(fill_value=0)
         for dev_name, target in [("Desktop", desktop_map),
-                                  ("Mobile",  mobile_map),
-                                  ("Unspecified", unspecified_map)]:
+                                  ("Mobile",  mobile_map)]:
             if dev_name in dev_grp.columns:
                 target.update(dev_grp[dev_name].to_dict())
+        # "Unspecified" is a catch-all for any non-Desktop/Mobile device —
+        # including Next Gen's "API" — so the automated total stays correct
+        # (automated = desktop + mobile + unspecified).
+        other_cols = [c for c in dev_grp.columns if c not in ("Desktop", "Mobile")]
+        if other_cols:
+            unspecified_map.update(dev_grp[other_cols].sum(axis=1).to_dict())
 
     grouped["desktop"]     = grouped["section"].map(desktop_map).fillna(0).astype(int)
     grouped["mobile"]      = grouped["section"].map(mobile_map).fillna(0).astype(int)

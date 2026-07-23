@@ -118,11 +118,13 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
         grp.groupby("bu")["country_label"]
         .transform(lambda s: s.map({c: i for i, c in enumerate(sorted(s.unique()))}))
     )
-    grp["dev_rank"]  = grp["device"].map({"Mobile": 0, "Desktop": 1, "Unspecified": 2}).fillna(2).astype(int)
+    grp["dev_rank"]  = grp["device"].map(
+        {"Mobile": 0, "Desktop": 1, "Unspecified": 2, "API": 2}).fillna(2).astype(int)
     grp["sort_key"]  = grp["ctry_rank"] * 10 + grp["dev_rank"]
-    # For Unspecified device (Next Gen), show just the country code — no device prefix
+    # For device-less rows (Next Gen "API" / Unspecified) show just the country
+    # code — no device prefix.
     grp["label"] = grp.apply(
-        lambda r: r["country_label"] if r["device"] == "Unspecified"
+        lambda r: r["country_label"] if r["device"] in ("Unspecified", "API")
         else r["device"].lower() + " " + r["country_label"],
         axis=1,
     )

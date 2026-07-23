@@ -171,12 +171,24 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     raw.loc[na_mask,        "_cat_base"] = "not_applicable"
 
     # ── Filter to baseline (big_regr labels) ──────────────────────────────────
-    raw["_label_devs"] = raw["labels"].apply(
-        lambda ls: (
-            (["Desktop"] if _LABEL_DESKTOP in ls else []) +
-            (["Mobile"]  if _LABEL_MOBILE  in ls else [])
-        ) if isinstance(ls, list) else []
-    )
+    # Device is TYPE-driven, matching the automated set (rules_engine):
+    #   • an "API"-type case → a single "API" row (no desktop/mobile dimension);
+    #   • any other type → Desktop/Mobile from the big_regr label(s), as before.
+    # A case still needs a big_regr label to enter the baseline at all.
+    _types = (raw["type_label"] if "type_label" in raw.columns
+              else pd.Series([None] * len(raw), index=raw.index))
+
+    def _dev_for(labels, type_label) -> list[str]:
+        if not isinstance(labels, list):
+            return []
+        if not (_LABEL_DESKTOP in labels or _LABEL_MOBILE in labels):
+            return []                                  # not in the baseline
+        if str(type_label).strip().upper() == "API":
+            return ["API"]
+        return ((["Desktop"] if _LABEL_DESKTOP in labels else []) +
+                (["Mobile"]  if _LABEL_MOBILE  in labels else []))
+
+    raw["_label_devs"] = [_dev_for(ls, t) for ls, t in zip(raw["labels"], _types)]
     raw = raw[raw["_label_devs"].map(len) > 0]
     if raw.empty:
         return _empty

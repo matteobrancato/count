@@ -289,10 +289,21 @@ def _expand_rows(
     matched_countries: list[str], base_url: str,
     project_id: int | None = None,
 ) -> list[dict]:
+    # TYPE-driven device: an "API"-type case (microservices / Next Gen) has no
+    # desktop/mobile dimension, so its device is "API" regardless of any
+    # big_regr_desktop/mobile label.  This keeps the automated set and the
+    # regression baseline in agreement (both key off the type) — otherwise these
+    # cases carried "Unspecified" here but "Desktop" in the baseline, never
+    # matched, and every automated API case showed as "Unknown".  Non-API types
+    # (Functional, Regression, …) keep the normal device logic below.
+    api_type_id = reg.type_id("API")
+    if api_type_id is not None and case.get("type_id") == api_type_id:
+        devices         = ["API"]
+        device_original = "API"
     # TestIM Desktop/Mobile framework → device is determined by the framework, not the
     # Device field.  A TestIM Desktop test always runs on Desktop; Mobile always Mobile.
     # Expanding "Both" for TestIM would double-count cases that happen to have Device=Both.
-    if rule.framework == "testim_desktop":
+    elif rule.framework == "testim_desktop":
         devices         = ["Desktop"]
         device_original = "Desktop"
     elif rule.framework == "testim_mobile":
