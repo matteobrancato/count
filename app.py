@@ -135,8 +135,9 @@ def _freshness_label() -> None:
             except Exception:
                 pass
             try:
-                from src.ui.backlog_tab import _backlog_data
+                from src.ui.backlog_tab import _backlog_data, _mapp_backlog_data
                 _backlog_data.clear()
+                _mapp_backlog_data.clear()
             except Exception:
                 pass
             try:

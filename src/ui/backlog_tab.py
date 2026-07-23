@@ -39,7 +39,12 @@ import html
 import pandas as pd
 import streamlit as st
 
-from ..bu_rules import ALL_RULES, WEBSITE_BUS, filter_conditional_tokens
+from ..bu_rules import (
+    ALL_RULES,
+    MOBILE_APP_BUS,
+    WEBSITE_BUS,
+    filter_conditional_tokens,
+)
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, coverage_health
@@ -66,6 +71,11 @@ _STATUS_NA: set[str] = {
 _STATUS_TO_UPDATE: set[str] = {
     "to be updated",
 }
+
+# Mobile-App baseline membership: cases with one of these priorities (there is
+# no big_regr label for MAPP — priority IS the baseline definition).  Matched
+# normalised (strip + lowercase).
+_MAPP_PRIORITIES: set[str] = {"high", "highest"}
 
 
 def _is_to_update(series: pd.Series) -> pd.Series:
@@ -263,6 +273,63 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     )
 
 
+def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
+    """Mobile-App baseline expansion.
+
+    Different from the website baseline:
+      * membership = Priority in {High, Highest} (no big_regr label);
+      * device     = mobile OS (iOS / Android; "Both" already pre-split into the
+                     `mapp_devices` list by rules_engine);
+      * status     = the standard "Automation Status" field;
+      * no country dimension — country_label is the BU name, matching the
+        automated set (rules_engine emits country_label = rule.bu for MAPP).
+    """
+    _empty = pd.DataFrame(columns=["case_id", "country_label", "device", "_cat_base"])
+    if raw.empty or "priority_label" not in raw.columns or "mapp_devices" not in raw.columns:
+        return _empty
+
+    bu = rules[0].bu if rules else "Mobile App"
+
+    prio = raw["priority_label"].astype(str).str.strip().str.lower()
+    raw = raw[prio.isin(_MAPP_PRIORITIES)]
+    if raw.empty:
+        return _empty
+
+    # Status classification — same masks as the website baseline; for MAPP only
+    # "Automation Status" is populated, so they reduce to that single field.
+    status_cols = [c for c in raw.columns if c.startswith("status_")]
+    na_mask      = pd.Series(False, index=raw.index)
+    tbu_mask     = pd.Series(False, index=raw.index)
+    backlog_mask = pd.Series(False, index=raw.index)
+    for col in status_cols:
+        s      = raw[col]
+        is_tbu = _is_to_update(s)
+        na_mask      |= s.isin(_STATUS_NA)
+        tbu_mask     |= is_tbu
+        backlog_mask |= s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "") & ~is_tbu
+
+    raw = raw.copy()
+    raw["_cat_base"] = "unknown"
+    raw.loc[backlog_mask, "_cat_base"] = "backlog"
+    raw.loc[tbu_mask,      "_cat_base"] = "to_be_updated"
+    raw.loc[na_mask,       "_cat_base"] = "not_applicable"
+
+    # Device expansion from the OS list (iOS / Android).
+    raw["_devs"] = raw["mapp_devices"].apply(lambda d: d if isinstance(d, list) else [])
+    raw = raw[raw["_devs"].map(len) > 0]
+    if raw.empty:
+        return _empty
+    raw = raw.explode("_devs").rename(columns={"_devs": "device_exp"})
+    raw["country_label"] = bu
+
+    return (
+        raw[["case_id", "country_label", "device_exp", "_cat_base"]]
+        .drop_duplicates(subset=["case_id", "country_label", "device_exp"])
+        .rename(columns={"device_exp": "device"})
+        .reset_index(drop=True)
+    )
+
+
 def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFrame:
     """Add 'category' column — 'automated' overrides _cat_base where applicable.
 
@@ -358,13 +425,20 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
 _AUTO_SLIM_COLS = ["case_id", "country_label", "device", "framework"]
 
 
+_SCOPE_DISPLAY = {"next_gen": "Microservices", "mobile_app": "Mobile App"}
+
+
 def _build_summary(
     scope_data: dict[str, tuple],
+    pairs: list[tuple[str, str]],
 ) -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
            dict[tuple[str, str], pd.DataFrame]]:
     """Build the summary table plus the per-(BU, scope) frames the detail view needs.
 
     *scope_data* maps scope → (raw, auto, rules) already filtered to that scope.
+    *pairs* is the list of (bu, scope) to include.  Mobile-App scope uses the
+    priority-based `_expand_mapp_baseline`; every other scope uses the label-
+    based `_expand_baseline`.
 
     Returns (summary, expanded_by_bu, auto_by_bu):
       - expanded_by_bu: classified (case × country × device) baseline rows per BU
@@ -375,14 +449,15 @@ def _build_summary(
     auto_by_bu:     dict[tuple[str, str], pd.DataFrame] = {}
 
     rows = []
-    for bu, scope in _scoped_bus():
+    for bu, scope in pairs:
         if scope not in scope_data:
             continue
         raw_all, auto_all, rules_all = scope_data[scope]
         raw, auto, rules = _filter_bu(raw_all, auto_all, rules_all, bu)
         if raw.empty:
             continue
-        expanded = _expand_baseline(raw, rules)
+        expanded = (_expand_mapp_baseline(raw, rules) if scope == "mobile_app"
+                    else _expand_baseline(raw, rules))
         if expanded.empty:
             continue
         expanded = _classify_expanded(expanded, auto)
@@ -394,7 +469,7 @@ def _build_summary(
         s = _stats(expanded, auto)
         rows.append({
             "BU":        bu,
-            "Scope":     "Microservices" if scope == "next_gen" else "Website",
+            "Scope":     _SCOPE_DISPLAY.get(scope, "Website"),
             "Total":     s["total"],
             "Automated": s["automated"],
             "Java":      s["java"],
@@ -423,7 +498,23 @@ def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
         raw, auto, rules = _load_scope(scope)
         if not raw.empty:
             scope_data[scope] = (raw, auto, rules)
-    return _build_summary(scope_data)
+    return _build_summary(scope_data, _scoped_bus())
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _mapp_backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
+                                  dict[tuple[str, str], pd.DataFrame]]:
+    """The Mobile-App baseline pipeline, kept SEPARATE from `_backlog_data` so the
+    website/microservices numbers (KPI strip, All-BU table, Report, Dexter) stay
+    untouched.  Loaded lazily — mobile_app is deferred from the start-up warm-up,
+    so this only fetches when the user actually opens the Mobile App scope."""
+    raw, auto, rules = _load_scope("mobile_app")
+    if raw.empty:
+        return pd.DataFrame(), {}, {}
+    return _build_summary(
+        {"mobile_app": (raw, auto, rules)},
+        [(bu, "mobile_app") for bu in MOBILE_APP_BUS],
+    )
 
 
 # ── detail view ───────────────────────────────────────────────────────────────
@@ -606,23 +697,37 @@ def _detail_view(
 # ── render ────────────────────────────────────────────────────────────────────
 @st.fragment
 def render() -> None:
-    # Section title removed (redundant with the "Backlog" tab label) — the
-    # caption alone keeps the baseline definition visible.
-    st.caption(
-        "Baseline: cases with the label 'big_regr_desktop' / 'big_regr_mobile'. "
-    )
+    # Scope drives which baseline we show: Mobile App uses a priority-based
+    # baseline (separate pipeline), everything else the big_regr label baseline.
+    scope, bu = global_filter.current()
+    is_mapp = scope == "mobile_app"
 
-    # One cached call — the heavy pipeline only actually runs on the first
-    # render after a data refresh; every interaction after that is a cache hit.
-    with st.spinner("Computing backlog stats…"):
-        summary, expanded_by_bu, auto_by_bu = _backlog_data()
+    if is_mapp:
+        st.caption(
+            "Mobile App baseline: cases with **Priority High / Highest** in each "
+            "BU's mobile-app suite (status from Automation Status; device = iOS / "
+            "Android)."
+        )
+        with st.spinner("📱 Computing Mobile App backlog — first load can take "
+                        "~30-60s, then it's cached…"):
+            summary, expanded_by_bu, auto_by_bu = _mapp_backlog_data()
+        empty_msg = ("No Mobile App baseline data found — no High/Highest-priority "
+                     "cases in the mobile-app suites, or the data hasn't loaded yet "
+                     "(↻ next to the tabs).")
+    else:
+        st.caption(
+            "Baseline: cases with the label 'big_regr_desktop' / 'big_regr_mobile'. "
+        )
+        # One cached call — the heavy pipeline only runs on the first render after
+        # a data refresh; every interaction after that is a cache hit.
+        with st.spinner("Computing backlog stats…"):
+            summary, expanded_by_bu, auto_by_bu = _backlog_data()
+        empty_msg = ("No baseline data found. Ensure cases have the "
+                     "big_regr_desktop / big_regr_mobile labels in TestRail — new "
+                     "labels appear at the next data refresh (↻ next to the tabs).")
 
     if summary.empty:
-        st.warning(
-            "No baseline data found. Ensure cases have the big_regr_desktop / "
-            "big_regr_mobile labels in TestRail — new labels appear at the "
-            "next data refresh (↻ next to the tabs)."
-        )
+        st.warning(empty_msg)
         return
 
     # ── Summary table ─────────────────────────────────────────────────────────
@@ -667,19 +772,14 @@ def render() -> None:
 
     # ── Detail — follows the GLOBAL scope + BU selector ───────────────────────
     st.markdown("#### Detail by Business Unit")
-    scope, bu = global_filter.current()
-    if scope == "mobile_app":
-        st.info(
-            "Mobile App tests don't carry a regression-baseline label in "
-            "TestRail yet, so the baseline covers **Website** and "
-            "**Microservices** for now — switch the scope above to see a BU's "
-            "detail. Once a MAPP baseline label is defined, it can be wired in."
-        )
+    if (bu, scope) not in expanded_by_bu:
+        st.info(f"No baseline detail for **{bu}** in this scope.")
         return
     st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
     _detail_view(bu, scope, expanded_by_bu, auto_by_bu)
 
-    # ── TestRail hygiene checklist (zero extra API calls) ────────────────────
-    st.divider()
-    from . import data_quality
-    data_quality.render()
+    # ── TestRail hygiene checklist (website-scope only; zero extra API calls) ──
+    if not is_mapp:
+        st.divider()
+        from . import data_quality
+        data_quality.render()

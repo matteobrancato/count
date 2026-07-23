@@ -184,6 +184,35 @@ def _get_automation_tool(case: dict, reg: FieldRegistry) -> str | None:
     return None
 
 
+_MAPP_OS_LABEL = "MAPP Automation Operating System"
+
+
+def _mapp_devices_for(case: dict, reg: FieldRegistry) -> list[str]:
+    """Mobile-app device = the OS from the "MAPP Automation Operating System"
+    dropdown:  Both → ["iOS", "Android"]; iOS → ["iOS"]; Android → ["Android"];
+    missing/other → ["Unspecified"].  Matched case-insensitively so the exact
+    TestRail option labels don't have to be hard-coded."""
+    meta = (
+        reg.field(_MAPP_OS_LABEL)
+        or reg.field("custom_mapp_automation_operating_system")
+        or reg.field("custom_mapp_automation_os")
+    )
+    if not meta:
+        return ["Unspecified"]
+    raw = case.get(meta.system_name)
+    if raw is None:
+        return ["Unspecified"]
+    label = meta.values_by_id.get(raw, "") if isinstance(raw, int) else str(raw)
+    low = label.strip().lower()
+    if "both" in low:
+        return ["iOS", "Android"]
+    if "ios" in low:
+        return ["iOS"]
+    if "android" in low:
+        return ["Android"]
+    return ["Unspecified"]
+
+
 def _devices_for(case: dict, reg: FieldRegistry) -> list[str]:
     """Expand the Device dropdown:
     - "Both"           → ["Desktop", "Mobile"]
@@ -310,8 +339,10 @@ def _expand_rows(
         devices         = ["Mobile"]
         device_original = "Mobile"
     elif rule.framework == "mobile_app":
-        devices         = ["Mobile"]
-        device_original = "Mobile"
+        # MAPP device is the mobile OS (iOS / Android / Both) from the
+        # "MAPP Automation Operating System" field — "Both" expands to two rows.
+        devices         = _mapp_devices_for(case, reg)
+        device_original = "Both" if len(devices) == 2 else devices[0]
     else:
         devices         = _devices_for(case, reg)
         # Track the original Device field value before expansion
@@ -415,6 +446,7 @@ def _raw_case_row(
         "priority_label": priority_label,
         "deprecated":     _is_deprecated(case, reg),
         "device":         dev_label,
+        "mapp_devices":   _mapp_devices_for(case, reg),   # iOS/Android for the MAPP baseline
         "multi_countries":  _get_multi_countries(case, reg, project_id),
         "country_coverage": _get_country_tokens(case, reg, "custom_country_coverage", project_id),
         "labels":           _get_labels(case, project_id),
