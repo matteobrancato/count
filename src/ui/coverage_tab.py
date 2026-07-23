@@ -639,25 +639,28 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 
     non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
     non_dep, n_other_bu = _filter_to_bu_countries(non_dep, rules_bu)
-    if n_other_bu:
-        st.caption(
-            f"ℹ️ {n_other_bu:,} cases in this suite belong to other BUs sharing it "
-            f"(no matching country token) and are excluded — same convention as "
-            f"the Explorer tab."
-        )
     auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
     # ── ONE view, selected by a radio (default: No-Regression) ────────────────
     # The three subsets used to stack vertically; now the layout is constant and
-    # only the underlying data changes with the selection.  Each option keeps
-    # its own widget state via a distinct key_prefix, so switching is clean.
-    view = st.radio(
-        "Coverage view", _VIEW_OPTIONS, index=_VIEW_DEFAULT_INDEX,
-        horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
-        label_visibility="collapsed",
-    )
+    # only the underlying data changes.  Radio (left) + shared-suite note (right)
+    # share one compact row so the metrics sit right under the title.
+    c_radio, c_note = st.columns([3, 2], vertical_alignment="center")
+    with c_radio:
+        view = st.radio(
+            "Coverage view", _VIEW_OPTIONS, index=_VIEW_DEFAULT_INDEX,
+            horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
+            label_visibility="collapsed",
+        )
+    if n_other_bu:
+        c_note.markdown(
+            f"<div style='text-align:right;color:{COLORS['muted']};font-size:12px;"
+            f"line-height:1.3' title='Same convention as the Explorer tab.'>"
+            f"ℹ️ {n_other_bu:,} cases excluded — belong to other BUs on this "
+            f"shared suite</div>",
+            unsafe_allow_html=True,
+        )
     st.caption(_VIEW_DESC[view])
-    st.markdown("")
 
     if view == _VIEW_TOTAL:
         _render_coverage_section(
@@ -702,9 +705,8 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 def render() -> None:
     st.subheader("📐 Coverage by Area")
     st.caption(
-        "Automation coverage broken down by functional area (TestRail section). "
-        "Counts use the same convention as the other tabs: Desktop + Mobile "
-        "expanded rows for the automation totals, unique case IDs for the % coverage."
+        "Automation coverage by functional area (TestRail section) — Desktop + "
+        "Mobile rows for the totals, unique case IDs for the % coverage."
     )
 
     # Scope + BU come from the GLOBAL control bar (global_filter) — no local
@@ -714,8 +716,8 @@ def render() -> None:
         st.info("No rules defined for this scope.")
         return
 
-    st.divider()
-    # Keyed wrapper = scope hook for the scroll-reveal animation (see styles.py:
-    # `.st-key-coverage_anim`).  Elements fade + rise as they scroll into view.
+    # Keyed wrapper = scope hook for the fade-in animation (styles.py:
+    # `.st-key-coverage_anim`).  No divider above: it left a big empty gap
+    # before the view controls.
     with st.container(key="coverage_anim"):
         _coverage_for(chosen_scope, bu_choice)
