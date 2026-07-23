@@ -768,39 +768,35 @@ def render() -> None:
         return
 
     # ── Summary table ─────────────────────────────────────────────────────────
-    st.markdown("#### All Business Units")
-    # "Unknown" (rows with an automated status not attributed to this BU's
-    # automated set, or no status at all) is shown only when it occurs, so
-    # Total always equals the sum of the visible categories.
-    display = summary.copy()
+    # Scope-filter: Microservices is computed alongside Website (so the KPI-strip
+    # totals stay correct) but only SHOWN under its own scope — no more mixing it
+    # into the Website table.
+    scope_display = _SCOPE_DISPLAY.get(scope, "Website")
+    display = summary[summary["Scope"] == scope_display].copy()
+    if display.empty:
+        display = summary.copy()   # safety net: never show a blank table
+    # "Unknown" (automated-looking status not attributed to the BU, or none) is
+    # shown only when it occurs, so Total always equals the sum of the columns.
     if "Unknown" in display.columns and int(display["Unknown"].sum()) == 0:
         display = display.drop(columns=["Unknown"])
     num_cols = [col for col in ["Total", "Automated", "Java", "TestIM", "Backlog",
                                 "To update", "N/A", "Unknown"]
                 if col in display.columns]
-    # Premium presentation table (RAG coverage bar); the native sortable /
-    # downloadable dataframe is kept one click away in the expander below.
-    st.markdown(_summary_table_html(display, num_cols), unsafe_allow_html=True)
-    st.caption(
-        f"🟢 ≥ {COVERAGE_TARGET:.0f}% · 🟡 ≥ 60% "
-        f"· 🔴 below — same thresholds as the KPI strip.  "
-        f"'Unknown' (shown only when > 0) keeps Total = sum of the columns."
+
+    # Header + RAG legend on one clean row (like the Report tab).
+    st.markdown(
+        f'<div style="display:flex;align-items:center;justify-content:space-between;'
+        f'flex-wrap:wrap;gap:8px;margin:2px 0 12px">'
+        f'<div style="font-weight:700;font-size:16px;color:{COLORS["ink"]};'
+        f'border-left:3px solid {COLORS["brand"]};padding-left:10px">'
+        f'All Business Units</div>'
+        f'<div style="font-size:12px;color:{COLORS["muted"]}">'
+        f'🟢 ≥ {COVERAGE_TARGET:.0f}% &nbsp;·&nbsp; 🟡 ≥ 60% &nbsp;·&nbsp; 🔴 below '
+        f'&nbsp;— same thresholds as the KPI strip</div>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
-    with st.expander("⤢ Table view — sort, resize & download"):
-        tbl = display.copy()
-        tbl.insert(0, "Health",
-                   tbl["Cov. %"].map(lambda p: coverage_health(float(p))[0]))
-        st.dataframe(
-            tbl, width="stretch", hide_index=True,
-            column_config={
-                "Health":    st.column_config.TextColumn("", width=44),
-                "BU":        st.column_config.TextColumn("Business Unit", width="medium"),
-                "Scope":     st.column_config.TextColumn("Scope", width="small"),
-                "To update": st.column_config.NumberColumn(
-                    "To update", help="Status 'To be updated' — split out of Backlog."),
-                "Cov. %":    st.column_config.NumberColumn("Coverage %", format="%.1f%%"),
-            },
-        )
+    st.markdown(_summary_table_html(display, num_cols), unsafe_allow_html=True)
 
     st.divider()
 

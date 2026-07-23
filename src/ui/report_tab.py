@@ -7,12 +7,30 @@ import streamlit as st
 from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
+from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, coverage_health
 
+
+def _scope_summary(scope: str) -> pd.DataFrame:
+    """Per-BU baseline summary for the leaderboard, filtered to *scope* — the
+    same source the Backlog tab and KPI strip use, so numbers reconcile."""
+    from . import backlog_tab as bl
+    try:
+        if scope == "mobile_app":
+            summary, _, _ = bl._mapp_backlog_data()
+            return summary
+        summary, _, _ = bl._backlog_data()
+        want = {"next_gen": "Microservices"}.get(scope, "Website")
+        return summary[summary["Scope"] == want]
+    except Exception:                                                   # noqa: BLE001
+        return pd.DataFrame()
+
 # ── palette (sourced from the global design tokens) ─────────────────────────────
-_BLUE   = COLORS["mobile"]       # Mobile
-_ORANGE = COLORS["desktop"]      # Desktop
-_GREY   = COLORS["unspecified"]  # Unspecified (Microservices)
+_BLUE    = COLORS["mobile"]       # Mobile
+_ORANGE  = COLORS["desktop"]      # Desktop
+_GREY    = COLORS["unspecified"]  # Unspecified (Microservices)
+_IOS     = "#6366F1"              # iOS     (Mobile App)
+_ANDROID = "#16A34A"             # Android (Mobile App)
 
 _BU_ORDER = [
     "The Perfume Shop", "Savers", "Superdrug",
@@ -22,20 +40,22 @@ _BU_ORDER = [
 
 
 # ── data loading (shares evaluate_rules cache with other tabs) ────────────────
-def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
+def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame,
+                         scope: str = "website") -> pd.DataFrame:
     """Add `is_regression` from the Backlog tab's own baseline expansion.
 
     A row is regression when its (case, country, device) is an *automated*
-    baseline row per the Backlog method (`big_regr` labels × multi_countries) —
-    the single source of truth, so the solid segments reconcile with the
-    Backlog / Coverage baseline numbers.  Unspecified-device rows (Microservices)
-    fall back to case-level membership since the baseline is device-labelled.
+    baseline row per the Backlog method — the single source of truth, so the
+    solid segments reconcile with the Backlog / Coverage baseline numbers.
+    Mobile App uses the priority-based MAPP baseline; other scopes the big_regr
+    one.  Unspecified-device rows fall back to case-level membership.
     """
     if auto.empty:
         return auto
     try:
         from . import backlog_tab as bl
-        _, expanded_by_bu, _ = bl._backlog_data()
+        loader = bl._mapp_backlog_data if scope == "mobile_app" else bl._backlog_data
+        _, expanded_by_bu, _ = loader()
         frames = [f[f["category"] == "automated"] for f in expanded_by_bu.values()]
         base = (pd.concat(frames, ignore_index=True) if frames
                 else pd.DataFrame(columns=["case_id", "country_label", "device"]))
@@ -56,36 +76,20 @@ def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _load() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (website_auto, all_auto) deduplicated on (bu, country, device, case_id).
-
-    Each frame carries an `is_regression` boolean derived from big_regr_* labels,
-    so the chart can stack regression vs other automated cases.
-    """
-    frames_all: list[pd.DataFrame] = []
-    frames_web: list[pd.DataFrame] = []
-
-    for scope in ("website", "next_gen"):
-        rules = [r for r in ALL_RULES if r.scope == scope]
-        if not rules:
-            continue
-        result = evaluate_rules(tuple(r.name for r in rules))
-        if result.automated.empty:
-            continue
-        auto = _add_regression_flag(result.automated, result.raw_cases)
-        frames_all.append(auto)
-        if scope == "website":
-            frames_web.append(auto)
-
-    def _dedup(frames: list[pd.DataFrame]) -> pd.DataFrame:
-        if not frames:
-            return pd.DataFrame()
-        return (
-            pd.concat(frames, ignore_index=True)
-            .drop_duplicates(subset=["bu", "country_label", "device", "case_id"])
-        )
-
-    return _dedup(frames_web), _dedup(frames_all)
+def _load(scope: str) -> pd.DataFrame:
+    """Automated rows for ONE scope, deduped on (bu, country, device, case_id),
+    each carrying an `is_regression` flag so the chart can stack regression vs
+    other automated tests.  Scope-driven so the Report reflects the selected
+    radio (Website / Mobile App / Microservices) — Microservices no longer mixes
+    into the Website view."""
+    rules = [r for r in ALL_RULES if r.scope == scope]
+    if not rules:
+        return pd.DataFrame()
+    result = evaluate_rules(tuple(r.name for r in rules))
+    if result.automated.empty:
+        return pd.DataFrame()
+    auto = _add_regression_flag(result.automated, result.raw_cases, scope)
+    return auto.drop_duplicates(subset=["bu", "country_label", "device", "case_id"])
 
 
 # ── chart ─────────────────────────────────────────────────────────────────────
@@ -119,13 +123,16 @@ def _prepare_chart_data(auto: pd.DataFrame, bus: list[str]) -> pd.DataFrame:
         .transform(lambda s: s.map({c: i for i, c in enumerate(sorted(s.unique()))}))
     )
     grp["dev_rank"]  = grp["device"].map(
-        {"Mobile": 0, "Desktop": 1, "Unspecified": 2, "API": 2}).fillna(2).astype(int)
+        {"iOS": 0, "Android": 1, "Mobile": 0, "Desktop": 1,
+         "Unspecified": 2, "API": 2}).fillna(2).astype(int)
     grp["sort_key"]  = grp["ctry_rank"] * 10 + grp["dev_rank"]
-    # For device-less rows (Microservices "API" / Unspecified) show just the country
-    # code — no device prefix.
+    # Row label: MAPP rows are per-OS (country_label = BU, redundant with the
+    # panel title) → show just "iOS"/"Android"; device-less rows (API /
+    # Unspecified) → the country only; website rows → "device country".
     grp["label"] = grp.apply(
-        lambda r: r["country_label"] if r["device"] in ("Unspecified", "API")
-        else r["device"].lower() + " " + r["country_label"],
+        lambda r: r["device"] if r["device"] in ("iOS", "Android")
+        else (r["country_label"] if r["device"] in ("Unspecified", "API")
+              else r["device"].lower() + " " + r["country_label"]),
         axis=1,
     )
     grp["bu_rank"] = grp["bu"].map({b: i for i, b in enumerate(bus)})
@@ -149,8 +156,8 @@ def _build_bu_chart(df_bu: pd.DataFrame) -> alt.LayerChart:
     y_sort = alt.EncodingSortField(field="sort_key", order="ascending")
 
     color_scale = alt.Scale(
-        domain=["Mobile", "Desktop", "Unspecified", "API"],
-        range=[_BLUE, _ORANGE, _GREY, _GREY],   # API (Microservices) = grey, device-less
+        domain=["Mobile", "Desktop", "Unspecified", "API", "iOS", "Android"],
+        range=[_BLUE, _ORANGE, _GREY, _GREY, _IOS, _ANDROID],   # API = grey, device-less
     )
 
     y_axis = alt.Axis(title=None, labelFontSize=11, labelFont="Inter",
@@ -314,81 +321,98 @@ def _panel_header(bu: str, n_auto: int, cov: float | None) -> None:
 def render() -> None:
     # Standard tab opener (subheader + caption) — same pattern as every other tab.
     # Section title removed (redundant with the "Report" tab label).
+    # Scope-driven: the Report reflects the selected radio (Website / Mobile App
+    # / Microservices).  Microservices no longer mixes into the Website view.
+    scope, _bu = global_filter.current()
+    scope_lbl  = global_filter.scope_label(scope)
+    is_web     = scope == "website"
+    is_mapp    = scope == "mobile_app"
+
     st.caption(
-        "Automated tests per Business Unit, split by framework and device. "
-        "Solid bar segments are the regression baseline; faded segments are "
-        "other automated tests."
+        f"Automated tests per Business Unit · **{scope_lbl}**. Solid bar segments "
+        f"are the baseline; faded segments are other automated tests."
     )
 
-    with st.spinner("Loading…"):
-        web_auto, all_auto = _load()
+    with st.spinner("📱 Loading Mobile App report — first load can take ~30-60s, "
+                    "then it's cached…" if is_mapp else "Loading…"):
+        all_auto = _load(scope)
 
     if all_auto.empty:
-        st.warning("No automated data available — data refreshes automatically every few hours (or use the ↻ next to the tabs).")
+        st.warning(
+            f"No automated data for **{scope_lbl}** yet — data refreshes "
+            "automatically every few hours (or use the ↻ next to the tabs)."
+        )
         return
 
-    s_tot = metrics.totals(metrics.select_smoke(web_auto))
     a_tot = metrics.totals(all_auto)
+    n_unique = int(all_auto["case_id"].nunique())
 
-    # ── Header row: 3 framework cards + a spacer + 2 metric badges ─────────────
-    # Equal widths within each group + one thin spacer between groups, so the
-    # blocks line up in a clean, evenly-spaced grid (all cards share min-height).
-    c_fw1, c_fw2, c_fw3, _sp, c_m1, c_m2 = st.columns(
-        [2, 2, 2, 0.2, 1.35, 1.35], gap="small")
-    _fw_card(c_fw1, "☕", "Java / Selenium / Cucumber",
-             "Legacy framework used by aLab", COLORS["java_bg"])
-    _fw_card(c_fw2, "🤖", "TestIM",
-             "AI-powered test automation platform", COLORS["testim_bg"])
-    _fw_card(c_fw3, "🎭", "TypeScript / Playwright",
-             "Modern end-to-end web automation", COLORS["playwright_bg"])
-    _metric_badge(c_m1, f"+{s_tot['total']:,}", "Test Cases", "Smoke Suite")
-    _metric_badge(c_m2, f"+{a_tot['total']:,}", "Test Cases", "Total Count")
+    # ── Header ────────────────────────────────────────────────────────────────
+    if is_web:
+        # Full header: framework cards (website frameworks) + Smoke/Total badges.
+        s_tot = metrics.totals(metrics.select_smoke(all_auto))
+        c_fw1, c_fw2, c_fw3, _sp, c_m1, c_m2 = st.columns(
+            [2, 2, 2, 0.2, 1.35, 1.35], gap="small")
+        _fw_card(c_fw1, "☕", "Java / Selenium / Cucumber",
+                 "Legacy framework used by aLab", COLORS["java_bg"])
+        _fw_card(c_fw2, "🤖", "TestIM",
+                 "AI-powered test automation platform", COLORS["testim_bg"])
+        _fw_card(c_fw3, "🎭", "TypeScript / Playwright",
+                 "Modern end-to-end web automation", COLORS["playwright_bg"])
+        _metric_badge(c_m1, f"+{s_tot['total']:,}", "Test Cases", "Smoke Suite")
+        _metric_badge(c_m2, f"+{a_tot['total']:,}", "Test Cases", "Total Count")
+    else:
+        # Scope-appropriate compact header (the framework cards are website-only).
+        _sp, c_m1, c_m2 = st.columns([5, 1.6, 1.6], gap="small")
+        _metric_badge(c_m1, f"{n_unique:,}", "Automated Cases", scope_lbl)
+        _metric_badge(c_m2, f"+{a_tot['total']:,}", "Automated Rows", "Total Count")
 
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-    # ── EXECUTIVE SUMMARY: coverage leaderboard ───────────────────────────────
-    # The 5-second "who's ahead / who needs attention" — one RAG bar per BU,
-    # sorted by regression coverage %.  Per-BU coverage is also reused below to
-    # annotate each detail panel.
+    # ── EXECUTIVE SUMMARY: coverage leaderboard (scope-filtered) ──────────────
     cov_by_bu: dict[str, float] = {}
-    try:
-        from . import backlog_tab as bl
-        summary, _exp, _auto = bl._backlog_data()
-    except Exception:                                                   # noqa: BLE001
-        summary = pd.DataFrame()
-    if not summary.empty and "Cov. %" in summary.columns:
+    summary = _scope_summary(scope)
+    if not summary.empty and "Cov. %" in summary.columns and len(summary) > 1:
         cov_by_bu = {str(r["BU"]): float(r["Cov. %"]) for _, r in summary.iterrows()}
-        _section_title("🏆 Regression coverage by Business Unit")
+        _section_title("🏆 Baseline coverage by Business Unit")
         st.altair_chart(_leaderboard_chart(summary), width="stretch")
         st.caption(
-            f"Automated share of the regression baseline per BU — same numbers "
-            f"as the Backlog tab. Dashed line = {COVERAGE_TARGET:.0f}% target."
+            f"Automated share of the baseline per BU — same numbers as the "
+            f"Backlog tab. Dashed line = {COVERAGE_TARGET:.0f}% target."
         )
         st.markdown("<div style='height:22px'></div>", unsafe_allow_html=True)
+    elif not summary.empty and "Cov. %" in summary.columns:
+        # single BU (e.g. Microservices) — no leaderboard, still annotate panels
+        cov_by_bu = {str(r["BU"]): float(r["Cov. %"]) for _, r in summary.iterrows()}
 
-    # ── DETAIL: automated tests by country & device ───────────────────────────
+    # ── DETAIL: automated tests by device ─────────────────────────────────────
     def _dot(color: str) -> str:
         return (f'<span style="display:inline-block;width:11px;height:11px;'
                 f'border-radius:2px;background:{color};margin-right:5px;'
                 f'vertical-align:middle"></span>')
 
+    if is_mapp:
+        devs_legend = (f'{_dot(_IOS)}<span>iOS</span>'
+                       f'{_dot(_ANDROID)}<span>Android</span>')
+    else:
+        devs_legend = (f'{_dot(_BLUE)}<span>Mobile</span>'
+                       f'{_dot(_ORANGE)}<span>Desktop</span>'
+                       f'{_dot(_GREY)}<span style="color:{COLORS["muted"]}">'
+                       f'Unspecified / API</span>')
     legend_html = (
         f'<div style="display:flex;align-items:center;gap:16px;'
-        f'font-size:12px;color:{COLORS["text"]}">'
-        f'{_dot(_BLUE)}<span>Mobile</span>'
-        f'{_dot(_ORANGE)}<span>Desktop</span>'
-        f'{_dot(_GREY)}<span style="color:{COLORS["muted"]}">Unspecified / API</span>'
+        f'font-size:12px;color:{COLORS["text"]}">{devs_legend}'
         f'<span style="color:{COLORS["muted"]};font-size:11px;margin-left:6px;'
         f'border-left:1px solid {COLORS["border"]};padding-left:10px">'
-        f'solid = regression&nbsp;·&nbsp;faded = other</span>'
+        f'solid = baseline&nbsp;·&nbsp;faded = other</span>'
         f'</div>'
     )
     st.markdown(
         f'<div style="display:flex;align-items:center;justify-content:space-between;'
-        f'margin-bottom:10px">'
+        f'flex-wrap:wrap;gap:8px;margin-bottom:10px">'
         f'<div style="font-weight:700;font-size:15px;color:{COLORS["ink"]};'
         f'border-left:3px solid {COLORS["brand"]};padding-left:10px">'
-        f'📊 Automated tests by country &amp; device</div>'
+        f'📊 Automated tests by device</div>'
         f'{legend_html}'
         f'</div>',
         unsafe_allow_html=True,

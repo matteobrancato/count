@@ -399,7 +399,13 @@ def _regression_baseline_like_backlog(
     empty = (non_dep.iloc[0:0], auto_bu.iloc[0:0], set())
     if non_dep.empty:
         return empty
-    expanded = bl._classify_expanded(bl._expand_baseline(non_dep, rules_bu), auto_bu)
+    # Mobile App has no big_regr baseline — it uses the priority-based MAPP
+    # baseline (High/Highest × iOS/Android).  Dispatch to the right expansion so
+    # the Coverage "baseline" view matches the Backlog tab for every scope.
+    _expand = (bl._expand_mapp_baseline
+               if rules_bu and rules_bu[0].scope == "mobile_app"
+               else bl._expand_baseline)
+    expanded = bl._classify_expanded(_expand(non_dep, rules_bu), auto_bu)
     if expanded.empty:
         return empty
 
@@ -659,7 +665,13 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         )
     note = (f"  ·  ℹ️ {n_other_bu:,} cases excluded (other BUs on this shared suite)"
             if n_other_bu else "")
-    st.caption(_VIEW_DESC[view] + note)
+    desc = _VIEW_DESC[view]
+    if scope == "mobile_app" and view == _VIEW_REGR:
+        # MAPP has no big_regr label — its baseline is priority-based.
+        desc = ("Restricted to the **Mobile App baseline** — cases with Priority "
+                "High / Highest (device = iOS / Android), exactly like the "
+                "Backlog tab for Mobile App.")
+    st.caption(desc + note)
 
     if view == _VIEW_TOTAL:
         _render_coverage_section(
