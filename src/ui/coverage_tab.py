@@ -439,6 +439,7 @@ def _render_coverage_section(
     *,
     key_prefix: str,
     scope: str,
+    depth_offset: int = 0,
     show_tool_facet: bool = True,
     show_target: bool = False,
 ) -> None:
@@ -477,20 +478,36 @@ def _render_coverage_section(
     else:
         c4.metric("Coverage", f"{cov_pct:.1f}%", help=_cov_help)
 
-    # ── section granularity ───────────────────────────────────────────────────
-    st.markdown("")
-    depth_offset = st.slider(
-        "Granularity", 0, 3, 0,
-        key=f"{key_prefix}_granularity",
-        help=("0 = Main Category (auto-detected — strips dominant root containers "
-              "like \"SD\" or \"WTR\"); 1 = Secondary; 2-3 = deeper sub-sections."),
-    )
-
+    # depth_offset (granularity) now comes from the control row in _coverage_for
+    # so the slider can sit next to the view radio.
     cov, chain = _coverage_table(non_dep, auto_bu, auto_ids, depth_offset=depth_offset)
     if cov.empty:
         st.info("No sections to display.")
         return
 
+    # ── charts FIRST — the at-a-glance visual managers care about ─────────────
+    # Build one color map shared by both charts so a given area is always the
+    # same color across pie + bar.
+    color_map = _area_color_map(cov)
+    st.markdown("")
+    left, right = st.columns([1, 1.2], gap="large")
+    with left:
+        st.markdown("##### 🥧 Automated distribution")
+        st.caption("Share of automated rows per area (slice size = Desktop + Mobile)")
+        pie = _build_pie(cov, color_map)
+        if pie is None:
+            st.info("No automated cases yet.")
+        else:
+            st.altair_chart(pie, width="stretch")
+    with right:
+        st.markdown("##### 📊 Coverage % per area")
+        st.caption("Sorted by coverage % (zero-automated areas pushed to the bottom). "
+                   "Colors match the pie chart — same color = same area.")
+        bar = _build_coverage_bar(cov, color_map)
+        st.altair_chart(bar, width="stretch")
+
+    # ── table (detail, below the charts) ──────────────────────────────────────
+    st.markdown("#### 📋 Coverage table")
     if chain:
         chain_str = " > ".join(f"`{c}`" for c in chain)
         st.caption(
@@ -499,9 +516,6 @@ def _render_coverage_section(
         )
     else:
         st.caption("No dominant container detected — sections shown at the top level.")
-
-    # ── table ─────────────────────────────────────────────────────────────────
-    st.markdown("#### 📋 Coverage table")
     display = cov.copy()
     # Add a Total row at the bottom (matching the Excel format)
     total_row = pd.DataFrame([{
@@ -547,29 +561,6 @@ def _render_coverage_section(
                 help="Unique automated cases ÷ Total cases per area."),
         },
     )
-
-    # ── charts ────────────────────────────────────────────────────────────────
-    # Build one color map shared by both charts so a given area is always the
-    # same color across pie + bar.
-    color_map = _area_color_map(cov)
-
-    st.markdown("")
-    left, right = st.columns([1, 1.2], gap="large")
-    with left:
-        st.markdown("##### 🥧 Automated distribution")
-        st.caption("Share of automated rows per area (slice size = Desktop + Mobile)")
-        pie = _build_pie(cov, color_map)
-        if pie is None:
-            st.info("No automated cases yet.")
-        else:
-            st.altair_chart(pie, width="stretch")
-
-    with right:
-        st.markdown("##### 📊 Coverage % per area")
-        st.caption("Sorted by coverage % (zero-automated areas pushed to the bottom). "
-                   "Colors match the pie chart — same color = same area.")
-        bar = _build_coverage_bar(cov, color_map)
-        st.altair_chart(bar, width="stretch")
 
     # ── mobile-app facet (only shown in the full view to avoid duplication) ──
     if show_tool_facet and scope == "mobile_app" and not auto_bu.empty \
@@ -641,32 +632,35 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     non_dep, n_other_bu = _filter_to_bu_countries(non_dep, rules_bu)
     auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
-    # ── ONE view, selected by a radio (default: No-Regression) ────────────────
-    # The three subsets used to stack vertically; now the layout is constant and
-    # only the underlying data changes.  Radio (left) + shared-suite note (right)
-    # share one compact row so the metrics sit right under the title.
-    c_radio, c_note = st.columns([3, 2], vertical_alignment="center")
+    # ── ONE view + granularity on ONE control row ─────────────────────────────
+    # View radio (left) and the granularity slider (right) share a line so the
+    # metrics sit high on the page.  The slider is per-(scope, BU) so it persists
+    # when switching views.  The shared-suite exclusion note rides along the
+    # per-view description caption below (kept compact).
+    c_radio, c_gran = st.columns([3, 2], vertical_alignment="center")
     with c_radio:
         view = st.radio(
             "Coverage view", _VIEW_OPTIONS, index=_VIEW_DEFAULT_INDEX,
             horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
             label_visibility="collapsed",
         )
-    if n_other_bu:
-        c_note.markdown(
-            f"<div style='text-align:right;color:{COLORS['muted']};font-size:12px;"
-            f"line-height:1.3' title='Same convention as the Explorer tab.'>"
-            f"ℹ️ {n_other_bu:,} cases excluded — belong to other BUs on this "
-            f"shared suite</div>",
-            unsafe_allow_html=True,
+    with c_gran:
+        depth_offset = st.slider(
+            "Granularity (section depth)", 0, 3, 0,
+            key=f"cov_gran_{scope}_{bu_choice}",
+            help=("0 = Main Category (auto-detected — strips dominant root "
+                  "containers like \"SD\" or \"WTR\"); 1 = Secondary; "
+                  "2-3 = deeper sub-sections."),
         )
-    st.caption(_VIEW_DESC[view])
+    note = (f"  ·  ℹ️ {n_other_bu:,} cases excluded (other BUs on this shared suite)"
+            if n_other_bu else "")
+    st.caption(_VIEW_DESC[view] + note)
 
     if view == _VIEW_TOTAL:
         _render_coverage_section(
             non_dep, auto_bu, auto_ids,
             key_prefix=f"cov_total_{scope}_{bu_choice}",
-            scope=scope, show_tool_facet=True,
+            scope=scope, depth_offset=depth_offset, show_tool_facet=True,
         )
     elif view == _VIEW_REGR:
         nd_base, ab_base, ids_base = _regression_baseline_like_backlog(
@@ -681,7 +675,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             _render_coverage_section(
                 nd_base, ab_base, ids_base,
                 key_prefix=f"cov_regr_{scope}_{bu_choice}",
-                scope=scope, show_tool_facet=True,
+                scope=scope, depth_offset=depth_offset, show_tool_facet=True,
                 show_target=True,        # the 80% target is defined on the baseline
             )
     else:  # _VIEW_PS
@@ -696,14 +690,15 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             _render_coverage_section(
                 nd_ps, ab_ps, ids_ps,
                 key_prefix=f"cov_ps_{scope}_{bu_choice}",
-                scope=scope, show_tool_facet=True,
+                scope=scope, depth_offset=depth_offset, show_tool_facet=True,
             )
 
 
 # ── render ───────────────────────────────────────────────────────────────────
 @st.fragment
 def render() -> None:
-    st.subheader("📐 Coverage by Area")
+    # Subheader removed (the tab is already labeled "Coverage") — a lead caption
+    # keeps the counting convention visible without the redundant title.
     st.caption(
         "Automation coverage by functional area (TestRail section) — Desktop + "
         "Mobile rows for the totals, unique case IDs for the % coverage."
