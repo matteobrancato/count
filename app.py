@@ -128,7 +128,13 @@ def _freshness_label(scope: str = "website") -> None:
     the tiny ↻ that refreshes ONLY the numbers.
     """
     updated_at = _numbers_fetched_at()
-    with st.container(key="freshness"):
+    # Native horizontal flex row (Streamlit ≥1.46): the items are centred on one
+    # optical line by the framework, so no hand-rolled flex/line-height CSS is
+    # needed — that was what left the labels sitting at different heights.
+    with st.container(
+        key="freshness", horizontal=True, vertical_alignment="center",
+        gap="small", width="content",
+    ):
         with st.popover("ℹ️ How numbers are calculated"):
             # Marker class — see `:has(.methodology-panel)` in styles.py.
             st.markdown('<div class="methodology-panel"></div>',
@@ -148,11 +154,16 @@ def _freshness_label(scope: str = "website") -> None:
             else:
                 st.caption("Available once the data has finished loading.")
 
+        # <span>, not <div>: Streamlit gives the markdown container a
+        # margin-bottom of -1rem assuming a <p> inside supplies +1rem.  A bare
+        # block <div> gets no such margin, so the box collapses 16px and the
+        # text drifts below the row's centre line.  Inline HTML is wrapped in a
+        # <p> by the markdown pass, which restores the balance.
         st.markdown(
-            f"<div style='color:{COLORS['muted']};font-size:11px;"
-            f"white-space:nowrap;line-height:1'>Updated "
+            f"<span style='color:{COLORS['muted']};font-size:11px;"
+            f"white-space:nowrap'>Updated "
             f"<b style='color:{COLORS['text']};font-weight:600'>"
-            f"{_relative_time(updated_at)}</b></div>",
+            f"{_relative_time(updated_at)}</b></span>",
             unsafe_allow_html=True,
         )
         # No help tooltip: it rendered a large card covering the label.  The ↻

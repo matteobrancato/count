@@ -1188,18 +1188,23 @@ def _render_chat_panel() -> None:
         # to treat every form/button as brand-new (avoids stale widget state
         # leaking across reruns inside the popover).
         head_l, head_r = st.columns([7, 3], vertical_alignment="center")
+        # Inline <span>s, not block <div>s: Streamlit gives the markdown
+        # container a -1rem bottom margin on the assumption that a <p> inside
+        # supplies +1rem.  Block HTML gets no such margin, so the block reports
+        # 22px instead of 38px and the header sat 8px below the "Delete chat"
+        # button it shares a centred row with.  (Measured; identical rendering.)
         head_l.markdown(
-            f"<div style='display:flex;align-items:center;gap:10px'>"
-            f"<div style='width:38px;height:38px;border-radius:12px;flex:0 0 auto;"
-            f"display:flex;align-items:center;justify-content:center;font-size:18px;"
+            f"<span style='display:inline-flex;align-items:center;gap:10px'>"
+            f"<span style='width:38px;height:38px;border-radius:12px;flex:0 0 auto;"
+            f"display:inline-flex;align-items:center;justify-content:center;font-size:18px;"
             f"background:linear-gradient(135deg,#FF6B6B 0%,#E63E3E 100%);"
-            f"box-shadow:0 3px 10px rgba(255,75,75,0.35)'>✨</div>"
-            f"<div>"
-            f"<div style='font-size:17px;font-weight:800;color:{COLORS['ink']};"
-            f"letter-spacing:-0.01em;line-height:1.1;white-space:nowrap'>Dexter</div>"
-            f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px;"
-            f"white-space:nowrap'>AI coverage assistant</div>"
-            f"</div></div>",
+            f"box-shadow:0 3px 10px rgba(255,75,75,0.35)'>✨</span>"
+            f"<span style='display:inline-block'>"
+            f"<span style='display:block;font-size:17px;font-weight:800;color:{COLORS['ink']};"
+            f"letter-spacing:-0.01em;line-height:1.1;white-space:nowrap'>Dexter</span>"
+            f"<span style='display:block;font-size:11px;color:{COLORS['muted']};margin-top:2px;"
+            f"white-space:nowrap'>AI coverage assistant</span>"
+            f"</span></span>",
             unsafe_allow_html=True,
         )
         if head_r.button("Delete chat", key="ai_delete_chat",

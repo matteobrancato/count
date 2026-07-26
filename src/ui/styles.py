@@ -305,7 +305,6 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
    A quiet action: small, muted, brand-tinted only on hover. */
 /* Summary-table CSV export — a text label sitting on the legend row, not a
    button: it is a secondary action and a filled control dominated the row. */
-.st-key-summary_export {{ text-align: right; }}
 .st-key-summary_export button {{
     background: transparent !important;
     border: none !important;
@@ -343,6 +342,15 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     color: {c['muted']} !important;
     white-space: nowrap !important;
 }}
+/* Centre the label inside the trigger box: Streamlit's button line-height
+   (1.6 × 16px) is taller than our 11px label, which parked the text ~2px below
+   the row's centre line. */
+.st-key-freshness [data-testid="stPopover"] button,
+.st-key-summary_export button {{
+    display: flex !important;
+    align-items: center !important;
+    line-height: 1 !important;
+}}
 .st-key-freshness [data-testid="stPopover"] button p {{
     font-size: 11px !important;
     color: {c['muted']} !important;
@@ -357,6 +365,19 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 .st-key-freshness [data-testid="stPopover"] button svg,
 .st-key-freshness [data-testid="stPopover"] button [data-testid="stIconMaterial"] {{
     display: none !important;
+}}
+/* ONE optical line for the two utility rows (tab-bar bar + summary legend).
+   Streamlit centres each item's BOX, but a popover trigger, a markdown label
+   and a bare glyph button have different line boxes, so their text landed on
+   three different heights.  Giving every text carrier the same line box lines
+   the glyphs up (measured spread: 8px → <1px). */
+.st-key-freshness [data-testid="stMarkdownContainer"] p,
+.st-key-freshness [data-testid="stPopover"] button p,
+.st-key-freshness [class*="st-key-refresh_mini"] button,
+.st-key-freshness [class*="st-key-refresh_mini"] button p,
+.st-key-summary_export [data-testid="stMarkdownContainer"] p,
+.st-key-summary_export button p {{
+    line-height: 20px !important;
 }}
 /* The panels themselves: roomy, readable cards (the chat popover styling is
    scoped to the chat form, so it never reaches these). */
@@ -380,24 +401,22 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     right: 0 !important;
     width: auto !important;
     z-index: 20 !important;
-    /* One horizontal utility bar: methodology · data quality · updated · ↻ */
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center !important;
-    gap: 16px !important;
+    /* Layout (one centred row) comes from st.container(horizontal=True,
+       vertical_alignment="center") — do NOT re-declare flex here: overriding
+       Streamlit's own flex is what knocked the labels out of alignment. */
 }}
-.st-key-freshness > [data-testid="stVerticalBlock"] {{
-    flex-direction: row !important;
-    align-items: center !important;
-    gap: 16px !important;
-    width: auto !important;
-}}
-.st-key-freshness [data-testid="stElementContainer"] {{ width: auto !important; }}
 /* Narrow viewports: the tab bar wins the row — drop the utility bar below it
    instead of letting the two overlap. */
 @media (max-width: 1250px) {{
+    /* The container is created with width="content", so BOTH it and Streamlit's
+       layout wrapper hug the content — they must span the row for the bar to
+       align right once it is back in the normal flow. */
+    [data-testid="stLayoutWrapper"]:has(> .st-key-freshness) {{
+        width: 100% !important;
+    }}
     .st-key-freshness {{
         position: static !important;
+        width: 100% !important;
         justify-content: flex-end !important;
         margin: 4px 0 6px !important;
     }}

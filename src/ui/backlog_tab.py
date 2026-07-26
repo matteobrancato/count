@@ -807,22 +807,34 @@ def render() -> None:
     # and mails, so the export must exist — but it is a secondary action and a
     # full-width button dominated the row.  (The presentation table is custom
     # HTML, which has no built-in download, hence the explicit control.)
-    c_title, c_legend, c_csv = st.columns([4, 3, 1], vertical_alignment="center")
+    c_title, c_meta = st.columns([3, 4], vertical_alignment="center")
     with c_title:
+        # inline-block <span>, not a block <div> — same reason as the legend
+        # below: a block element collapses against Streamlit's -1rem markdown
+        # margin and lands 8px below the legend it should be level with.
         st.markdown(
-            f'<div style="font-weight:700;font-size:16px;color:{COLORS["ink"]};'
-            f'border-left:3px solid {COLORS["brand"]};padding-left:10px">'
-            f'All Business Units</div>',
+            f'<span style="display:inline-block;font-weight:700;font-size:16px;'
+            f'color:{COLORS["ink"]};border-left:3px solid {COLORS["brand"]};'
+            f'padding-left:10px;line-height:1.25">'
+            f'All Business Units</span>',
             unsafe_allow_html=True,
         )
-    with c_legend:
+    # Native horizontal flex row: legend and CSV share one optically centred
+    # line, right-aligned against the table's right edge.
+    with c_meta, st.container(
+        key="summary_export", horizontal=True, vertical_alignment="center",
+        horizontal_alignment="right", gap="small",
+    ):
+        # <span> (inline) rather than <div>: see the note in app.py's utility
+        # bar — a block element collapses against Streamlit's -1rem markdown
+        # margin and sits 8px below the row's centre.
         st.markdown(
-            f'<div style="font-size:12px;color:{COLORS["muted"]};text-align:right">'
+            f'<span style="font-size:12px;color:{COLORS["muted"]};'
+            f'white-space:nowrap">'
             f'🟢 ≥ {COVERAGE_TARGET:.0f}% &nbsp;·&nbsp; 🟡 ≥ 60% &nbsp;·&nbsp; '
-            f'🔴 below</div>',
+            f'🔴 below</span>',
             unsafe_allow_html=True,
         )
-    with c_csv, st.container(key="summary_export"):
         st.download_button(
             "⬇ CSV",
             display.to_csv(index=False).encode("utf-8"),
