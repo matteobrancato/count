@@ -47,7 +47,7 @@ from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
 from ..field_resolver import get_registry
 from ..rules_engine import _get_multi_countries, _section_path_lookup
 from . import global_filter
-from .styles import COLORS
+from .styles import COLORS, section_title
 
 
 # ── constants ────────────────────────────────────────────────────────────────
@@ -549,7 +549,7 @@ _CLASS_EMOJI = {
 
 @st.fragment
 def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
-    st.markdown("#### 🏃 Active Runs")
+    section_title("🏃 Active Runs")
     st.caption(
         "Non-completed TestRail runs matched to this BU by alias in the run/plan name. "
         "Sorted by last activity (most recent first)."
@@ -710,7 +710,7 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
 
 @st.fragment
 def _render_stability(bu: str, project_ids: set[int]) -> None:
-    st.markdown("#### 📈 Test Stability")
+    section_title("📈 Test Stability")
     st.caption(
         "Classify cases by their result pattern across the last N **completed** runs. "
         "*Always fail* → fix priority · *Flaky* → investigate · *Always pass* → safe · "
@@ -1084,7 +1084,7 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
     """'Is the release ready?' — TestRail's latest regression run joined with
     Jira's fix-version state.  The TestRail half always works; the Jira half
     appears only when the Atlassian secrets are configured."""
-    st.markdown("#### 🚦 Release readiness")
+    section_title("🚦 Release readiness")
     st.caption(
         "The latest **completed regression run** for this BU, and — pick a Jira "
         "fix version — how close its scope is to done."
@@ -1182,7 +1182,7 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
 
 @st.fragment
 def _render_case_deep_dive() -> None:
-    st.markdown("#### 🔬 In-depth Test Analysis")
+    section_title("🔬 In-depth Test Analysis")
     st.caption(
         "The full story of **one test case**: every recent run it appeared in and "
         "the status it ended with, how many times it was executed, the JIRA bugs "

@@ -6,6 +6,7 @@ import streamlit as st
 from ..bu_rules import ALL_RULES, filter_conditional_tokens
 from ..rules_engine import evaluate_rules, ExpansionResult
 from . import global_filter
+from .styles import section_title
 
 # ------------------------------------------------------------------ constants
 FRAMEWORK_LABELS = {
@@ -72,7 +73,7 @@ def _apply_display_values(df: pd.DataFrame) -> pd.DataFrame:
 # ------------------------------------------------------------------ suite status breakdown
 def _suite_status(raw: pd.DataFrame, rules: list, key_prefix: str) -> None:
     """Status distribution across ALL cases in this BU's suite (country-filtered)."""
-    st.markdown("#### 📋 Status by country")
+    section_title("📋 Status by country")
     if raw.empty:
         return
 
@@ -264,7 +265,7 @@ def _pivot_builder(
     *default_rows* / *default_cols* set the initial selection (display labels).
     Including the BU name in *key_prefix* ensures defaults reset when switching BUs.
     """
-    st.markdown("#### 📊 Pivot")
+    section_title("📊 Pivot")
     if df.empty:
         st.info("No automated cases match the current filters.")
         return
@@ -336,7 +337,7 @@ def _status_col_label(col: str) -> str:
 
 # ------------------------------------------------------------------ test list
 def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
-    st.markdown("#### 🗂 Test list")
+    section_title("🗂 Test list")
     if auto_df.empty:
         st.info("No automated cases.")
         return

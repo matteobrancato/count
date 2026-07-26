@@ -312,6 +312,55 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     margin: 0 !important;
 }}
 
+/* ── Secondary export button (right-aligned under the summary table) ────────
+   A quiet action: small, muted, brand-tinted only on hover. */
+.st-key-summary_export {{ margin-top: 8px; }}
+.st-key-summary_export button {{
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+    color: {c['muted']} !important;
+    border-color: {c['border']} !important;
+    box-shadow: none !important;
+}}
+.st-key-summary_export button:hover {{
+    color: {c['brand']} !important;
+    border-color: {c['brand']} !important;
+}}
+
+/* ── Methodology row — a light, link-like disclosure, not a third card ───────
+   The page already stacks a KPI band and a filter band; giving this the default
+   bordered-card look made three heavy bars before any content. */
+.st-key-methodology {{ margin: -2px 0 4px; }}
+.st-key-methodology [data-testid="stExpander"] details {{
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}}
+.st-key-methodology [data-testid="stExpander"] summary {{
+    padding: 2px 4px !important;
+    min-height: 0 !important;
+}}
+.st-key-methodology [data-testid="stExpander"] summary p {{
+    font-size: 12.5px !important;
+    color: {c['muted']} !important;
+    font-weight: 500 !important;
+}}
+.st-key-methodology [data-testid="stExpander"] summary:hover p {{
+    color: {c['brand']} !important;
+}}
+/* Give the opened panel a readable card so the tables inside breathe. */
+.st-key-methodology [data-testid="stExpanderDetails"] {{
+    background: {c['surface']};
+    border: 1px solid {c['border']};
+    border-radius: 12px;
+    padding: 6px 18px 10px;
+    margin-top: 4px;
+}}
+.st-key-methodology [data-testid="stExpanderDetails"] table {{
+    font-size: 12.5px;
+}}
+
 /* ── Data-freshness label — pinned to the top-right of the tab bar ───────────
    `tabs_zone` wraps the tab bar (position:relative).  The freshness label is
    absolutely pinned to its top-right, level with the tabs.  Hovering the label
@@ -740,6 +789,22 @@ def backlog_health(pct: float) -> tuple[str, str]:
     if pct <= BACKLOG_WARN_PCT:
         return "🟡", COLORS["warning"]
     return "🔴", COLORS["danger"]
+
+
+def section_title(text: str, *, top: int = 6) -> None:
+    """The ONE section heading used across every tab.
+
+    Sections used to mix a branded left-accent heading with plain `#### markdown`
+    ones, so the same level of hierarchy looked different from tab to tab.  This
+    is the single implementation — import and call it instead of `st.markdown`.
+    """
+    import streamlit as _st
+    _st.markdown(
+        f'<div style="font-weight:700;font-size:15px;color:{COLORS["ink"]};'
+        f'border-left:3px solid {COLORS["brand"]};padding-left:10px;'
+        f'margin:{top}px 0 10px">{text}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def inject() -> None:

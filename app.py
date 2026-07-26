@@ -96,16 +96,18 @@ def _relative_time(ts: float) -> str:
 
 
 def _header() -> None:
+    # Compact header: the page already stacks a KPI band + a filter band before
+    # any content, so the title stays tight to leave the data above the fold.
     st.markdown(
-        f"<div style='display:flex;align-items:center;gap:14px'>"
-        f"<div style='width:46px;height:46px;border-radius:13px;flex:0 0 auto;"
-        f"display:flex;align-items:center;justify-content:center;font-size:24px;"
+        f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:2px'>"
+        f"<div style='width:38px;height:38px;border-radius:11px;flex:0 0 auto;"
+        f"display:flex;align-items:center;justify-content:center;font-size:20px;"
         f"background:linear-gradient(135deg,{COLORS['brand']} 0%,{COLORS['brand_strong']} 100%);"
-        f"box-shadow:0 4px 14px rgba(46,91,255,0.30)'>🧪</div>"
+        f"box-shadow:0 3px 10px rgba(46,91,255,0.28)'>🧪</div>"
         f"<div>"
         f"<h1 style='margin:0;padding:0;line-height:1.05;white-space:nowrap;"
-        f"font-size:30px'>Automation Coverage</h1>"
-        f"<div style='color:{COLORS['muted']};font-size:13.5px;margin-top:3px'>"
+        f"font-size:24px'>Automation Coverage</h1>"
+        f"<div style='color:{COLORS['muted']};font-size:12px;margin-top:1px'>"
         f"Live view of TestRail&rsquo;s automation coverage across Business Units."
         f"</div></div></div>",
         unsafe_allow_html=True,
@@ -248,9 +250,12 @@ def main() -> None:
 
     # Methodology, one click away from every tab.  Same text Dexter uses (see
     # src/methodology.py) so the explanation can never drift from the answer —
-    # people trust numbers they can check.
-    with st.expander("ℹ️ How these numbers are calculated"):
-        st.markdown(METHODOLOGY_MD)
+    # people trust numbers they can check.  Styled as a light inline row (see
+    # `.st-key-methodology` in styles.py) so it reads as a link, not as a third
+    # full-width card competing with the KPI strip and the filter bar.
+    with st.container(key="methodology"):
+        with st.expander("ℹ️ How these numbers are calculated"):
+            st.markdown(METHODOLOGY_MD)
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.

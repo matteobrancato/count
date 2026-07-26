@@ -36,7 +36,7 @@ import streamlit as st
 from ..bu_rules import ALL_RULES, filter_conditional_tokens
 from ..rules_engine import evaluate_rules
 from . import global_filter
-from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE
+from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, section_title
 
 # ── categorical palette for area breakdowns (sourced from design tokens) ──────
 # Repeated so very granular BUs (>12 areas) still get a colour for every slice.
@@ -275,9 +275,36 @@ def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None
             alt.Tooltip("coverage_pct:Q", title="Coverage %",  format=".1f"),
         ],
     )
-    arc = base.mark_arc(innerRadius=58, outerRadius=130, cornerRadius=3,
+    # Share of each slice — used to label only the slices big enough to read.
+    grand = float(data["automated"].sum()) or 1.0
+    data = data.assign(
+        _share=data["automated"] / grand * 100,
+        _lbl=lambda d: [
+            f"{s} · {p:.0f}%" if p >= 7 else ""      # tiny slices stay unlabelled
+            for s, p in zip(d["section"], d["automated"] / grand * 100)
+        ],
+    )
+    base = base.properties(data=data)
+
+    arc = base.mark_arc(innerRadius=52, outerRadius=104, cornerRadius=3,
                         stroke=COLORS["canvas"], strokeWidth=3)
-    return arc.properties(height=320, background="transparent")
+    # Labels ON the chart: an unlabelled donut forces the reader to hover every
+    # slice or colour-match it against the bar chart — it looked decorative
+    # rather than informative.
+    labels = base.mark_text(radius=126, fontSize=10.5, font="Inter",
+                            fill=COLORS["text"], limit=130).encode(
+        text=alt.Text("_lbl:N"), color=alt.value(COLORS["text"]),
+    )
+    # The hole is free real estate: put the total there.
+    centre = alt.Chart(pd.DataFrame([{"t": f"{int(grand):,}"}])).mark_text(
+        fontSize=19, fontWeight="bold", font="Inter", fill=COLORS["ink"], dy=-6,
+    ).encode(text="t:N")
+    centre_sub = alt.Chart(pd.DataFrame([{"t": "automated rows"}])).mark_text(
+        fontSize=9.5, font="Inter", fill=COLORS["muted"], dy=11,
+    ).encode(text="t:N")
+
+    return (arc + labels + centre + centre_sub).properties(
+        height=280, background="transparent")
 
 
 def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart:
@@ -521,7 +548,7 @@ def _render_coverage_section(
         st.altair_chart(bar, width="stretch")
 
     # ── table (detail, below the charts) ──────────────────────────────────────
-    st.markdown("#### 📋 Coverage table")
+    section_title("📋 Coverage table")
     if chain:
         chain_str = " > ".join(f"`{c}`" for c in chain)
         st.caption(

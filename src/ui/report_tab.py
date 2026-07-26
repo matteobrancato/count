@@ -8,7 +8,7 @@ from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
 from . import global_filter
-from .styles import COLORS, COVERAGE_TARGET, coverage_health
+from .styles import COLORS, COVERAGE_TARGET, coverage_health, section_title
 
 
 def _scope_summary(scope: str) -> pd.DataFrame:
@@ -268,16 +268,6 @@ def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
     )
 
 
-def _section_title(text: str) -> None:
-    """Consistent left-accented section header used across the Report."""
-    st.markdown(
-        f'<div style="font-weight:700;font-size:15px;color:{COLORS["ink"]};'
-        f'border-left:3px solid {COLORS["brand"]};padding-left:10px;'
-        f'margin:6px 0 12px">{text}</div>',
-        unsafe_allow_html=True,
-    )
-
-
 def _leaderboard_chart(summary: pd.DataFrame) -> alt.LayerChart:
     """Executive glance: one RAG-coloured bar per BU, sorted by regression
     coverage %, with a dashed 80%-target line.  Same numbers as the Backlog tab
@@ -396,7 +386,7 @@ def render() -> None:
     summary = _scope_summary(scope)
     if not summary.empty and "Cov. %" in summary.columns and len(summary) > 1:
         cov_by_bu = {str(r["BU"]): float(r["Cov. %"]) for _, r in summary.iterrows()}
-        _section_title("🏆 Baseline coverage by Business Unit")
+        section_title("🏆 Baseline coverage by Business Unit")
         st.altair_chart(_leaderboard_chart(summary), width="stretch")
         st.caption(
             f"Automated share of the baseline per BU — same numbers as the "

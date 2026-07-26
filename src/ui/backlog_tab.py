@@ -54,7 +54,7 @@ from ..bu_rules import (
 )
 from ..rules_engine import evaluate_rules
 from . import global_filter
-from .styles import COLORS, COVERAGE_TARGET, coverage_health
+from .styles import COLORS, COVERAGE_TARGET, coverage_health, section_title
 
 # ── constants ─────────────────────────────────────────────────────────────────
 # Baseline labels (website regression: desktop / mobile BROWSER view).
@@ -819,21 +819,23 @@ def render() -> None:
 
     # Export — managers forward these numbers into decks and mails, so the table
     # must be reachable outside the app.  (The presentation table is custom HTML,
-    # which has no built-in download, so we offer the CSV explicitly.)
-    _dl_col, _ = st.columns([1, 4])
-    _dl_col.download_button(
-        "⬇️ Download CSV",
-        display.to_csv(index=False).encode("utf-8"),
-        file_name=f"automation_baseline_{scope}.csv",
-        mime="text/csv",
-        width="stretch",
-        help="The table above, exactly as shown, as a spreadsheet-ready CSV.",
-    )
+    # which has no built-in download, so we offer the CSV explicitly.)  Right-
+    # aligned and small: it's a secondary action, not a call to action.
+    with st.container(key="summary_export"):
+        _sp, _dl = st.columns([5, 1])
+        _dl.download_button(
+            "⬇️ CSV",
+            display.to_csv(index=False).encode("utf-8"),
+            file_name=f"automation_baseline_{scope}.csv",
+            mime="text/csv",
+            width="stretch",
+            help="Download the table above, exactly as shown, as a CSV.",
+        )
 
     st.divider()
 
     # ── Detail — follows the GLOBAL scope + BU selector ───────────────────────
-    st.markdown("#### Detail by Business Unit")
+    section_title("Detail by Business Unit")
     if (bu, scope) not in expanded_by_bu:
         st.info(f"No baseline detail for **{bu}** in this scope.")
         return
