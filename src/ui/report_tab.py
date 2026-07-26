@@ -272,8 +272,8 @@ def _leaderboard_chart(summary: pd.DataFrame) -> alt.LayerChart:
     """Executive glance: one RAG-coloured bar per BU, sorted by regression
     coverage %, with a dashed 80%-target line.  Same numbers as the Backlog tab
     and the KPI strip (single source of truth)."""
-    d = summary[["BU", "Cov. %", "Automated", "Total"]].copy()
-    d["cov"]   = d["Cov. %"].astype(float)
+    d = summary[["BU", "Coverage %", "Automated", "Total"]].copy()
+    d["cov"]   = d["Coverage %"].astype(float)
     d["color"] = d["cov"].map(lambda p: coverage_health(p)[1])
     d["label"] = d["cov"].map(lambda p: f"{p:.1f}%")
     order = d.sort_values("cov", ascending=False)["BU"].tolist()
@@ -371,21 +371,24 @@ def render() -> None:
                  "AI-powered test automation platform", COLORS["testim_bg"])
         _fw_card(c_fw3, "🎭", "TypeScript / Playwright",
                  "Modern end-to-end web automation", COLORS["playwright_bg"])
-        _metric_badge(c_m1, f"+{s_tot['total']:,}", "Test Cases", "Smoke Suite")
-        _metric_badge(c_m2, f"+{a_tot['total']:,}", "Test Cases", "Total Count")
+        # `metrics.totals()` counts ROWS (len of the expansion), not cases —
+        # these badges used to be labelled "Test Cases", which named the number
+        # after the wrong unit.  Same vocabulary as every other tab now.
+        _metric_badge(c_m1, f"{s_tot['total']:,}", "Automated Rows", "Smoke Suite")
+        _metric_badge(c_m2, f"{a_tot['total']:,}", "Automated Rows", "All Areas")
     else:
         # Scope-appropriate compact header (the framework cards are website-only).
         _sp, c_m1, c_m2 = st.columns([5, 1.6, 1.6], gap="small")
         _metric_badge(c_m1, f"{n_unique:,}", "Automated Cases", scope_lbl)
-        _metric_badge(c_m2, f"+{a_tot['total']:,}", "Automated Rows", "Total Count")
+        _metric_badge(c_m2, f"{a_tot['total']:,}", "Automated Rows", "All Areas")
 
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
     # ── EXECUTIVE SUMMARY: coverage leaderboard (scope-filtered) ──────────────
     cov_by_bu: dict[str, float] = {}
     summary = _scope_summary(scope)
-    if not summary.empty and "Cov. %" in summary.columns and len(summary) > 1:
-        cov_by_bu = {str(r["BU"]): float(r["Cov. %"]) for _, r in summary.iterrows()}
+    if not summary.empty and "Coverage %" in summary.columns and len(summary) > 1:
+        cov_by_bu = {str(r["BU"]): float(r["Coverage %"]) for _, r in summary.iterrows()}
         section_title("🏆 Baseline coverage by Business Unit")
         st.altair_chart(_leaderboard_chart(summary), width="stretch")
         st.caption(
@@ -393,9 +396,9 @@ def render() -> None:
             f"Backlog tab. Dashed line = {COVERAGE_TARGET:.0f}% target."
         )
         st.markdown("<div style='height:22px'></div>", unsafe_allow_html=True)
-    elif not summary.empty and "Cov. %" in summary.columns:
+    elif not summary.empty and "Coverage %" in summary.columns:
         # single BU (e.g. Microservices) — no leaderboard, still annotate panels
-        cov_by_bu = {str(r["BU"]): float(r["Cov. %"]) for _, r in summary.iterrows()}
+        cov_by_bu = {str(r["BU"]): float(r["Coverage %"]) for _, r in summary.iterrows()}
 
     # ── DETAIL: automated tests by device ─────────────────────────────────────
     def _dot(color: str) -> str:

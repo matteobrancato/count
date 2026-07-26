@@ -5,7 +5,11 @@ Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
     (e.g. "SD" or "WTR > Root") so the rows match the Excel "Main Category".
   * Desktop / Mobile / Unspecified columns count EXPANDED rows (same convention
     as Explorer / Report) — a case automated for both devices counts twice.
-  * Coverage % uses unique case_ids so it stays a proper "% of cases covered".
+  * Coverage % on the baseline view divides EXPANDED ROWS, reusing the Backlog
+    tab's own classified frame — so both tabs report one number for a BU, by
+    construction rather than by coincidence (locked by tests/test_business_rules
+    ::TestCoverageAgreesWithBacklog).  The Total / Production Sanity views have
+    no row expansion and stay case-based, labelled "Coverage by Case".
 
 Three stacked views per BU
 ──────────────────────────
@@ -21,7 +25,7 @@ layout is identical — only the input subset changes.
 
 Layout per view
 ───────────────
-  * Headline metrics: Total · Automated unique · Automated rows (D+M) · Coverage %
+  * Headline metrics: Total · Automated · Backlog · Coverage
   * Granularity slider (0 = Main Category, 1 = Secondary, 2-3 = deeper)
   * Table — Area | Total | Desktop | Mobile [| Unspecified] | Automated | Coverage %
   * Pie chart — share of automated rows per area
@@ -124,6 +128,7 @@ def _coverage_table(
     auto_bu: pd.DataFrame,
     auto_ids: set[int],
     depth_offset: int = 0,
+    expanded: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Aggregate per-section counts after smart container-chain stripping.
 
@@ -194,9 +199,28 @@ def _coverage_table(
     grouped["automated"]   = (
         grouped["desktop"] + grouped["mobile"] + grouped["unspecified"]
     )
+
+    # Denominator.  With *expanded* (the Backlog tab's classified baseline rows)
+    # every column is on the SAME basis — expanded rows — so Coverage % here is
+    # the number the Backlog tab and the KPI strip show.  Without it (Total /
+    # Production Sanity views, which have no row expansion) the table stays on
+    # the unique-case basis it has always used.
+    if expanded is not None and not expanded.empty:
+        exp = expanded[["section_path"]].copy()
+        exp["section"] = exp["section_path"].fillna("").map(
+            lambda p: _section_for_path(p, chain, depth_offset)
+        )
+        rows_map = exp.groupby("section").size().to_dict()
+        grouped["total"] = (
+            grouped["section"].map(rows_map).fillna(0).astype(int)
+        )
+        numerator = grouped["automated"]
+    else:
+        numerator = grouped["auto_unique"]
+
     grouped["coverage_pct"] = (
-        (grouped["auto_unique"] / grouped["total"] * 100)
-        .round(1).fillna(0.0)
+        (numerator / grouped["total"].replace(0, pd.NA) * 100)
+        .astype(float).round(1).fillna(0.0)
     )
 
     # Sort: non-zero automated first (by automated desc), then zero rows at the bottom
@@ -432,7 +456,7 @@ def _filter_to_bu_countries(
 
 def _regression_baseline_like_backlog(
     non_dep: pd.DataFrame, auto_bu: pd.DataFrame, rules_bu: list,
-) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, set[int], pd.DataFrame]:
     """Regression baseline computed EXACTLY like the Backlog tab.
 
     Reuses the Backlog's own expansion (`_expand_baseline` + `_classify_expanded`):
@@ -442,12 +466,15 @@ def _regression_baseline_like_backlog(
     tab — the previous filter used the framework Country-Coverage expansion, which
     counted automated rows for countries NOT present in `multi_countries`.
 
-    Returns (non_dep_baseline, automated_rows, baseline_auto_case_ids) in the same
-    shape `_render_coverage_section` expects (automated_rows carry `section_path`).
+    Returns (non_dep_baseline, automated_rows, baseline_auto_case_ids, expanded)
+    — `expanded` is the FULL classified frame (every category, with
+    `section_path` attached), i.e. the very rows the Backlog tab counts.  It is
+    what makes Coverage's headline numbers identical to the Backlog's instead of
+    merely "computed the same way": same rows, same denominator.
     """
     from . import backlog_tab as bl
 
-    empty = (non_dep.iloc[0:0], auto_bu.iloc[0:0], set())
+    empty = (non_dep.iloc[0:0], auto_bu.iloc[0:0], set(), pd.DataFrame())
     if non_dep.empty:
         return empty
     # Mobile App has no big_regr baseline — it uses the priority-based MAPP
@@ -460,17 +487,18 @@ def _regression_baseline_like_backlog(
     if expanded.empty:
         return empty
 
-    base_ids = set(expanded["case_id"].astype(int).unique())
-    nd_base  = non_dep[non_dep["case_id"].astype(int).isin(base_ids)]
-
-    auto_rows = expanded[expanded["category"] == "automated"].copy()
-    auto_rows["case_id"] = auto_rows["case_id"].astype(int)
-    # Attach per-case section_path so the coverage table can break it down by area.
+    expanded = expanded.copy()
+    expanded["case_id"] = expanded["case_id"].astype(int)
+    # Attach per-case section_path so every row can be broken down by area.
     sec = non_dep[["case_id", "section_path"]].copy()
     sec["case_id"] = sec["case_id"].astype(int)
-    auto_rows = auto_rows.merge(sec.drop_duplicates("case_id"), on="case_id", how="left")
+    expanded = expanded.merge(sec.drop_duplicates("case_id"), on="case_id", how="left")
 
-    return nd_base, auto_rows, set(auto_rows["case_id"].unique())
+    base_ids = set(expanded["case_id"].unique())
+    nd_base  = non_dep[non_dep["case_id"].astype(int).isin(base_ids)]
+    auto_rows = expanded[expanded["category"] == "automated"].copy()
+
+    return nd_base, auto_rows, set(auto_rows["case_id"].unique()), expanded
 
 
 def _filter_to_prod_sanity(
@@ -503,6 +531,7 @@ def _render_coverage_section(
     depth_offset: int = 0,
     show_tool_facet: bool = True,
     show_target: bool = False,
+    expanded: pd.DataFrame | None = None,
 ) -> None:
     """Render the full coverage block (metrics + table + charts) for a subset.
 
@@ -520,29 +549,59 @@ def _render_coverage_section(
         return
 
     # ── headline metrics ──────────────────────────────────────────────────────
-    auto_unique         = int(non_dep["case_id"].isin(auto_ids).sum())
-    total               = int(non_dep["case_id"].nunique())
-    cov_pct             = (auto_unique / total * 100) if total else 0.0
-    auto_expanded_total = int(len(auto_bu))
+    # ONE basis per view, and where the Backlog tab also measures this BU it is
+    # the Backlog's basis: expanded rows (case × country × device).  Coverage
+    # used to divide unique CASES here while the Backlog divided ROWS, so the
+    # same BU read 91.9% on one tab and 95.2% on the other.  Same rows now.
+    auto_unique = int(non_dep["case_id"].isin(auto_ids).sum())
+    cases_total = int(non_dep["case_id"].nunique())
+    by_row      = expanded is not None and not expanded.empty
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total cases (non-deprecated)", f"{total:,}")
-    c2.metric("Automated (unique)", f"{auto_unique:,}")
-    c3.metric("Automated rows (D+M)", f"{auto_expanded_total:,}",
-              help="Expanded rows: Desktop + Mobile. Same convention as Explorer / Report.")
-    _cov_help = ("Unique automated cases ÷ total cases (case basis). "
-                 "The Backlog tab's 'Coverage vs total' divides the same automated "
-                 "rows by baseline ROWS instead — both are correct, different bases.")
+    if by_row:
+        # Same four words, same four numbers as the Backlog tab — a manager
+        # comparing the two tabs should never have to translate a label.
+        total     = int(len(expanded))
+        auto_rows = int((expanded["category"] == "automated").sum())
+        backlog   = int((expanded["category"] == "backlog").sum())
+        cov_pct   = (auto_rows / total * 100) if total else 0.0
+        c1.metric("Total", f"{total:,}",
+                  help=f"Baseline rows: case × country × device — the same rows "
+                       f"the Backlog tab counts. {cases_total:,} unique cases.")
+        c2.metric("Automated", f"{auto_rows:,}",
+                  help=f"{auto_unique:,} unique cases.")
+        c3.metric("Backlog", f"{backlog:,}",
+                  help="Rows still to automate — the same figure as the Backlog "
+                       "tab (To update and Not applicable are counted separately "
+                       "there).")
+        _cov_help = ("Automated rows ÷ baseline rows — the SAME basis as the "
+                     "Backlog tab and the KPI strip, so all three agree.")
+    else:
+        # Total / Production Sanity have no baseline row expansion, so they stay
+        # on the unique-case basis — labelled, not silently mixed.
+        total     = cases_total
+        cov_pct   = (auto_unique / total * 100) if total else 0.0
+        c1.metric("Total Cases", f"{total:,}")
+        c2.metric("Automated Cases", f"{auto_unique:,}")
+        c3.metric("Automated Rows", f"{len(auto_bu):,}",
+                  help="Expanded rows: Desktop + Mobile. Same convention as "
+                       "Explorer / Report.")
+        _cov_help = ("Automated cases ÷ total cases.  This view has no baseline "
+                     "row expansion (that is defined on the regression baseline "
+                     "only), so it counts cases — hence the label.")
+
+    _cov_label = "Coverage" if by_row else "Coverage by Case"
     if show_target:
-        c4.metric("Coverage", f"{cov_pct:.1f}%",
+        c4.metric(_cov_label, f"{cov_pct:.1f}%",
                   delta=f"{cov_pct - COVERAGE_TARGET:+.1f}% vs {COVERAGE_TARGET:.0f}% target",
                   delta_color="normal", help=_cov_help)
     else:
-        c4.metric("Coverage", f"{cov_pct:.1f}%", help=_cov_help)
+        c4.metric(_cov_label, f"{cov_pct:.1f}%", help=_cov_help)
 
     # depth_offset (granularity) now comes from the control row in _coverage_for
-    # so the slider can sit next to the view radio.
-    cov, chain = _coverage_table(non_dep, auto_bu, auto_ids, depth_offset=depth_offset)
+    # so the picker can sit next to the view radio.
+    cov, chain = _coverage_table(non_dep, auto_bu, auto_ids,
+                                 depth_offset=depth_offset, expanded=expanded)
     if cov.empty:
         st.info("No sections to display.")
         return
@@ -554,8 +613,7 @@ def _render_coverage_section(
     st.markdown("")
     left, right = st.columns([1, 1.2], gap="large")
     with left:
-        _panel_head("🥧 Automated distribution",
-                    "Share of automated rows per area (Desktop + Mobile).")
+        _panel_head("🥧 Automated distribution", "")
         pie = _build_pie(cov, color_map)
         if pie is None:
             st.info("No automated cases yet.")
@@ -569,14 +627,8 @@ def _render_coverage_section(
 
     # ── table (detail, below the charts) ──────────────────────────────────────
     section_title("📋 Coverage table")
-    if chain:
-        chain_str = " > ".join(f"`{c}`" for c in chain)
-        st.caption(
-            f"Auto-stripped container chain: {chain_str} "
-            f"(dominant root folders that contain >80% of the cases)."
-        )
-    else:
-        st.caption("No dominant container detected — sections shown at the top level.")
+    # (The auto-stripped container chain used to be spelled out here; it is
+    # TestRail-folder trivia, not something a manager acts on.)
     display = cov.copy()
     # Add a Total row at the bottom (matching the Excel format)
     total_row = pd.DataFrame([{
@@ -598,7 +650,7 @@ def _render_coverage_section(
         cols.append("unspecified")
     cols += ["automated", "coverage_pct"]
 
-    auto_label = "Automated (D+M+U)" if show_unspecified else "Automated (D+M)"
+    auto_label = "Automated"
 
     st.dataframe(
         display[cols],
@@ -610,7 +662,11 @@ def _render_coverage_section(
                 else ("Secondary Category" if depth_offset == 1
                       else f"Area (depth +{depth_offset})"),
                 width="large"),
-            "total":        st.column_config.NumberColumn("Total cases"),
+            "total":        st.column_config.NumberColumn(
+                "Total",
+                help=("Baseline rows (case × country × device) in this area — "
+                      "the Backlog tab's basis." if by_row
+                      else "Unique non-deprecated cases in this area.")),
             "desktop":      st.column_config.NumberColumn("Desktop"),
             "mobile":       st.column_config.NumberColumn("Mobile"),
             "unspecified":  st.column_config.NumberColumn("Unspecified"),
@@ -619,7 +675,9 @@ def _render_coverage_section(
                 help="Sum of expanded rows per device.  Matches the Excel \"Total\" column."),
             "coverage_pct": st.column_config.ProgressColumn(
                 "Coverage %", format="%.1f%%", min_value=0, max_value=100,
-                help="Unique automated cases ÷ Total cases per area."),
+                help=("Automated rows ÷ baseline rows per area — the Backlog "
+                      "tab's basis." if by_row
+                      else "Automated cases ÷ total cases per area.")),
         },
     )
 
@@ -651,15 +709,6 @@ _VIEW_PS    = "🚀 Production Sanity"
 _VIEW_OPTIONS = [_VIEW_TOTAL, _VIEW_REGR, _VIEW_PS]
 _VIEW_OPTIONS_MAPP = [_VIEW_TOTAL, _VIEW_REGR_MAPP, _VIEW_PS]
 _VIEW_DEFAULT_INDEX = 1                                  # the baseline view
-
-_VIEW_DESC = {
-    _VIEW_TOTAL: "**Full universe** of non-deprecated cases for this BU — the "
-                 "broadest picture of automation reach.",
-    _VIEW_REGR:  "**Regression baseline** (`big_regr_desktop` / "
-                 "`big_regr_mobile`) — the same numbers as the Backlog tab.",
-    _VIEW_PS:    "**Production Sanity** cases only (the `Test Automation PRD "
-                 "Run` checkbox).",
-}
 
 # Section-depth picker: named levels beat raw 0-3 on a slider.
 _GRAN_LEVELS: list[int] = [0, 1, 2, 3]
@@ -740,17 +789,12 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             label_visibility="collapsed",
         )
         depth_offset = int(depth_offset if depth_offset is not None else 0)
-    note = (f"  ·  ℹ️ {n_other_bu:,} cases excluded (other BUs on this shared suite)"
-            if n_other_bu else "")
     is_baseline_view = view in (_VIEW_REGR, _VIEW_REGR_MAPP)
-    if is_mapp and is_baseline_view:
-        # MAPP has no big_regr label — its baseline is priority-based.
-        desc = ("Restricted to the **Mobile App baseline** — cases with Priority "
-                "High / Highest (device = iOS / Android), exactly like the "
-                "Backlog tab for Mobile App.")
-    else:
-        desc = _VIEW_DESC[view]
-    st.caption(desc + note)
+    # The radio names the subset and "How the numbers are calculated" defines it,
+    # so the per-view description was a third copy.  The shared-suite exclusion
+    # is the one thing said nowhere else, so it is the one thing left here.
+    if n_other_bu:
+        st.caption(f"ℹ️ {n_other_bu:,} cases excluded (other BUs on this shared suite)")
 
     if view == _VIEW_TOTAL:
         _render_coverage_section(
@@ -758,7 +802,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             scope=scope, depth_offset=depth_offset, show_tool_facet=True,
         )
     elif is_baseline_view:
-        nd_base, ab_base, ids_base = _regression_baseline_like_backlog(
+        nd_base, ab_base, ids_base, exp_base = _regression_baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
         if nd_base.empty:
             st.info(
@@ -771,6 +815,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
                 nd_base, ab_base, ids_base,
                 scope=scope, depth_offset=depth_offset, show_tool_facet=True,
                 show_target=True,        # the 80% target is defined on the baseline
+                expanded=exp_base,       # → same rows (and %) as the Backlog tab
             )
     else:  # _VIEW_PS
         nd_ps, ab_ps, ids_ps = _filter_to_prod_sanity(non_dep, auto_bu)

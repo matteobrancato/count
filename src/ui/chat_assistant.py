@@ -697,7 +697,7 @@ def _build_coverage_brief() -> str:
     # clearly-labeled secondary line: it was the source of "worst BU" answers
     # that contradicted the dashboard.
     regr_ranking = sorted(
-        ((bu, float(v.get("Cov. %") or 0.0)) for bu, v in backlog_by_bu.items()),
+        ((bu, float(v.get("Coverage %") or 0.0)) for bu, v in backlog_by_bu.items()),
         key=lambda x: -x[1],
     )
     mobile_only = [bu for bu, _ in ranking if bu not in backlog_by_bu]
@@ -745,8 +745,9 @@ def _build_coverage_brief() -> str:
         bk_tot  = sum(int(v.get("Total") or 0)     for v in backlog_by_bu.values())
         bk_auto = sum(int(v.get("Automated") or 0) for v in backlog_by_bu.values())
         bk_back = sum(int(v.get("Backlog") or 0)   for v in backlog_by_bu.values())
-        bk_tbu  = sum(int(v.get("To update") or 0) for v in backlog_by_bu.values())
-        bk_na   = sum(int(v.get("N/A") or 0)       for v in backlog_by_bu.values())
+        bk_tbu  = sum(int(v.get("To Update") or 0) for v in backlog_by_bu.values())
+        bk_na   = sum(int(v.get("Not Applicable") or 0)
+                      for v in backlog_by_bu.values())
         agg_lines.append(
             f"- Regression baseline, all BUs combined: {bk_auto:,} automated of "
             f"{bk_tot:,} rows — Backlog {bk_back:,}, To-update {bk_tbu:,}, "

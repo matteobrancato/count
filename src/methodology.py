@@ -40,15 +40,19 @@ shown: the big number is rows, the small caption is unique cases.
 |---|---|
 | **Automated** | status is Automated / Automated DEV / UAT / Prod *and* the row is in the automated set |
 | **To update** | status "To be updated" — was automated, needs maintenance |
-| **N/A** | status "Automation not applicable" |
+| **Not Applicable** | status "Automation not applicable" |
 | **Backlog** | any other non-automated status (Not automated, In progress, Ready to be automated, Blocked, …) |
 | **Unknown** | no automation status filled in, so we can't say — shown only when it happens, and it means a field is missing in TestRail |
 
-**The two Coverage percentages** (both correct — different denominators):
+**Coverage** — one definition everywhere: automated **rows** ÷ baseline rows.
+The Backlog tab, the Coverage tab and the KPI strip all show the same figure for
+the same Business Unit.
 
-* **Coverage vs total** *(Backlog tab)* = automated **rows** ÷ all baseline rows.
-* **Coverage %** *(Coverage tab)* = unique automated **cases** ÷ unique cases.
-* **Coverage vs automatable** excludes the N/A cases from the denominator.
+* **Coverage vs Automatable** excludes the Not Applicable rows.
+* The Coverage tab's **Total** and **Production Sanity** views have no baseline
+  row expansion (that is defined on the regression baseline only), so they count
+  cases instead — those two say **"Coverage by Case"** on the card so the basis is
+  never in doubt.
 
 **Health colours** — 🟢 at or above the 80% target · 🟡 60-79% · 🔴 below 60%.
 The Backlog is considered healthy while it stays under **3%** of the baseline.
@@ -69,10 +73,14 @@ immediate refresh (it re-reads TestRail, so it takes a minute).
 # model rather than a reader (kept terse to save context tokens).
 METHODOLOGY_FOR_LLM = """
 - Data is pulled from TestRail; DEPRECATED cases are ALWAYS excluded.
-- Coverage % = UNIQUE automated cases ÷ total non-deprecated cases (per case).
-- "Automated rows (D+M)": a case can be automated on Desktop AND Mobile, counted
-  as two separate rows — so the row count is larger than the unique-case count.
-  Coverage % always uses UNIQUE cases, never rows.
+- Coverage % = automated ROWS ÷ baseline ROWS.  ONE definition: the Backlog tab,
+  the Coverage tab and the KPI strip always agree for the same BU.  Never quote
+  a case-based percentage as "coverage".
+- A "row" is case × country × device: a case automated on Desktop AND Mobile in
+  3 countries is 6 rows.  So row counts are larger than unique-case counts, and
+  the two must never be mixed in one ratio.
+- The only case-based figure is the Coverage tab's Total / Production Sanity
+  views, labelled "Coverage by Case" — those subsets have no row expansion.
 - Countries: each BU runs in several countries; a case is attributed to a BU by
   the country tokens in its `multi_countries` field.  Suites shared between BUs
   (e.g. Eastern Europe) are split per country.
@@ -89,7 +97,7 @@ METHODOLOGY_FOR_LLM = """
     · Backlog       — any OTHER non-automated status (Not automated, In progress,
                       Ready to be automated, Blocked, Assigned to Testim)
     · Unknown       — no automation status filled in at all
-  "Coverage vs total" = Automated ÷ all rows; "Coverage vs automatable" excludes
+  "Coverage" = Automated ÷ all rows; "Coverage vs Automatable" excludes
   N/A.  A BU's Backlog is considered healthy while it stays under 3% of the total.
 - Health colours: 🟢 ≥80% (target) · 🟡 60-79% · 🔴 <60%.
 - Production Sanity = tests executed only in production.

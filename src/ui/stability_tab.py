@@ -20,10 +20,6 @@ from . import runs_tab
 
 @st.fragment
 def render() -> None:
-    st.caption(
-        "How reliably the tests pass across recent completed runs, plus the "
-        "full execution and bug history of any single test case."
-    )
     ctx = runs_tab.live_context("stability")
     if ctx is None:
         # The deep dive is driven by a case ID, not by the live run data, so it

@@ -491,10 +491,10 @@ def _build_summary(
             "Automated": s["automated"],
             **breakdown,
             "Backlog":   s["backlog"],
-            "To update": s["to_be_updated"],
-            "N/A":       s["not_applicable"],
+            "To Update": s["to_be_updated"],
+            "Not Applicable": s["not_applicable"],
             "Unknown":   s["unknown"],
-            "Cov. %":    round(s["cov_total"], 1),
+            "Coverage %":    round(s["cov_total"], 1),
         })
     return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
 
@@ -595,8 +595,8 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
     disp["Category"] = disp["category"].map({
         "automated":      "Automated",
         "backlog":        "Backlog",
-        "to_be_updated":  "To update",
-        "not_applicable": "N/A",
+        "to_be_updated":  "To Update",
+        "not_applicable": "Not Applicable",
     }).fillna("Other")
 
     available = ["Country", "Device"]
@@ -656,16 +656,16 @@ def _detail_view(
 
     # ── Row 1: Total · Automated · Backlog · To update · N/A ─────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
-    _stat_card(c1, "Total (baseline)", s["total"], s["u_total"])
+    _stat_card(c1, "Total", s["total"], s["u_total"])
     _stat_card(
         c2, "Automated", s["automated"], s["u_auto"],
-        help_text=f"{s['cov_total']:.1f}% of total · "
-                  f"{s['cov_automatable']:.1f}% of automatable",
+        help_text=f"Coverage {s['cov_total']:.1f}% · "
+                  f"vs Automatable {s['cov_automatable']:.1f}%",
     )
     _stat_card(c3, "Backlog", s["backlog"], s["u_back"],
                badge_html=_backlog_badge_html(s["backlog"], s["total"]))
     _stat_card(
-        c4, "To update", s["to_be_updated"], s["u_tbu"],
+        c4, "To Update", s["to_be_updated"], s["u_tbu"],
         help_text="Status 'To be updated' — was automated but needs maintenance. "
                   "Split out of Backlog (still counts as automatable, so coverage % "
                   "is unchanged).",
@@ -677,8 +677,8 @@ def _detail_view(
 
     # ── Coverage line (with N/A %) ────────────────────────────────────────────
     st.markdown(
-        f"**Coverage vs total:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
-        f"**Coverage vs automatable:** `{s['cov_automatable']:.1f}%` &nbsp;·&nbsp; "
+        f"**Coverage:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
+        f"**Coverage vs Automatable:** `{s['cov_automatable']:.1f}%` &nbsp;·&nbsp; "
         f"**Not Applicable:** `{s['na_pct']:.1f}%`",
         unsafe_allow_html=True,
     )
@@ -724,7 +724,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str]) -> str:
     )
     body_rows = []
     for _, r in df.iterrows():
-        cov = float(r["Cov. %"])
+        cov = float(r["Coverage %"])
         dot, color = coverage_health(cov)
         nums = "".join(
             f'<td class="{"strong" if col in strong_cols else "mut"}">'
@@ -756,11 +756,8 @@ def render() -> None:
     is_mapp = scope == "mobile_app"
 
     if is_mapp:
-        st.caption(
-            "Mobile App baseline: cases with **Priority High / Highest** in each "
-            "BU's mobile-app suite (status from Automation Status; device = iOS / "
-            "Android)."
-        )
+        # (What the baseline is per scope lives in "How the numbers are
+        # calculated" — repeating it on every tab was noise.)
         with st.spinner("📱 Computing Mobile App backlog — first load can take "
                         "~30-60s, then it's cached…"):
             summary, expanded_by_bu, auto_by_bu = _mapp_backlog_data()
@@ -768,9 +765,7 @@ def render() -> None:
                      "cases in the mobile-app suites, or the data hasn't loaded yet "
                      "(↻ next to the tabs).")
     else:
-        st.caption(
-            "Baseline: cases with the label 'big_regr_desktop' / 'big_regr_mobile'. "
-        )
+
         # One cached call — the heavy pipeline only runs on the first render after
         # a data refresh; every interaction after that is a cache hit.
         with st.spinner("Computing backlog stats…"):
@@ -799,7 +794,7 @@ def render() -> None:
     # iOS/Android for Mobile App (see `_build_summary`).
     num_cols = [col for col in ["Total", "Automated", "Java", "TestIM",
                                 "iOS", "Android", "Backlog",
-                                "To update", "N/A", "Unknown"]
+                                "To Update", "Not Applicable", "Unknown"]
                 if col in display.columns]
 
     # Header + RAG legend + export on ONE row.  The CSV is a text-sized label
@@ -851,7 +846,6 @@ def render() -> None:
     if (bu, scope) not in expanded_by_bu:
         st.info(f"No baseline detail for **{bu}** in this scope.")
         return
-    st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
     _detail_view(bu, scope, expanded_by_bu, auto_by_bu)
 
     # (The TestRail hygiene checklist now lives in the utility bar next to

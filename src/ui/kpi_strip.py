@@ -2,7 +2,7 @@
 
 One compact row of chips with RAG dots, always visible above the tabs:
 
-    🟡 Regression coverage 66.2% · 🔴 Backlog 1,369 (12.1%)
+    🟡 Coverage 66.2% (all BUs) · 🔴 Backlog 1,369 (12.1%)
     · 🏆 Best: Drogas 95.2% · 🔴 Focus: ICI Paris XL 35.3%
 
 "Coverage" here means AUTOMATED / REGRESSION-BASELINE (the big_regr rows —
@@ -44,7 +44,7 @@ def _kpis() -> dict:
         return {"per_bu": [], "baseline": None}
 
     per_bu = [
-        {"bu": str(r["BU"]), "pct": float(r["Cov. %"])}
+        {"bu": str(r["BU"]), "pct": float(r["Coverage %"])}
         for _, r in summary.iterrows()
     ]
     per_bu.sort(key=lambda x: -x["pct"])
@@ -92,8 +92,11 @@ def render() -> None:
     pct = base["auto"] / base["total"] * 100
     dot, _c = coverage_health(pct)
     chips.append(_chip(
-        dot, "Regression coverage", f"{pct:.1f}%",
-        sub=f"{base['auto']:,} / {base['total']:,} rows",
+        # Same noun as every tab ("Coverage"); the scope that makes this number
+        # different from a single BU's is stated in the sub-label, not in a
+        # second name for the same metric.
+        dot, "Coverage", f"{pct:.1f}%",
+        sub=f"all BUs · {base['auto']:,} / {base['total']:,} rows",
         tooltip=(f"Automated share of the big_regr baseline rows, all BUs — "
                  f"same numbers as the Backlog tab. Target {COVERAGE_TARGET:.0f}%."),
     ))

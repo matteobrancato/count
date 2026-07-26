@@ -1443,8 +1443,6 @@ def live_context(key_prefix: str) -> tuple[str, str, set[int], str] | None:
     if not bu:
         st.info("No Business Units in this scope.")
         return None
-    st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
-
     project_ids = _bu_project_ids((scope,)).get(bu, set())
     if not project_ids:
         st.warning(f"Could not resolve TestRail project IDs for **{bu}**.")
@@ -1482,10 +1480,6 @@ def live_context(key_prefix: str) -> tuple[str, str, set[int], str] | None:
 @st.fragment
 def render() -> None:
     # Section title removed (redundant with the "Runs" tab label).
-    st.caption(
-        "Live view of active TestRail runs per BU, with bugs extracted from "
-        "failed results, and how close the latest regression run is to done."
-    )
     ctx = live_context("runs")
     if ctx is None:
         return

@@ -231,3 +231,75 @@ class TestContainerChain:
 
     def test_empty_input_is_safe(self):
         assert cov._detect_container_chain(pd.Series([], dtype=str)) == []
+
+
+# ── the two tabs must never disagree on the same BU ──────────────────────────
+class TestCoverageAgreesWithBacklog:
+    """Coverage's baseline view and the Backlog tab measure the same thing.
+
+    They used to divide differently — Coverage by unique CASES, Backlog by
+    expanded ROWS — so one BU read 91.9% on one tab and 95.2% on the other.
+    Coverage now consumes the Backlog's own classified rows, so the agreement
+    is structural.  These tests fail if anyone reintroduces a second basis.
+    """
+
+    @staticmethod
+    def _fixture(website_rule):
+        """3 cases × 2 countries, one of them automated on both countries."""
+        rule = SimpleNamespace(
+            bu="Drogas", scope="website", suite_id=1,
+            countries_filter=["DRG LV", "DRG LT"],
+            country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            country_field_label="multi_countries",
+        )
+        raw = pd.DataFrame([
+            _case(case_id=1, multi_countries=["DRG LV", "DRG LT"],
+                  section_path="SD > Checkout"),
+            _case(case_id=2, multi_countries=["DRG LV", "DRG LT"],
+                  section_path="SD > Checkout"),
+            _case(case_id=3, multi_countries=["DRG LV"],
+                  section_path="SD > Customer"),
+        ])
+        auto = pd.DataFrame([
+            {"case_id": 1, "country_label": "LV", "device": "Desktop",
+             "section_path": "SD > Checkout"},
+            {"case_id": 1, "country_label": "LT", "device": "Desktop",
+             "section_path": "SD > Checkout"},
+        ])
+        return raw, auto, [rule]
+
+    def test_headline_rows_and_coverage_match(self, website_rule):
+        raw, auto, rules = self._fixture(website_rule)
+        # Backlog's numbers
+        expanded_bl = bl._classify_expanded(bl._expand_baseline(raw, rules), auto)
+        # empty framework frame: the Java/TestIM split is not what's under test
+        s = bl._stats(expanded_bl, pd.DataFrame())
+        # Coverage's baseline view, from the same inputs
+        _nd, _ab, _ids, expanded_cov = cov._regression_baseline_like_backlog(
+            raw, auto, rules)
+
+        assert len(expanded_cov) == s["total"] == 5          # 2+2+1 rows
+        assert int((expanded_cov["category"] == "automated").sum()) == s["automated"] == 2
+        cov_pct = (expanded_cov["category"] == "automated").sum() / len(expanded_cov) * 100
+        assert round(cov_pct, 1) == round(s["cov_total"], 1) == 40.0
+
+    def test_per_area_denominator_is_rows_not_cases(self, website_rule):
+        raw, auto, rules = self._fixture(website_rule)
+        _nd, ab, ids, expanded_cov = cov._regression_baseline_like_backlog(
+            raw, auto, rules)
+        table, _chain = cov._coverage_table(raw, ab, ids, expanded=expanded_cov)
+        checkout = table[table["section"] == "Checkout"].iloc[0]
+        # 2 cases × 2 countries = 4 rows (the case basis would have said 2)
+        assert int(checkout["total"]) == 4
+        assert int(checkout["automated"]) == 2
+        assert float(checkout["coverage_pct"]) == 50.0
+
+    def test_without_expanded_frame_the_case_basis_is_kept(self, website_rule):
+        """Total / Production Sanity have no row expansion — they must stay on
+        the case basis rather than silently borrow the baseline's."""
+        raw, auto, rules = self._fixture(website_rule)
+        _nd, ab, ids, _exp = cov._regression_baseline_like_backlog(raw, auto, rules)
+        table, _chain = cov._coverage_table(raw, ab, ids)
+        checkout = table[table["section"] == "Checkout"].iloc[0]
+        assert int(checkout["total"]) == 2                   # unique cases
+        assert float(checkout["coverage_pct"]) == 50.0       # 1 of 2 cases
