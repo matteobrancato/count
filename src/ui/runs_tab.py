@@ -698,15 +698,27 @@ _STAB_MIN_HELP  = ("A case needs at least this many pass / fail / retest results
                    "noisier. The options adapt to the number of runs analysed.")
 
 
+_STAB_MIN_DEFAULT = 5
+
+
 def _min_exec_options(n_runs: int) -> list[int]:
-    """Executions ladder for *n_runs*, at most six pills, always ending on the
-    full run count so 'every run' is one click away."""
-    opts = [v for v in _STAB_MIN_LADDER if v <= n_runs]
-    if n_runs not in opts:
-        opts.append(n_runs)
-    while len(opts) > 6:
-        opts.pop(1)                      # thin the middle, keep 1 and the top
-    return opts
+    """Executions ladder for *n_runs*: at most six pills, always containing 1,
+    the default threshold and the full run count.
+
+    Anchoring the default is not cosmetic — `st.segmented_control` raises when
+    its default is absent from the options, which is exactly what happened at
+    100 runs once the ladder started thinning its middle.
+    """
+    anchors = {1, min(_STAB_MIN_DEFAULT, n_runs), n_runs}
+    opts = set(anchors)
+    # Fill from the largest values downwards: the coarse end is where a long
+    # history is actually read ("failed in at least 75 of 100 runs").
+    for v in sorted(_STAB_MIN_LADDER, reverse=True):
+        if len(opts) >= 6:
+            break
+        if v < n_runs:
+            opts.add(v)
+    return sorted(opts)
 
 
 def _stab_control(label: str, options: list[int], default: int, key: str,
@@ -719,6 +731,10 @@ def _stab_control(label: str, options: list[int], default: int, key: str,
             f"white-space:nowrap;cursor:help'>{label}</span>",
             unsafe_allow_html=True,
         )
+        # Belt and braces: a default outside the options makes Streamlit raise
+        # and takes the whole tab down with it.  Never let that reach the user.
+        if default not in options:
+            default = options[0]
         v = st.segmented_control(label, options, default=default, required=True,
                                  key=key, label_visibility="collapsed")
     return int(v if v is not None else default)

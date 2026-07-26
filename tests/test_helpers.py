@@ -279,3 +279,29 @@ class TestDaysToRelease:
         # An unparseable date is shown as-is rather than raising.
         assert _days_to_release({"released": False,
                                  "release_date": "TBD"})[0] == "TBD"
+
+
+# ── stability controls: the default must always be selectable ────────────────
+class TestMinExecOptions:
+    """`st.segmented_control` raises when its default is not among the options,
+    which took the whole Stability tab down at 100 runs.  These lock the
+    invariant the previous check missed: the ladder is not just well-formed,
+    it CONTAINS the value the caller defaults to."""
+
+    @pytest.mark.parametrize("n_runs", [1, 2, 3, 5, 7, 10, 25, 33, 50, 100, 999])
+    def test_default_is_always_an_option(self, n_runs):
+        from src.ui.runs_tab import _min_exec_options
+        assert min(5, n_runs) in _min_exec_options(n_runs)
+
+    @pytest.mark.parametrize("n_runs", [5, 10, 25, 50, 100])
+    def test_shape(self, n_runs):
+        from src.ui.runs_tab import _min_exec_options
+        opts = _min_exec_options(n_runs)
+        assert opts == sorted(set(opts))      # sorted, no duplicates
+        assert opts[0] == 1                   # "counted at least once"
+        assert opts[-1] == n_runs             # "every run" is one click away
+        assert len(opts) <= 6                 # still a pill row, not a list
+
+    def test_runs_control_default_is_an_option(self):
+        from src.ui.runs_tab import _STAB_RUNS
+        assert 5 in _STAB_RUNS
