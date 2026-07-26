@@ -685,7 +685,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     # per-view description caption below (kept compact).
     is_mapp = scope == "mobile_app"
     options = _VIEW_OPTIONS_MAPP if is_mapp else _VIEW_OPTIONS
-    c_radio, c_gran = st.columns([3, 2], vertical_alignment="center")
+    c_radio, c_gran, _c_pad = st.columns([3, 1.3, 0.7], vertical_alignment="center")
     with c_radio:
         view = st.radio(
             "Coverage view", options, index=_VIEW_DEFAULT_INDEX,
@@ -694,7 +694,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         )
     with c_gran:
         depth_offset = st.slider(
-            "Granularity (section depth)", 0, 3, 0,
+            "Granularity", 0, 3, 0,
             key=f"cov_gran_{scope}_{bu_choice}",
             help=("0 = Main Category (auto-detected — strips dominant root "
                   "containers like \"SD\" or \"WTR\"); 1 = Secondary; "
@@ -750,12 +750,8 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 # ── render ───────────────────────────────────────────────────────────────────
 @st.fragment
 def render() -> None:
-    # Subheader removed (the tab is already labeled "Coverage") — a lead caption
-    # keeps the counting convention visible without the redundant title.
-    st.caption(
-        "Automation coverage by functional area (TestRail section) — Desktop + "
-        "Mobile rows for the totals, unique case IDs for the % coverage."
-    )
+    # No lead caption / subheader: the tab is already labeled "Coverage" and the
+    # per-view description below the control row states the counting convention.
 
     # Scope + BU come from the GLOBAL control bar (global_filter) — no local
     # selectors, one standardized method across every tab.

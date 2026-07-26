@@ -249,17 +249,6 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 .kpi-chip b {{ color: {c['ink']}; font-weight: 750; }}
 .kpi-chip .kpi-sub {{ color: {c['muted']}; font-size: 11px; }}
-/* Trailing note clarifying that the strip ignores the scope/BU filter. */
-.kpi-scope-note {{
-    margin-left: auto;
-    padding-left: 12px;
-    border-left: 1px solid {c['border']};
-    color: {c['faint']};
-    font-size: 11px;
-    white-space: nowrap;
-    flex: 0 0 auto;
-    cursor: help;
-}}
 /* Skeleton placeholder — reserves the strip's space during the first load so
    the page doesn't shift when the real chips arrive. */
 .kpi-skeleton {{
@@ -314,52 +303,71 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 
 /* ── Secondary export button (right-aligned under the summary table) ────────
    A quiet action: small, muted, brand-tinted only on hover. */
-.st-key-summary_export {{ margin-top: 8px; }}
+/* Summary-table CSV export — a text label sitting on the legend row, not a
+   button: it is a secondary action and a filled control dominated the row. */
+.st-key-summary_export {{ text-align: right; }}
 .st-key-summary_export button {{
-    font-size: 12px !important;
-    font-weight: 600 !important;
-    padding: 4px 10px !important;
-    color: {c['muted']} !important;
-    border-color: {c['border']} !important;
+    background: transparent !important;
+    border: none !important;
     box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+}}
+.st-key-summary_export button p {{
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    color: {c['muted']} !important;
+    margin: 0 !important;
 }}
 .st-key-summary_export button:hover {{
-    color: {c['brand']} !important;
-    border-color: {c['brand']} !important;
-}}
-
-/* ── Methodology row — a light, link-like disclosure, not a third card ───────
-   The page already stacks a KPI band and a filter band; giving this the default
-   bordered-card look made three heavy bars before any content. */
-.st-key-methodology {{ margin: -2px 0 4px; }}
-.st-key-methodology [data-testid="stExpander"] details {{
-    border: none !important;
-    background: transparent !important;
+    transform: none !important;
     box-shadow: none !important;
 }}
-.st-key-methodology [data-testid="stExpander"] summary {{
-    padding: 2px 4px !important;
-    min-height: 0 !important;
+.st-key-summary_export button:hover p {{
+    color: {c['brand']} !important;
+    text-decoration: underline !important;
 }}
-.st-key-methodology [data-testid="stExpander"] summary p {{
-    font-size: 12.5px !important;
+
+/* ── Utility-bar disclosures (methodology · data quality) ───────────────────
+   Popover triggers rendered as plain text links: no border, no background,
+   underline on hover.  They used to be full-width expanders competing with the
+   KPI strip for attention. */
+.st-key-freshness [data-testid="stPopover"] button {{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    color: {c['muted']} !important;
+    white-space: nowrap !important;
+}}
+.st-key-freshness [data-testid="stPopover"] button p {{
+    font-size: 11px !important;
     color: {c['muted']} !important;
     font-weight: 500 !important;
+    margin: 0 !important;
 }}
-.st-key-methodology [data-testid="stExpander"] summary:hover p {{
+.st-key-freshness [data-testid="stPopover"] button:hover p {{
     color: {c['brand']} !important;
+    text-decoration: underline !important;
 }}
-/* Give the opened panel a readable card so the tables inside breathe. */
-.st-key-methodology [data-testid="stExpanderDetails"] {{
-    background: {c['surface']};
-    border: 1px solid {c['border']};
-    border-radius: 12px;
-    padding: 6px 18px 10px;
-    margin-top: 4px;
+/* Hide Streamlit's caret so the trigger reads as text, not as a control. */
+.st-key-freshness [data-testid="stPopover"] button svg,
+.st-key-freshness [data-testid="stPopover"] button [data-testid="stIconMaterial"] {{
+    display: none !important;
 }}
-.st-key-methodology [data-testid="stExpanderDetails"] table {{
-    font-size: 12.5px;
+/* The panels themselves: roomy, readable cards (the chat popover styling is
+   scoped to the chat form, so it never reaches these). */
+[data-testid="stPopoverBody"]:has(.dq-panel),
+[data-testid="stPopoverBody"]:has(.methodology-panel) {{
+    min-width: 560px;
+    max-width: min(760px, 94vw);
+    max-height: min(640px, 78vh);
+    overflow-y: auto;
 }}
+[data-testid="stPopoverBody"] table {{ font-size: 12.5px; }}
 
 /* ── Data-freshness label — pinned to the top-right of the tab bar ───────────
    `tabs_zone` wraps the tab bar (position:relative).  The freshness label is
@@ -372,20 +380,33 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     right: 0 !important;
     width: auto !important;
     z-index: 20 !important;
+    /* One horizontal utility bar: methodology · data quality · updated · ↻ */
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 16px !important;
 }}
-/* The mini ↻ is ABSOLUTELY pinned just LEFT of the label — no reliance on
-   Streamlit's wrapper flex (which stacked it under the label).  It stays out
-   of the flow, so the container is exactly the label's size. */
-.st-key-freshness [class*="st-key-refresh_mini"] {{
-    position: absolute !important;
-    right: calc(100% + 8px) !important;
-    /* Anchor to the label's TEXT line (which starts at the container top) —
-       centring on the container height drifted upward because the wrapper is
-       taller than the visible text.  11px text vs 15px glyph → -2px offset. */
-    top: -2px !important;
+.st-key-freshness > [data-testid="stVerticalBlock"] {{
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 16px !important;
     width: auto !important;
-    transform: none !important;
-    margin: 0 !important;
+}}
+.st-key-freshness [data-testid="stElementContainer"] {{ width: auto !important; }}
+/* Narrow viewports: the tab bar wins the row — drop the utility bar below it
+   instead of letting the two overlap. */
+@media (max-width: 1250px) {{
+    .st-key-freshness {{
+        position: static !important;
+        justify-content: flex-end !important;
+        margin: 4px 0 6px !important;
+    }}
+}}
+/* The mini ↻ is the last item of the bar, in normal flow (the bar is a flex
+   row now, so no absolute anchoring is needed). */
+.st-key-freshness [class*="st-key-refresh_mini"] {{
+    width: auto !important;
+    margin: 0 0 0 -8px !important;   /* tighten against "Updated …" */
     line-height: 1 !important;
 }}
 /* Bare ↻ glyph — no circle, border or background (the previous circle rendered

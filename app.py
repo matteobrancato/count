@@ -7,9 +7,12 @@ import streamlit as st
 from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
 from src.ui import (
-    backlog_tab, chat_assistant, coverage_tab, global_filter, kpi_strip,
-    overview_tab, pivot_tab, report_tab, runs_tab, styles,
+    backlog_tab, chat_assistant, coverage_tab, data_quality, global_filter,
+    kpi_strip, overview_tab, report_tab, runs_tab, styles,
 )
+# Explorer is temporarily disabled (minimalism experiment) — import kept next to
+# its commented render call so re-enabling is a two-line change.
+from src.ui import pivot_tab  # noqa: F401  (used by the commented Explorer tab)
 from src.ui.styles import COLORS
 
 
@@ -114,13 +117,37 @@ def _header() -> None:
     )
 
 
-def _freshness_label() -> None:
-    """Data-freshness caption pinned (`.st-key-freshness`) to the tab-bar's
-    top-right.  Hovering it reveals a tiny ↻ button (CSS animation) that
-    refreshes ONLY the numbers: clears the data caches and reruns — the page
-    chrome stays, the loader shows on the data."""
+def _freshness_label(scope: str = "website") -> None:
+    """Utility bar pinned (`.st-key-freshness`) to the tab-bar's top-right:
+
+        ℹ️ How numbers are calculated · 🧹 Data quality · Updated 3m ago ↻
+
+    The two disclosures are popovers styled as plain text links (underline on
+    hover) so they carry no visual weight until needed — they used to be
+    full-width expanders competing with the KPI strip.  Hovering the bar reveals
+    the tiny ↻ that refreshes ONLY the numbers.
+    """
     updated_at = _numbers_fetched_at()
     with st.container(key="freshness"):
+        with st.popover("ℹ️ How numbers are calculated"):
+            # Marker class — see `:has(.methodology-panel)` in styles.py.
+            st.markdown('<div class="methodology-panel"></div>',
+                        unsafe_allow_html=True)
+            st.markdown(METHODOLOGY_MD)
+
+        # The scan derives from already-loaded frames, but on a cold start those
+        # frames don't exist yet — computing here would run the heavy load
+        # BEFORE the warm-up status box.  So it only engages once warm.
+        warm = bool(st.session_state.get("_warmed_ui"))
+        n_findings = data_quality.finding_count(scope) if warm else None
+        dq_label = ("🧹 Data quality" if not n_findings
+                    else f"🧹 Data quality · {n_findings}")
+        with st.popover(dq_label):
+            if warm:
+                data_quality.render_body(scope)
+            else:
+                st.caption("Available once the data has finished loading.")
+
         st.markdown(
             f"<div style='color:{COLORS['muted']};font-size:11px;"
             f"white-space:nowrap;line-height:1'>Updated "
@@ -248,22 +275,18 @@ def main() -> None:
     # (detail views follow it; all-BU overviews intentionally ignore the BU).
     global_filter.render()
 
-    # Methodology, one click away from every tab.  Same text Dexter uses (see
-    # src/methodology.py) so the explanation can never drift from the answer —
-    # people trust numbers they can check.  Styled as a light inline row (see
-    # `.st-key-methodology` in styles.py) so it reads as a link, not as a third
-    # full-width card competing with the KPI strip and the filter bar.
-    with st.container(key="methodology"):
-        with st.expander("ℹ️ How these numbers are calculated"):
-            st.markdown(METHODOLOGY_MD)
-
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
+    _scope_now, _ = global_filter.current()
     with st.container(key="tabs_zone"):
-        _freshness_label()
-        (tab_backlog, tab_coverage, tab_explore, tab_runs, tab_overview,
+        _freshness_label(_scope_now)
+        # NOTE: the Explorer tab is temporarily disabled — a minimalism
+        # experiment.  Everything for it is kept (pivot_tab.py, its render call
+        # below) so re-enabling is: add "📊 Explorer" back to this list, restore
+        # `tab_explore` in the unpacking, and uncomment the _render_tab line.
+        (tab_backlog, tab_coverage, tab_runs, tab_overview,
          tab_report) = st.tabs(
-            ["📋 Backlog", "📐 Coverage", "📊 Explorer", "🏃 Runs",
+            ["📋 Backlog", "📐 Coverage", "🏃 Runs",
              "🧭 Overview", "📄 Report"]
         )
 
@@ -341,7 +364,7 @@ def main() -> None:
 
     # Each remaining tab renders in isolation (see `_render_tab`).
     _render_tab(tab_coverage, coverage_tab.render, "Coverage")
-    _render_tab(tab_explore,  pivot_tab.render,    "Explorer", "explorer_anim")
+    # _render_tab(tab_explore,  pivot_tab.render,    "Explorer", "explorer_anim")
     _render_tab(tab_overview, overview_tab.render, "Overview", "overview_anim")
     _render_tab(tab_report,   report_tab.render,   "Report",   "report_anim")
     # Runs is rendered LAST on purpose (its position in the tab bar is

@@ -802,35 +802,35 @@ def render() -> None:
                                 "To update", "N/A", "Unknown"]
                 if col in display.columns]
 
-    # Header + RAG legend on one clean row (like the Report tab).
-    st.markdown(
-        f'<div style="display:flex;align-items:center;justify-content:space-between;'
-        f'flex-wrap:wrap;gap:8px;margin:2px 0 12px">'
-        f'<div style="font-weight:700;font-size:16px;color:{COLORS["ink"]};'
-        f'border-left:3px solid {COLORS["brand"]};padding-left:10px">'
-        f'All Business Units</div>'
-        f'<div style="font-size:12px;color:{COLORS["muted"]}">'
-        f'🟢 ≥ {COVERAGE_TARGET:.0f}% &nbsp;·&nbsp; 🟡 ≥ 60% &nbsp;·&nbsp; 🔴 below '
-        f'&nbsp;— same thresholds as the KPI strip</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(_summary_table_html(display, num_cols), unsafe_allow_html=True)
-
-    # Export — managers forward these numbers into decks and mails, so the table
-    # must be reachable outside the app.  (The presentation table is custom HTML,
-    # which has no built-in download, so we offer the CSV explicitly.)  Right-
-    # aligned and small: it's a secondary action, not a call to action.
-    with st.container(key="summary_export"):
-        _sp, _dl = st.columns([5, 1])
-        _dl.download_button(
-            "⬇️ CSV",
+    # Header + RAG legend + export on ONE row.  The CSV is a text-sized label
+    # next to the legend, not a button: managers forward these numbers into decks
+    # and mails, so the export must exist — but it is a secondary action and a
+    # full-width button dominated the row.  (The presentation table is custom
+    # HTML, which has no built-in download, hence the explicit control.)
+    c_title, c_legend, c_csv = st.columns([4, 3, 1], vertical_alignment="center")
+    with c_title:
+        st.markdown(
+            f'<div style="font-weight:700;font-size:16px;color:{COLORS["ink"]};'
+            f'border-left:3px solid {COLORS["brand"]};padding-left:10px">'
+            f'All Business Units</div>',
+            unsafe_allow_html=True,
+        )
+    with c_legend:
+        st.markdown(
+            f'<div style="font-size:12px;color:{COLORS["muted"]};text-align:right">'
+            f'🟢 ≥ {COVERAGE_TARGET:.0f}% &nbsp;·&nbsp; 🟡 ≥ 60% &nbsp;·&nbsp; '
+            f'🔴 below</div>',
+            unsafe_allow_html=True,
+        )
+    with c_csv, st.container(key="summary_export"):
+        st.download_button(
+            "⬇ CSV",
             display.to_csv(index=False).encode("utf-8"),
             file_name=f"automation_baseline_{scope}.csv",
             mime="text/csv",
-            width="stretch",
             help="Download the table above, exactly as shown, as a CSV.",
         )
+    st.markdown(_summary_table_html(display, num_cols), unsafe_allow_html=True)
 
     st.divider()
 
@@ -842,7 +842,5 @@ def render() -> None:
     st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
     _detail_view(bu, scope, expanded_by_bu, auto_by_bu)
 
-    # ── TestRail hygiene checklist (per scope; zero extra API calls) ─────────
-    st.divider()
-    from . import data_quality
-    data_quality.render(scope)
+    # (The TestRail hygiene checklist now lives in the utility bar next to
+    # "Updated …" — see `_freshness_label` in app.py.)

@@ -1094,11 +1094,11 @@ _FAB_CSS = """
 }
 
 /* ── 3. The chat panel that opens above the FAB ─────────────────────────── */
-/* Target ONLY Streamlit's popover body (st.popover content) — the chat panel
-   is the app's only st.popover.  Selectbox/multiselect dropdowns use baseweb
-   menu/listbox, NOT stPopoverBody, so they're untouched (previously a global
-   popover min-width broke them into an oversized white box). */
-[data-testid="stPopoverBody"] {
+/* Scoped with :has() to the popover that CONTAINS the chat form — the app now
+   has other popovers (methodology, data quality) in the utility bar, and an
+   unscoped rule would dress them as chat panels.  Selectbox/multiselect
+   dropdowns use baseweb menu/listbox, not stPopoverBody, so they stay untouched. */
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) {
     min-width: 440px;
     max-width: min(500px, 92vw);
     max-height: min(620px, 76vh);
@@ -1107,14 +1107,14 @@ _FAB_CSS = """
 }
 
 /* Hide the "Press Enter to submit form" helper — visual noise in a chat box. */
-[data-testid="stPopoverBody"] [data-testid="InputInstructions"] {
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) [data-testid="InputInstructions"] {
     display: none !important;
 }
 
 /* Chat cards — clean full-width message cards: assistant = white, user = a
    soft warm tint.  Avatars are the tidy emoji set via st.chat_message(avatar=)
    (no colored default circles).  Hex values mirror styles.py tokens. */
-[data-testid="stPopoverBody"] [data-testid="stChatMessage"] {
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) [data-testid="stChatMessage"] {
     background: #FFFFFF;
     border: 1px solid #E6EAF1;
     border-radius: 14px;
@@ -1124,19 +1124,19 @@ _FAB_CSS = """
 }
 /* User messages — both testid generations covered (old chatAvatarIcon-*,
    new stChatMessageAvatar*). */
-[data-testid="stPopoverBody"] [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]),
-[data-testid="stPopoverBody"] [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]),
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
     background: #FFF6F6;
     border-color: #FFDCDC;
 }
-[data-testid="stPopoverBody"] [data-testid="stChatMessage"] p {
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) [data-testid="stChatMessage"] p {
     font-size: 13.5px;
     line-height: 1.55;
 }
 
 /* Chat input — rounded field so it matches the bubbles. */
-[data-testid="stPopoverBody"] [data-baseweb="input"],
-[data-testid="stPopoverBody"] [data-baseweb="base-input"] {
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) [data-baseweb="input"],
+[data-testid="stPopoverBody"]:has([class*="st-key-ai_chat_form_"]) [data-baseweb="base-input"] {
     border-radius: 12px !important;
 }
 </style>

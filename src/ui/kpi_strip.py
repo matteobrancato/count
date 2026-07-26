@@ -114,15 +114,10 @@ def render() -> None:
     chips.append(_chip(dot, "Focus", f"{worst['bu']} {worst['pct']:.1f}%",
                        tooltip="Lowest regression-baseline coverage — needs attention."))
 
-    # Scope note: the strip is a company-wide figure and deliberately ignores the
-    # scope/BU filter below it.  Saying so inline stops the "why didn't these
-    # change when I switched to Mobile App?" question.
-    chips.append(
-        "<span class='kpi-scope-note' title='These totals cover Website + "
-        "Microservices across all Business Units and do not follow the scope / BU "
-        "filter below — that filter drives the detail tabs.'>"
-        "company-wide · Website + Microservices</span>"
-    )
+    # NOTE: the strip is a company-wide figure (Website + Microservices, all BUs)
+    # and deliberately ignores the scope / BU filter below it.  That is stated in
+    # the "How numbers are calculated" panel rather than as a chip here — inline
+    # it added noise to the one row executives actually read.
     st.markdown(
         f"<div class='kpi-card'><div class='kpi-row'>{''.join(chips)}</div></div>",
         unsafe_allow_html=True,

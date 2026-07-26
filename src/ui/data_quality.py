@@ -146,45 +146,56 @@ _CHECKS = [
 ]
 
 
-def render(scope: str = "website") -> None:
-    """The '🧹 Data quality' expander — call at the bottom of the Backlog tab."""
+def finding_count(scope: str = "website") -> int | None:
+    """How many hygiene findings this scope has — None when it can't be computed
+    (e.g. the data isn't warm yet).  Used to badge the utility-bar label."""
+    try:
+        return sum(len(df) for df in _scan(scope).values())
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("Data-quality count failed")
+        return None
+
+
+def render_body(scope: str = "website") -> None:
+    """The panel contents WITHOUT a container, so the caller decides whether it
+    lives in a popover (utility bar) or an expander."""
+    # Marker class — `[data-testid="stPopoverBody"]:has(.dq-panel)` in styles.py
+    # widens the popover for this panel only (the chat popover keeps its own).
+    st.markdown('<div class="dq-panel"></div>', unsafe_allow_html=True)
     try:
         data = _scan(scope)
     except Exception:                                                   # noqa: BLE001
         logger.exception("Data-quality scan failed")
+        st.caption("Could not run the hygiene checks right now.")
         return
 
+    st.caption(
+        "TestRail hygiene checks computed from the data already loaded "
+        "(no extra API calls). Fixing these keeps every number above credible."
+    )
     total = sum(len(df) for df in data.values())
-    label = (f"🧹 Data quality — {total} finding{'s' if total != 1 else ''} to clean up"
-             if total else "🧹 Data quality — all clean")
-    with st.expander(label, expanded=False):
-        st.caption(
-            "TestRail hygiene checks computed from the data already loaded "
-            "(no extra API calls). Fixing these keeps every number above credible."
-        )
-        if not total:
-            st.success("No hygiene issues detected 🎉")
-            return
+    if not total:
+        st.success("No hygiene issues detected 🎉")
+        return
 
-        frames_for_csv: list[pd.DataFrame] = []
-        for key, title, desc in _CHECKS:
-            df = data.get(key)
-            if df is None or df.empty:
-                continue
-            st.markdown(f"**{title}** · {len(df)}")
-            st.caption(desc)
-            col_cfg = {}
-            if "url" in df.columns:
-                col_cfg["url"] = st.column_config.LinkColumn(
-                    "Open", display_text="↗", width="small")
-            st.dataframe(df, width="stretch", hide_index=True,
-                         column_config=col_cfg)
-            frames_for_csv.append(df.assign(check=key))
+    frames_for_csv: list[pd.DataFrame] = []
+    for key, title, desc in _CHECKS:
+        df = data.get(key)
+        if df is None or df.empty:
+            continue
+        st.markdown(f"**{title}** · {len(df)}")
+        st.caption(desc)
+        col_cfg = {}
+        if "url" in df.columns:
+            col_cfg["url"] = st.column_config.LinkColumn(
+                "Open", display_text="↗", width="small")
+        st.dataframe(df, width="stretch", hide_index=True, column_config=col_cfg)
+        frames_for_csv.append(df.assign(check=key))
 
-        combined = pd.concat(frames_for_csv, ignore_index=True)
-        st.download_button(
-            "⬇️ Download clean-up list (CSV)",
-            combined.to_csv(index=False).encode("utf-8"),
-            file_name="testrail_data_quality.csv",
-            mime="text/csv",
-        )
+    combined = pd.concat(frames_for_csv, ignore_index=True)
+    st.download_button(
+        "⬇️ Download clean-up list (CSV)",
+        combined.to_csv(index=False).encode("utf-8"),
+        file_name=f"testrail_data_quality_{scope}.csv",
+        mime="text/csv",
+    )
