@@ -303,3 +303,33 @@ class TestCoverageAgreesWithBacklog:
         checkout = table[table["section"] == "Checkout"].iloc[0]
         assert int(checkout["total"]) == 2                   # unique cases
         assert float(checkout["coverage_pct"]) == 50.0       # 1 of 2 cases
+
+
+# ── Dexter must quote the same numbers the screen shows ──────────────────────
+class TestDexterAgreesWithDashboard:
+    """The assistant answers from its own snapshot, so its arithmetic has to be
+    the dashboard's arithmetic — not merely similar to it."""
+
+    def test_regression_stats_match_the_backlog_tab(self, website_rule):
+        raw = pd.DataFrame([
+            _case(case_id=1, multi_countries=["DRG LV"]),
+            _case(case_id=2, multi_countries=["DRG LV"],
+                  **{"status_Automation Status": "Automated"}),
+        ])
+        auto = pd.DataFrame([
+            {"case_id": 2, "country_label": "LV", "device": "Desktop"},
+        ])
+        expanded = bl._classify_expanded(bl._expand_baseline(raw, [website_rule]), auto)
+
+        from src.ui import chat_assistant as ai
+        dexter = ai._regression_stats(expanded)
+        tab    = bl._stats(expanded, pd.DataFrame())
+
+        assert dexter["total_rows"]     == tab["total"]
+        assert dexter["automated_rows"] == tab["automated"]
+        assert dexter["coverage_pct"]   == round(tab["cov_total"], 1) == 50.0
+
+    def test_empty_frame_does_not_divide_by_zero(self):
+        from src.ui import chat_assistant as ai
+        empty = pd.DataFrame(columns=["case_id", "category"])
+        assert ai._regression_stats(empty)["coverage_pct"] == 0.0

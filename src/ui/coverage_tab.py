@@ -790,11 +790,6 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         )
         depth_offset = int(depth_offset if depth_offset is not None else 0)
     is_baseline_view = view in (_VIEW_REGR, _VIEW_REGR_MAPP)
-    # The radio names the subset and "How the numbers are calculated" defines it,
-    # so the per-view description was a third copy.  The shared-suite exclusion
-    # is the one thing said nowhere else, so it is the one thing left here.
-    if n_other_bu:
-        st.caption(f"ℹ️ {n_other_bu:,} cases excluded (other BUs on this shared suite)")
 
     if view == _VIEW_TOTAL:
         _render_coverage_section(

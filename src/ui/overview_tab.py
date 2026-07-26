@@ -94,7 +94,8 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
         """,
         unsafe_allow_html=True,
     )
-    with st.expander("Breakdown", expanded=True):
+    # Collapsed: the page opens on three numbers, not on nine tables.
+    with st.expander("Breakdown", expanded=False):
         t1, t2, t3 = st.tabs(["By BU", "By Country", "By Device"])
         with t1:
             st.dataframe(metrics.breakdown_by(subset, ["bu"]),
@@ -114,11 +115,6 @@ def render() -> None:
     # Scope comes from the GLOBAL control bar, like every other tab.
     scope, _bu = global_filter.current()
     scope_lbl  = global_filter.scope_label(scope)
-    st.caption(
-        f"Automated counts for **{scope_lbl}** (Smoke · All automated · "
-        f"Production Sanity). For coverage broken down by area, see the "
-        f"**📐 Coverage** tab."
-    )
 
     rules = [r for r in ALL_RULES if r.scope == scope]
     if not rules:
@@ -132,31 +128,40 @@ def render() -> None:
         st.info(f"No automated cases for {scope_lbl} yet.")
         return
 
-    left, right = st.columns([1, 3], gap="large")
-    with left:
-        st.markdown("##### BU filter")
-        tree = _bu_country_map(scope)
-        # Key is per-scope so switching scope never carries a stale selection.
-        selection = _bu_country_picker(tree, key_prefix=f"ov_{scope}")
+    # The BU filter used to own a quarter of the page, to the LEFT of the
+    # numbers — so the first thing an executive read was a column of
+    # checkboxes.  It is now one quiet line above them, and the numbers get the
+    # full width.  (The picker still runs every rerun inside the popover, so the
+    # selection it returns is always current.)
+    tree = _bu_country_map(scope)
+    n_all = len(tree)
+    # Key is per-scope so switching scope never carries a stale selection.
+    n_on  = sum(1 for bu in tree
+                if st.session_state.get(f"ov_{scope}_bu_{bu}", True))
+    label = ("🔎 All Business Units" if n_on == n_all
+             else f"🔎 {n_on} of {n_all} Business Units")
+    with st.container(key="ov_filter", horizontal=True,
+                      horizontal_alignment="right", gap="small"):
+        with st.popover(label):
+            selection = _bu_country_picker(tree, key_prefix=f"ov_{scope}")
 
     automated = _apply_selection(automated_all, selection)
 
-    with right:
-        smoke = metrics.select_smoke(automated)
-        regr = metrics.select_regression(automated)
-        sanity = metrics.select_prod_sanity(automated)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            _metric_card(
-                "Smoke (Highest priority)", smoke, COLORS["warning"],
-                tooltip="Automated cases whose Priority is Highest.",
-            )
-        with c2:
-            _metric_card(
-                "All automated cases", regr, COLORS["brand"],
-                tooltip=("Every automated case (deduplicated) in this scope — "
-                         "NOT the regression baseline. For the baseline figures "
-                         "see the Backlog tab."),
-            )
-        with c3:
-            _metric_card("Production Sanity", sanity, COLORS["success"])
+    smoke  = metrics.select_smoke(automated)
+    regr   = metrics.select_regression(automated)
+    sanity = metrics.select_prod_sanity(automated)
+    c1, c2, c3 = st.columns(3, gap="medium")
+    with c1:
+        _metric_card(
+            "Smoke (Highest priority)", smoke, COLORS["warning"],
+            tooltip="Automated cases whose Priority is Highest.",
+        )
+    with c2:
+        _metric_card(
+            "All automated cases", regr, COLORS["brand"],
+            tooltip=("Every automated case (deduplicated) in this scope — "
+                     "NOT the regression baseline. For the baseline figures "
+                     "see the Backlog tab."),
+        )
+    with c3:
+        _metric_card("Production Sanity", sanity, COLORS["success"])

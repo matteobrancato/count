@@ -807,6 +807,31 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     font-size: 12.5px !important;
 }}
 
+/* Overview BU filter — a quiet text-link trigger above the numbers, never a
+   competitor to them. */
+.st-key-ov_filter {{ margin: 0 0 6px; }}
+.st-key-ov_filter [data-testid="stPopover"] button {{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+}}
+.st-key-ov_filter [data-testid="stPopover"] button p {{
+    font-size: 12.5px !important;
+    color: {c['muted']} !important;
+    font-weight: 500 !important;
+}}
+.st-key-ov_filter [data-testid="stPopover"] button:hover p {{
+    color: {c['brand']} !important;
+    text-decoration: underline !important;
+}}
+[data-testid="stPopoverBody"]:has([class*="st-key-ov_"]) {{
+    min-width: 320px;
+    max-height: min(560px, 70vh);
+    overflow-y: auto;
+}}
+
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
 

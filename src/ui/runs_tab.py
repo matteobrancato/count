@@ -636,37 +636,6 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
         st.caption(f"Showing the {len(shown)} most recent of {len(visible)} runs — "
                    f"use the filter to narrow down.")
 
-    with st.expander("📋 Table view (sortable columns)"):
-        df = pd.DataFrame(rows)
-        st.dataframe(
-            df[["name", "plan", "updated_str", "created_str", "days_idle",
-                "total", "passed", "failed", "blocked",
-                "completion", "pass_rate", "bugs_count", "url"]],
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "name":         st.column_config.TextColumn("Run", width="large"),
-                "plan":         st.column_config.TextColumn("Plan", width="medium"),
-                "updated_str":  st.column_config.TextColumn(
-                    "Last activity", width="small",
-                    help="When the last test result was logged."),
-                "created_str":  st.column_config.TextColumn("Created", width="small"),
-                "days_idle":    st.column_config.NumberColumn(
-                    "Idle d", help="Days since last activity."),
-                "total":        st.column_config.NumberColumn("Total"),
-                "passed":       st.column_config.NumberColumn("✅"),
-                "failed":       st.column_config.NumberColumn("❌"),
-                "blocked":      st.column_config.NumberColumn("🚫"),
-                "completion":   st.column_config.ProgressColumn(
-                    "Completion", format="%.1f%%", min_value=0, max_value=100),
-                "pass_rate":    st.column_config.ProgressColumn(
-                    "Pass rate", format="%.1f%%", min_value=0, max_value=100),
-                "bugs_count":   st.column_config.NumberColumn(
-                    "🐛", help="Unique JIRA keys from failed results."),
-                "url":          st.column_config.LinkColumn("Open", display_text="↗"),
-            },
-        )
-
     # ── Bug detail table: bug ↔ test ↔ run ↔ date (+ live Jira state) ──────
     if not bug_records:
         return
@@ -714,29 +683,44 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
                  column_config=col_cfg)
 
 
+_STAB_RUNS_HELP = ("How many of the most recent completed runs to walk. More runs "
+                   "= a longer history, but a slower first load.")
+_STAB_MIN_HELP  = ("A case needs at least this many pass / fail / retest results "
+                   "before it gets a real verdict; below it, it is filed under "
+                   "Insufficient data. Lower values surface more cases but are "
+                   "noisier.")
+
+
+def _stab_control(label: str, options: list[int], default: int, key: str,
+                  tooltip: str) -> int:
+    """One compact 'label + pills' control, matching the Coverage tab."""
+    with st.container(key=key + "_row", horizontal=True,
+                      vertical_alignment="center", gap="small"):
+        st.markdown(
+            f"<span title='{tooltip}' style='font-size:13px;color:{COLORS['muted']};"
+            f"white-space:nowrap;cursor:help'>{label}</span>",
+            unsafe_allow_html=True,
+        )
+        v = st.segmented_control(label, options, default=default, required=True,
+                                 key=key, label_visibility="collapsed")
+    return int(v if v is not None else default)
+
+
 @st.fragment
 def render_stability(bu: str, project_ids: set[int]) -> None:
     section_title("📈 Test Stability")
-    st.caption(
-        "Classify cases by their result pattern across the last N **completed** runs. "
-        "*Always fail* → fix priority · *Flaky* → investigate · *Always pass* → safe · "
-        "*Insufficient data* → fewer executions than the **Min executions** you set below."
-    )
 
-    c1, c2, _ = st.columns([1, 1, 3])
-    n_runs = c1.selectbox(
-        "Runs to analyse", [3, 5, 10, 20, 50], index=1,
-        key=f"stab_n_{bu}",
-        help="How many of the most recent completed runs to walk.",
-    )
-    min_exec = c2.number_input(
-        "Min executions",
-        min_value=1, max_value=int(n_runs),
-        value=min(5, int(n_runs)),
-        step=1, key=f"stab_min_exec_{bu}",
-        help=("A case needs at least this many pass/fail/retest results to be "
-              "classified.  Lower values surface more cases but are noisier."),
-    )
+    # Two compact pill controls on one line — they used to be a selectbox and a
+    # number input stacked with their own labels and floating help icons, which
+    # took three lines and read as a form rather than a quick knob.
+    c_runs, c_min, _pad = st.columns([2, 2, 1], vertical_alignment="center")
+    with c_runs:
+        n_runs = _stab_control("Runs to analyse", [3, 5, 10, 20], 5,
+                               f"stab_runs_seg_{bu}", _STAB_RUNS_HELP)
+    with c_min:
+        min_exec = min(_stab_control("Min executions", [1, 2, 3, 5], 5,
+                                     f"stab_minexec_seg_{bu}", _STAB_MIN_HELP),
+                       int(n_runs))
 
     try:
         with st.spinner(
@@ -765,21 +749,43 @@ def render_stability(bu: str, project_ids: set[int]) -> None:
         st.info("No test data found in the selected runs.")
         return
 
-    # Date range of the analysed runs (temporal context)
-    ts_for_sort = [int(r.get("completed_on") or r.get("created_on") or 0) for r in runs]
-    earliest = min(ts_for_sort) if ts_for_sort else 0
-    latest   = max(ts_for_sort) if ts_for_sort else 0
-    st.caption(
-        f"📅 Analysing **{len(runs)}** completed runs from "
-        f"**{_ts_to_date(earliest)}** to **{_ts_to_date(latest)}** "
-        f"(threshold: ≥ {min_exec} executions per case)."
-    )
+    counts  = stab["classification"].value_counts().to_dict()
+    n_bad   = counts.get("Always fail", 0)
+    n_flaky = counts.get("Flaky", 0)
+    n_pass  = counts.get("Always pass", 0)
+    n_thin  = counts.get("Insufficient data", 0)
+    judged  = n_bad + n_flaky + n_pass
 
-    # Summary chips: counts per classification
-    counts = stab["classification"].value_counts().to_dict()
-    chips = st.columns(len(_CLASS_ORDER))
-    for col, cls in zip(chips, _CLASS_ORDER):
-        col.metric(f"{_CLASS_EMOJI[cls]} {cls}", f"{counts.get(cls, 0):,}")
+    # ── Verdict line: the one sentence a reader needs ────────────────────────
+    # This used to be four metric cards restating the same counts the filter
+    # below already carried — the counts now live on the filter pills, and the
+    # space goes to the answer instead.
+    ts_for_sort = [int(r.get("completed_on") or r.get("created_on") or 0) for r in runs]
+    span = (f"{_ts_to_date(min(ts_for_sort))} → {_ts_to_date(max(ts_for_sort))}"
+            if ts_for_sort else "")
+    if not judged:
+        verdict, colour = "No case ran often enough to be judged", COLORS["muted"]
+    elif n_bad or n_flaky:
+        verdict = (f"<b>{n_bad + n_flaky}</b> of {judged} judged cases need attention "
+                   f"— {n_bad} always failing, {n_flaky} flaky")
+        colour  = COLORS["danger"] if n_bad else COLORS["warning"]
+    else:
+        verdict = f"All <b>{judged}</b> judged cases passed every time"
+        colour  = COLORS["success"]
+    st.markdown(
+        f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;"
+        f"margin:2px 0 10px'>"
+        f"<span style='font-size:15px;color:{colour};font-weight:600'>{verdict}</span>"
+        f"<span style='font-size:12px;color:{COLORS['muted']}'>"
+        f"{len(runs)} completed runs · {span}</span></div>",
+        unsafe_allow_html=True,
+    )
+    if n_thin and n_thin >= judged:
+        st.caption(
+            f"⚠️ {n_thin:,} cases ran fewer than {min_exec} times in these "
+            f"{len(runs)} runs, so they carry no verdict — lower **Min "
+            f"executions** or analyse more runs to bring them in."
+        )
 
     # Optional drill: show which runs are in the analysis, newest first.
     with st.expander(f"📋 Analysed runs ({len(runs)})", expanded=False):
@@ -797,21 +803,27 @@ def render_stability(bu: str, project_ids: set[int]) -> None:
         } for r in ordered_runs])
         st.dataframe(rdf, width="stretch", hide_index=True)
 
-    # Filter by classification (default: hide always-pass to surface the noise)
-    pick = st.multiselect(
-        "Show classifications",
-        _CLASS_ORDER,
-        default=["Always fail", "Flaky"],
-        key=f"stab_filter_{bu}",
-    )
+    # The filter pills carry their own counts, so they replace BOTH the four
+    # metric cards and the multiselect that used to duplicate them.  The default
+    # is the problems — but only when problems exist, so a healthy BU opens on
+    # its passing cases instead of on an empty "no cases match" box.
+    default = ([c for c in ("Always fail", "Flaky") if counts.get(c)]
+               or [c for c in _CLASS_ORDER if counts.get(c)][:1])
+    pick = st.segmented_control(
+        "Show classifications", _CLASS_ORDER, selection_mode="multi",
+        default=default, key=f"stab_class_seg_{bu}", label_visibility="collapsed",
+        format_func=lambda c: f"{_CLASS_EMOJI[c]} {c} ({counts.get(c, 0):,})",
+    ) or []
     if not pick:
-        st.caption("Select at least one classification to see the table.")
+        st.caption("Pick a classification above to list its cases.")
         return
 
     sub = stab[stab["classification"].isin(pick)].copy()
     if sub.empty:
-        st.info("No cases match the selected classifications.")
+        st.success("Nothing in this classification for the runs analysed.")
         return
+    # Worst first: the reader is here to find what to fix.
+    sub = sub.sort_values(["failure_rate", "executions"], ascending=[False, False])
 
     # Make the ID a direct link to the case in TestRail (opens that exact test).
     base_url = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")

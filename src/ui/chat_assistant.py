@@ -367,30 +367,18 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
         for scope_key in ("website", "next_gen"):
             exp = expanded_by_bu.get((canonical, scope_key))
             if exp is not None and not exp.empty:
-                regr_total = int(exp["case_id"].nunique())
-                regr_auto  = int(exp.loc[exp["category"] == "automated",
-                                         "case_id"].nunique())
-                regression = {
-                    "total_cases":      regr_total,
-                    "automated_unique": regr_auto,
-                    "coverage_pct":     round((regr_auto / regr_total * 100)
-                                              if regr_total else 0.0, 1),
-                }
+                # ROWS, like every tab and the KPI strip.  This used to
+                # divide unique CASES, so Dexter quoted a percentage no screen
+                # showed (91.9% where the dashboard said 95.2%).
+                regression = _regression_stats(exp)
                 break
     except Exception:                                                   # noqa: BLE001
         logger.exception("get_bu_coverage: backlog lookup failed for %s", canonical)
     if not regression:
-        nd_base, _ab_base, ids_base = coverage_tab._regression_baseline_like_backlog(
+        _nd, _ab, _ids, exp_base = coverage_tab._regression_baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
-        if not nd_base.empty:
-            regr_total = int(nd_base["case_id"].nunique())
-            regr_auto  = int(nd_base["case_id"].isin(ids_base).sum())
-            regression = {
-                "total_cases":      regr_total,
-                "automated_unique": regr_auto,
-                "coverage_pct":     round((regr_auto / regr_total * 100)
-                                          if regr_total else 0.0, 1),
-            }
+        if not exp_base.empty:
+            regression = _regression_stats(exp_base)
 
     nd_ps, ab_ps, ids_ps = coverage_tab._filter_to_prod_sanity(non_dep, auto_bu)
     prod_sanity: dict[str, Any] = {}
@@ -415,6 +403,25 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
         "production_sanity":                 prod_sanity,
     }
 
+
+
+def _regression_stats(expanded) -> dict:
+    """Regression figures from a classified baseline frame — ROW basis.
+
+    The single place Dexter turns baseline rows into numbers, so its answers can
+    never drift from the Backlog / Coverage tabs or the KPI strip.  Locked by
+    tests/test_business_rules.py::TestDexterAgreesWithDashboard.
+    """
+    rows = int(len(expanded))
+    auto = int((expanded["category"] == "automated").sum())
+    return {
+        "total_rows":       rows,
+        "automated_rows":   auto,
+        "total_cases":      int(expanded["case_id"].nunique()),
+        "automated_unique": int(expanded.loc[expanded["category"] == "automated",
+                                             "case_id"].nunique()),
+        "coverage_pct":     round((auto / rows * 100) if rows else 0.0, 1),
+    }
 
 
 def _scopes_for(scope: str) -> tuple[str, ...]:
@@ -655,8 +662,8 @@ def _build_coverage_brief() -> str:
             lines.append(
                 f"- No-Regression baseline (regression suite): "
                 f"{int(bk['Automated']):,} automated of {int(bk['Total']):,} rows "
-                f"({float(bk['Cov. %']):.1f}%) — Backlog {int(bk['Backlog']):,}, "
-                f"To-update {int(bk['To update']):,}, N/A {int(bk['N/A']):,} "
+                f"({float(bk['Coverage %']):.1f}%) — Backlog {int(bk['Backlog']):,}, "
+                f"To-update {int(bk['To Update']):,}, N/A {int(bk['Not Applicable']):,} "
                 f"· Java {int(bk['Java']):,} / Testim {int(bk['TestIM']):,}"
             )
         else:
@@ -664,12 +671,12 @@ def _build_coverage_brief() -> str:
             if rb:
                 lines.append(
                     f"- No-Regression baseline: {rb['coverage_pct']}% "
-                    f"({rb['automated_unique']:,}/{rb['total_cases']:,})"
+                    f"({rb['automated_rows']:,} automated of {rb['total_rows']:,} rows)"
                 )
         lines.append(
-            f"- Overall coverage (whole case universe — secondary): "
-            f"{d['coverage_pct']}% ({d['automated_unique']:,} automated of "
-            f"{d['total_cases']:,} cases)"
+            f"- Automated share of the WHOLE case universe (case basis — do NOT "
+            f"call this 'coverage'): {d['coverage_pct']}% "
+            f"({d['automated_unique']:,} automated of {d['total_cases']:,} cases)"
         )
         ps = d.get("production_sanity") or {}
         if ps:
