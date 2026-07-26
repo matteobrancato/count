@@ -85,8 +85,11 @@ def _detect_container_chain(
         if top_n / len(first) < dominance:
             break
         chain.append(str(top))
+        # `top=top` binds the loop variable at definition time — without it the
+        # lambda would close over the *latest* `top` if evaluation were ever
+        # deferred (it isn't today, but this keeps it correct by construction).
         current = current.map(
-            lambda p: p[1:] if (p and p[0] == top) else None
+            lambda p, top=top: p[1:] if (p and p[0] == top) else None
         ).dropna()
         if current.empty:
             break
@@ -448,7 +451,6 @@ def _render_coverage_section(
     auto_bu: pd.DataFrame,
     auto_ids: set[int],
     *,
-    key_prefix: str,
     scope: str,
     depth_offset: int = 0,
     show_tool_facet: bool = True,
@@ -456,9 +458,10 @@ def _render_coverage_section(
 ) -> None:
     """Render the full coverage block (metrics + table + charts) for a subset.
 
-    Pulled out of `_coverage_for` so the regression-baseline view can reuse the
-    exact same layout without duplicating code.  *key_prefix* must be unique
-    per call so Streamlit widgets don't collide.
+    Pulled out of `_coverage_for` so all three views (Total / baseline / prod
+    sanity) share one layout — only the input subset changes.  The function
+    renders no widgets of its own (the view radio and granularity slider live in
+    `_coverage_for`), so it needs no per-call widget key.
 
     *show_target* adds a vs-target delta inside the Coverage metric — enabled
     only on the regression-baseline view, where the 80% target applies ("coverage"
@@ -676,7 +679,6 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     if view == _VIEW_TOTAL:
         _render_coverage_section(
             non_dep, auto_bu, auto_ids,
-            key_prefix=f"cov_total_{scope}_{bu_choice}",
             scope=scope, depth_offset=depth_offset, show_tool_facet=True,
         )
     elif view == _VIEW_REGR:
@@ -691,7 +693,6 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         else:
             _render_coverage_section(
                 nd_base, ab_base, ids_base,
-                key_prefix=f"cov_regr_{scope}_{bu_choice}",
                 scope=scope, depth_offset=depth_offset, show_tool_facet=True,
                 show_target=True,        # the 80% target is defined on the baseline
             )
@@ -706,7 +707,6 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         else:
             _render_coverage_section(
                 nd_ps, ab_ps, ids_ps,
-                key_prefix=f"cov_ps_{scope}_{bu_choice}",
                 scope=scope, depth_offset=depth_offset, show_tool_facet=True,
             )
 

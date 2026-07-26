@@ -678,10 +678,13 @@ def warmup_cache(on_step=None, on_label=None) -> None:
             _t_exp = _time.time()
             _scope_lbl = _pretty.get(scope, scope)
 
-            def _exp_progress(done: int, total: int, _name: str) -> None:
+            # Loop variables bound as defaults: the hook is invoked within this
+            # iteration today, but binding keeps it correct if that ever changes.
+            def _exp_progress(done: int, total: int, _name: str,
+                              lbl: str = _scope_lbl, t0: float = _t_exp) -> None:
                 if on_label:
-                    on_label(f"⚡ Loading dashboard data… · 🧮 {_scope_lbl} "
-                             f"rule {done}/{total} · {int(_time.time() - _t_exp)}s")
+                    on_label(f"⚡ Loading dashboard data… · 🧮 {lbl} "
+                             f"rule {done}/{total} · {int(_time.time() - t0)}s")
 
             _PROGRESS_HOOK = _exp_progress
             try:

@@ -150,6 +150,13 @@ def _freshness_label() -> None:
                 _kpis.clear()
             except Exception:
                 pass
+            try:
+                from src.ui.data_quality import _scan
+                from src.ui.report_tab import _load as _report_load
+                _report_load.clear()
+                _scan.clear()
+            except Exception:
+                pass
             _numbers_fetched_at.clear()
             tr._WARMED_AT = 0.0                       # re-run the parallel pre-warm
             st.session_state["_warmed_ui"] = False    # show the verbose status
@@ -172,6 +179,28 @@ def _creds_ok() -> bool:
             language="toml",
         )
         return False
+
+
+def _render_tab(tab, render_fn, label: str, anim_key: str = "") -> None:
+    """Render one tab in ISOLATION.
+
+    All tabs execute in the same script run, so a single shared try/except meant
+    one failing tab aborted every tab after it (five blank tabs from one error).
+    Here each tab catches its own failure and shows it in place, leaving the
+    rest of the dashboard fully usable.
+    """
+    with tab:
+        try:
+            if anim_key:
+                with st.container(key=anim_key):
+                    render_fn()
+            else:
+                render_fn()
+        except Exception as exc:  # noqa: BLE001 — isolate, never cascade
+            traceback.print_exc()
+            st.error(f"⚠️ {label} could not be rendered: {exc}")
+            with st.expander("Technical details"):
+                st.code(traceback.format_exc())
 
 
 # -------------------------------------------------------------------- main
@@ -285,32 +314,30 @@ def main() -> None:
 
             # `*_anim` containers opt each tab into the scroll-reveal animation
             # (styles.py) — Coverage wraps itself internally.
-            with st.container(key="backlog_anim"):
-                backlog_tab.render()
-        with tab_coverage:
-            coverage_tab.render()
-        with tab_explore:
-            with st.container(key="explorer_anim"):
-                pivot_tab.render()
-        with tab_overview:
-            with st.container(key="overview_anim"):
-                overview_tab.render()
-        with tab_report:
-            with st.container(key="report_anim"):
-                report_tab.render()
-        # Runs is rendered LAST on purpose (its position in the tab bar is
-        # unchanged — content binds to its tab regardless of execution order):
-        # on the first visit of a BU it fires 30-50s of TestRail calls (plan
-        # details, failed results, stability tests), and executing it last
-        # means every other tab is ready in seconds instead of queueing
-        # behind it.
-        with tab_runs:
-            with st.container(key="runs_anim"):
-                runs_tab.render()
+            try:
+                with st.container(key="backlog_anim"):
+                    backlog_tab.render()
+            except Exception as exc:  # noqa: BLE001 — isolate, never cascade
+                traceback.print_exc()
+                st.error(f"⚠️ Backlog could not be rendered: {exc}")
+                with st.expander("Technical details"):
+                    st.code(traceback.format_exc())
     except Exception as exc:  # global safety net — never crash the whole app
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
+
+    # Each remaining tab renders in isolation (see `_render_tab`).
+    _render_tab(tab_coverage, coverage_tab.render, "Coverage")
+    _render_tab(tab_explore,  pivot_tab.render,    "Explorer", "explorer_anim")
+    _render_tab(tab_overview, overview_tab.render, "Overview", "overview_anim")
+    _render_tab(tab_report,   report_tab.render,   "Report",   "report_anim")
+    # Runs is rendered LAST on purpose (its position in the tab bar is
+    # unchanged — content binds to its tab regardless of execution order):
+    # on the first visit of a BU it fires 30-50s of TestRail calls (plan
+    # details, failed results, stability tests), and executing it last
+    # means every other tab is ready in seconds instead of queueing behind it.
+    _render_tab(tab_runs,     runs_tab.render,     "Runs",     "runs_anim")
 
     # Dexter's snapshot builds OFF the critical path: everything above has
     # already rendered; this line only costs time when its cache is cold

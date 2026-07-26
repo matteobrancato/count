@@ -1139,7 +1139,12 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
         return
     names = [v["name"] for v in versions]
     chosen = c2.selectbox("Fix version", names, key=f"rr_version_{project_key}")
-    ver = next(v for v in versions if v["name"] == chosen)
+    # Default guard: if the cached version list refreshed between the widget
+    # state and this run, `chosen` may no longer exist — fall back instead of
+    # raising StopIteration (which would blank the whole tab).
+    ver = next((v for v in versions if v["name"] == chosen), None)
+    if ver is None:
+        return
 
     base_jql  = f'project = "{project_key}" AND fixVersion = "{chosen}"'
     n_total   = jc.count_issues(base_jql)

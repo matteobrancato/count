@@ -64,8 +64,9 @@ def _scan() -> dict[str, pd.DataFrame]:
             sub = raw[raw["suite_id"] == sid]
             if sub.empty:
                 continue
+            # `toks=all_toks` binds the loop variable at definition time.
             unmatched = sub[~sub["multi_countries"].apply(
-                lambda mc: bool(_tokens(mc) & all_toks))]
+                lambda mc, toks=all_toks: bool(_tokens(mc) & toks))]
             bus_lbl = " / ".join(sorted(suite_bus.get(sid, set())))
             # to_dict("records") instead of iterrows: shared suites can have
             # thousands of unmatched rows, and iterrows is ~100× slower.
