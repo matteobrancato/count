@@ -5,6 +5,7 @@ import time
 import traceback
 import streamlit as st
 from src import testrail_client as tr
+from src.methodology import METHODOLOGY_MD
 from src.ui import (
     backlog_tab, chat_assistant, coverage_tab, global_filter, kpi_strip,
     overview_tab, pivot_tab, report_tab, runs_tab, styles,
@@ -244,6 +245,12 @@ def main() -> None:
     # Global scope + BU selector — the single control bar every tab reads from
     # (detail views follow it; all-BU overviews intentionally ignore the BU).
     global_filter.render()
+
+    # Methodology, one click away from every tab.  Same text Dexter uses (see
+    # src/methodology.py) so the explanation can never drift from the answer —
+    # people trust numbers they can check.
+    with st.expander("ℹ️ How these numbers are calculated"):
+        st.markdown(METHODOLOGY_MD)
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.

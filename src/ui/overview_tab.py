@@ -6,6 +6,7 @@ import streamlit as st
 from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
+from . import global_filter
 from .styles import COLORS
 
 
@@ -110,22 +111,33 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
 @st.fragment
 def render() -> None:
     # Section title removed (redundant with the "Overview" tab label).
+    # Scope comes from the GLOBAL control bar, like every other tab.
+    scope, _bu = global_filter.current()
+    scope_lbl  = global_filter.scope_label(scope)
     st.caption(
-        "Scope-wide automated counts (Smoke · Regression · Production Sanity). "
-        "For coverage broken down by area, see the **📐 Coverage** tab."
+        f"Automated counts for **{scope_lbl}** (Smoke · All automated · "
+        f"Production Sanity). For coverage broken down by area, see the "
+        f"**📐 Coverage** tab."
     )
 
-    # Build the combined automated frame for the 3 cards (Website scope only — smoke /
-    # regression / sanity metrics are about website automation per the PDF).
-    website_rules = [r for r in ALL_RULES if r.scope == "website"]
-    result = evaluate_rules(tuple(r.name for r in website_rules))
+    rules = [r for r in ALL_RULES if r.scope == scope]
+    if not rules:
+        st.info(f"No rules defined for {scope_lbl}.")
+        return
+    with st.spinner("📱 Loading Mobile App data — first load can take ~30-60s, "
+                    "then it's cached…" if scope == "mobile_app" else "Loading…"):
+        result = evaluate_rules(tuple(r.name for r in rules))
     automated_all = result.automated
+    if automated_all.empty:
+        st.info(f"No automated cases for {scope_lbl} yet.")
+        return
 
     left, right = st.columns([1, 3], gap="large")
     with left:
         st.markdown("##### BU filter")
-        tree = _bu_country_map("website")
-        selection = _bu_country_picker(tree, key_prefix="ov")
+        tree = _bu_country_map(scope)
+        # Key is per-scope so switching scope never carries a stale selection.
+        selection = _bu_country_picker(tree, key_prefix=f"ov_{scope}")
 
     automated = _apply_selection(automated_all, selection)
 
@@ -135,13 +147,16 @@ def render() -> None:
         sanity = metrics.select_prod_sanity(automated)
         c1, c2, c3 = st.columns(3)
         with c1:
-            _metric_card("Smoke (Highest automated)", smoke, COLORS["warning"])
+            _metric_card(
+                "Smoke (Highest priority)", smoke, COLORS["warning"],
+                tooltip="Automated cases whose Priority is Highest.",
+            )
         with c2:
             _metric_card(
-                "No-Regression (All automated)", regr, COLORS["brand"],
-                tooltip=("ALL automated cases (deduped) — NOT the big_regr "
-                         "regression baseline. For the baseline figures see "
-                         "the Backlog tab."),
+                "All automated cases", regr, COLORS["brand"],
+                tooltip=("Every automated case (deduplicated) in this scope — "
+                         "NOT the regression baseline. For the baseline figures "
+                         "see the Backlog tab."),
             )
         with c3:
             _metric_card("Production Sanity", sanity, COLORS["success"])

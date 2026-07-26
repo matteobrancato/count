@@ -249,6 +249,17 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 .kpi-chip b {{ color: {c['ink']}; font-weight: 750; }}
 .kpi-chip .kpi-sub {{ color: {c['muted']}; font-size: 11px; }}
+/* Trailing note clarifying that the strip ignores the scope/BU filter. */
+.kpi-scope-note {{
+    margin-left: auto;
+    padding-left: 12px;
+    border-left: 1px solid {c['border']};
+    color: {c['faint']};
+    font-size: 11px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    cursor: help;
+}}
 /* Skeleton placeholder — reserves the strip's space during the first load so
    the page doesn't shift when the real chips arrive. */
 .kpi-skeleton {{

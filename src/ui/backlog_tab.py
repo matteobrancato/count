@@ -30,7 +30,14 @@ Counts
   Expanded  = one row per (case_id × country_label × device) — shown as main number
   Unique    = distinct case_id values within each category — shown in small text below
 
-Scope: website + microservices (next_gen). Mobile App excluded for now.
+Scopes
+──────
+  website / next_gen : the big_regr label baseline described above.
+  mobile_app         : a PRIORITY-based baseline (High/Highest) with the mobile
+                       OS as device — see `_expand_mapp_baseline`.  It is served
+                       by its own `_mapp_backlog_data()` so the website /
+                       microservices numbers (KPI strip, Report, Dexter) are
+                       never affected by it.
 """
 from __future__ import annotations
 
@@ -51,11 +58,8 @@ from .styles import COLORS, COVERAGE_TARGET, coverage_health
 
 # ── constants ─────────────────────────────────────────────────────────────────
 # Baseline labels (website regression: desktop / mobile BROWSER view).
-# Mobile App has NO baseline label in TestRail yet (confirmed Jul 2026) — when
-# one is defined, wire it here: add the label constant, include "mobile_app" in
-# the scopes loaded by `_backlog_data`, and extend `_expand_baseline` with the
-# MAPP device/status/country mapping.  Until then the tab shows an explicit
-# notice when the Mobile App scope is selected.
+# Mobile App deliberately does NOT use these: it has no big_regr label, so its
+# baseline is priority-based (see `_MAPP_PRIORITIES` / `_expand_mapp_baseline`).
 _LABEL_DESKTOP = "big_regr_desktop"
 _LABEL_MOBILE  = "big_regr_mobile"
 
@@ -406,11 +410,18 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     automatable = n_auto + n_back + n_tbu
     scoped      = n_auto + n_back + n_tbu + n_na
 
+    # Mobile-App breakdown: MAPP has no Java/Testim — its meaningful split is the
+    # OS, which the baseline rows already carry as the device.
+    autos    = expanded[expanded["category"] == "automated"]
+    n_ios     = int((autos["device"] == "iOS").sum())
+    n_android = int((autos["device"] == "Android").sum())
+
     return {
         "total":           total,    "u_total":   u_total,
         "automated":       n_auto,   "u_auto":    u_auto,
         "java":            n_java,   "u_java":    u_java,
         "testim":          n_testim, "u_testim":  u_testim,
+        "ios":             n_ios,    "android":   n_android,
         "backlog":         n_back,   "u_back":    u_back,
         "to_be_updated":   n_tbu,    "u_tbu":     u_tbu,
         "not_applicable":  n_na,     "u_na":      u_na,
@@ -467,13 +478,18 @@ def _build_summary(
             else pd.DataFrame(columns=_AUTO_SLIM_COLS)
         )
         s = _stats(expanded, auto)
+        # Framework columns are scope-specific: Java/Testim are website concepts,
+        # so for Mobile App we show the OS split instead of two always-zero
+        # columns (a column that always reads 0 is a label that lies).
+        breakdown = ({"iOS": s["ios"], "Android": s["android"]}
+                     if scope == "mobile_app"
+                     else {"Java": s["java"], "TestIM": s["testim"]})
         rows.append({
             "BU":        bu,
             "Scope":     _SCOPE_DISPLAY.get(scope, "Website"),
             "Total":     s["total"],
             "Automated": s["automated"],
-            "Java":      s["java"],
-            "TestIM":    s["testim"],
+            **breakdown,
             "Backlog":   s["backlog"],
             "To update": s["to_be_updated"],
             "N/A":       s["not_applicable"],
@@ -779,7 +795,10 @@ def render() -> None:
     # shown only when it occurs, so Total always equals the sum of the columns.
     if "Unknown" in display.columns and int(display["Unknown"].sum()) == 0:
         display = display.drop(columns=["Unknown"])
-    num_cols = [col for col in ["Total", "Automated", "Java", "TestIM", "Backlog",
+    # Column order is scope-aware: Java/TestIM for website & microservices,
+    # iOS/Android for Mobile App (see `_build_summary`).
+    num_cols = [col for col in ["Total", "Automated", "Java", "TestIM",
+                                "iOS", "Android", "Backlog",
                                 "To update", "N/A", "Unknown"]
                 if col in display.columns]
 
@@ -798,6 +817,19 @@ def render() -> None:
     )
     st.markdown(_summary_table_html(display, num_cols), unsafe_allow_html=True)
 
+    # Export — managers forward these numbers into decks and mails, so the table
+    # must be reachable outside the app.  (The presentation table is custom HTML,
+    # which has no built-in download, so we offer the CSV explicitly.)
+    _dl_col, _ = st.columns([1, 4])
+    _dl_col.download_button(
+        "⬇️ Download CSV",
+        display.to_csv(index=False).encode("utf-8"),
+        file_name=f"automation_baseline_{scope}.csv",
+        mime="text/csv",
+        width="stretch",
+        help="The table above, exactly as shown, as a spreadsheet-ready CSV.",
+    )
+
     st.divider()
 
     # ── Detail — follows the GLOBAL scope + BU selector ───────────────────────
@@ -808,8 +840,7 @@ def render() -> None:
     st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
     _detail_view(bu, scope, expanded_by_bu, auto_by_bu)
 
-    # ── TestRail hygiene checklist (website-scope only; zero extra API calls) ──
-    if not is_mapp:
-        st.divider()
-        from . import data_quality
-        data_quality.render()
+    # ── TestRail hygiene checklist (per scope; zero extra API calls) ─────────
+    st.divider()
+    from . import data_quality
+    data_quality.render(scope)

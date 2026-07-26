@@ -17,6 +17,9 @@ their credibility in front of management:
 Everything is derived from the frames the dashboard already caches — the scan
 adds ZERO TestRail calls.  Rendered as an expander at the bottom of the Backlog
 tab with a CSV download for the clean-up work.
+
+Scope-aware: checks 1 & 2 need country tokens, so they only produce findings for
+Website / Microservices; Mobile App (no country dimension) gets checks 3 & 4.
 """
 from __future__ import annotations
 
@@ -40,12 +43,16 @@ def _tokens(mc) -> set[str]:
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def _scan() -> dict[str, pd.DataFrame]:
-    """All checks over the cached website-scope frames.  Raises on failure so
-    st.cache_data never caches an error (retried next rerun)."""
+def _scan(scope: str = "website") -> dict[str, pd.DataFrame]:
+    """All applicable checks for *scope*.  Raises on failure so st.cache_data
+    never caches an error (retried next rerun).
+
+    The country-token checks (1 & 2) only make sense where cases carry country
+    tokens — Mobile App has no country dimension, so for that scope only the
+    suspicious-areas and unknown-rows checks run."""
     from . import backlog_tab as bl
 
-    raw, _auto, rules = bl._load_scope("website")   # raw is already non-deprecated
+    raw, _auto, rules = bl._load_scope(scope)   # raw is already non-deprecated
     out: dict[str, pd.DataFrame] = {}
 
     # Token universe per suite (union across every BU sharing it).
@@ -106,13 +113,14 @@ def _scan() -> dict[str, pd.DataFrame]:
 
     # Unknown rows in the regression baseline.
     unknown_rows = []
-    _summary, expanded_by_bu, _auto_by_bu = bl._backlog_data()
-    for (bu, scope), exp in expanded_by_bu.items():
+    loader = bl._mapp_backlog_data if scope == "mobile_app" else bl._backlog_data
+    _summary, expanded_by_bu, _auto_by_bu = loader()
+    for (bu, bu_scope), exp in expanded_by_bu.items():   # bu_scope: don't shadow `scope`
         unk = exp[exp["category"] == "unknown"] if "category" in exp.columns else exp.iloc[0:0]
         if not unk.empty:
             ids = sorted(unk["case_id"].astype(int).unique())
             unknown_rows.append({
-                "bu":       f"{bu} ({scope})",
+                "bu":       f"{bu} ({bu_scope})",
                 "rows":     int(len(unk)),
                 "cases":    ", ".join(f"C{i}" for i in ids[:15])
                             + (" …" if len(ids) > 15 else ""),
@@ -138,10 +146,10 @@ _CHECKS = [
 ]
 
 
-def render() -> None:
+def render(scope: str = "website") -> None:
     """The '🧹 Data quality' expander — call at the bottom of the Backlog tab."""
     try:
-        data = _scan()
+        data = _scan(scope)
     except Exception:                                                   # noqa: BLE001
         logger.exception("Data-quality scan failed")
         return

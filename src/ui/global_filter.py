@@ -44,8 +44,48 @@ def bus_for_scope(scope: str) -> list[str]:
     return ordered + sorted(b for b in bus if b not in ordered)
 
 
+def _seed_from_url() -> None:
+    """On the FIRST render of a session, adopt ?scope=&bu= from the URL.
+
+    This is what makes a link shareable: a colleague opening
+    `…/?scope=website&bu=Drogas` lands on exactly that view.  Runs once per
+    session (guarded), so it can never fight the user's own clicks afterwards.
+    Unknown values are ignored rather than erroring.
+    """
+    if st.session_state.get("_url_seeded"):
+        return
+    st.session_state["_url_seeded"] = True
+    try:
+        params = st.query_params
+        scope = params.get("scope")
+        if scope in _SCOPE_LABELS and scope in scopes_available():
+            st.session_state["global_scope"] = _SCOPE_LABELS[scope]
+        else:
+            scope = None
+        bu = params.get("bu")
+        target = scope or current()[0]
+        if bu and bu in bus_for_scope(target):
+            st.session_state[f"global_bu_{target}"] = bu
+    except Exception:                                                   # noqa: BLE001
+        pass                      # a malformed URL must never block the app
+
+
+def _publish_to_url(scope: str, bu: str) -> None:
+    """Keep ?scope=&bu= in sync with the current selection, so the address bar
+    is always a link to what the user is looking at (copy-paste and send)."""
+    try:
+        params = st.query_params
+        if params.get("scope") != scope or params.get("bu") != bu:
+            params["scope"] = scope
+            if bu:
+                params["bu"] = bu
+    except Exception:                                                   # noqa: BLE001
+        pass
+
+
 def render() -> tuple[str, str]:
     """Render the global control bar; returns (scope, bu)."""
+    _seed_from_url()
     scopes = scopes_available()
     labels = [_SCOPE_LABELS[s] for s in scopes]
     with st.container(key="global_filter"):
@@ -61,7 +101,9 @@ def render() -> tuple[str, str]:
                          key=f"global_bu_{scope}", label_visibility="collapsed")
         else:
             c2.caption("No Business Units in this scope.")
-    return current()
+    scope, bu = current()
+    _publish_to_url(scope, bu)
+    return scope, bu
 
 
 def current() -> tuple[str, str]:

@@ -53,6 +53,7 @@ import streamlit as st
 
 from .. import testrail_client as tr
 from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
+from ..methodology import METHODOLOGY_FOR_LLM
 from ..rules_engine import evaluate_rules
 from . import coverage_tab, runs_tab
 from .styles import COLORS
@@ -135,7 +136,7 @@ def _parse_retry_delay(err_str: str, default: float = 60.0) -> float:
     m = _RETRY_DELAY_RE.search(err_str)
     return float(m.group(1)) if m else default
 
-_SYSTEM_INSTRUCTION = """
+_SYSTEM_INSTRUCTION_TEMPLATE = """
 You are Dexter, the automation-coverage assistant for AS Watson's testing
 platform.  You help managers and QA leads understand the state of test
 automation across Business Units (BUs), and you can hold a real conversation
@@ -180,28 +181,7 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
     app / MAPP; the default covers website + Microservices.
 
 # HOW THE METRICS ARE CALCULATED  (use this to answer "how / why / what does X mean")
-- Data is pulled from TestRail; DEPRECATED cases are ALWAYS excluded.
-- Coverage % = UNIQUE automated cases ÷ total non-deprecated cases (per case).
-- "Automated rows (D+M)": a case can be automated on Desktop AND Mobile, counted
-  as two separate rows — so the row count is larger than the unique-case count.
-  Coverage % always uses UNIQUE cases, never rows.
-- Countries: each BU runs in several countries; a case is attributed to a BU by
-  the country tokens in its `multi_countries` field.  Suites shared between BUs
-  (e.g. Eastern Europe) are split per country.
-- No-Regression baseline = cases labelled `big_regr_desktop` / `big_regr_mobile`
-  (the regression suite — the Backlog tab's scope).  Device comes from the label.
-  Each (case × country × device) row in it is classified as one of:
-    · Automated     — status Automated / Automated DEV / UAT / Prod
-    · To be updated — status "To be updated" (was automated, needs maintenance)
-    · N/A           — status "Automation not applicable"
-    · Backlog       — any OTHER non-automated status (Not automated, In progress,
-                      Ready to be automated, Blocked, Assigned to Testim)
-  "Coverage vs total" = Automated ÷ all rows; "Coverage vs automatable" excludes
-  N/A.  A BU's Backlog is considered healthy while it stays under 3% of the total.
-- Production Sanity = tests executed only in production.
-- Frameworks: Testim (Desktop/Mobile) and Java.  A case can be covered by both,
-  so Java% + Testim% may sum to more than 100%.
-
+{METHODOLOGY}
 Rules
 ─────
 1. NEVER invent or estimate a number.  Use the snapshot or a tool — nothing else.
@@ -226,6 +206,12 @@ Answer shape (example for "how is X doing")
   • No-Regression baseline: 92% (X/Y) · Production Sanity: 64% (X/Y)
   • Weakest area: <area> at 11%
 """
+
+# Methodology comes from the shared module so the assistant explains the
+# metrics exactly the way the in-app glossary does (one source of truth).
+_SYSTEM_INSTRUCTION = _SYSTEM_INSTRUCTION_TEMPLATE.replace(
+    "{METHODOLOGY}", METHODOLOGY_FOR_LLM)
+
 
 # ── BU resolution ────────────────────────────────────────────────────────────
 def _safe_tool(fn):

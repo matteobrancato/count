@@ -593,12 +593,17 @@ def _render_coverage_section(
             st.caption("No `Automation Tool` values populated on matching cases.")
 
 
-# ── the three coverage subsets, selected by one radio (default: No-Regression) ─
+# ── the three coverage subsets, selected by one radio (default: the baseline) ─
+# "No-Regression" is the internal name of the WEBSITE regression baseline, so it
+# is kept for website/microservices; Mobile App's baseline is priority-based and
+# has nothing to do with regression, hence the neutral label there.
 _VIEW_TOTAL = "🌐 Total"
 _VIEW_REGR  = "📋 No-Regression"
+_VIEW_REGR_MAPP = "📋 Baseline"
 _VIEW_PS    = "🚀 Production Sanity"
 _VIEW_OPTIONS = [_VIEW_TOTAL, _VIEW_REGR, _VIEW_PS]
-_VIEW_DEFAULT_INDEX = 1                                  # No-Regression
+_VIEW_OPTIONS_MAPP = [_VIEW_TOTAL, _VIEW_REGR_MAPP, _VIEW_PS]
+_VIEW_DEFAULT_INDEX = 1                                  # the baseline view
 
 _VIEW_DESC = {
     _VIEW_TOTAL: "Coverage over the **full universe** of non-deprecated cases "
@@ -651,10 +656,12 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     # metrics sit high on the page.  The slider is per-(scope, BU) so it persists
     # when switching views.  The shared-suite exclusion note rides along the
     # per-view description caption below (kept compact).
+    is_mapp = scope == "mobile_app"
+    options = _VIEW_OPTIONS_MAPP if is_mapp else _VIEW_OPTIONS
     c_radio, c_gran = st.columns([3, 2], vertical_alignment="center")
     with c_radio:
         view = st.radio(
-            "Coverage view", _VIEW_OPTIONS, index=_VIEW_DEFAULT_INDEX,
+            "Coverage view", options, index=_VIEW_DEFAULT_INDEX,
             horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
             label_visibility="collapsed",
         )
@@ -668,12 +675,14 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         )
     note = (f"  ·  ℹ️ {n_other_bu:,} cases excluded (other BUs on this shared suite)"
             if n_other_bu else "")
-    desc = _VIEW_DESC[view]
-    if scope == "mobile_app" and view == _VIEW_REGR:
+    is_baseline_view = view in (_VIEW_REGR, _VIEW_REGR_MAPP)
+    if is_mapp and is_baseline_view:
         # MAPP has no big_regr label — its baseline is priority-based.
         desc = ("Restricted to the **Mobile App baseline** — cases with Priority "
                 "High / Highest (device = iOS / Android), exactly like the "
                 "Backlog tab for Mobile App.")
+    else:
+        desc = _VIEW_DESC[view]
     st.caption(desc + note)
 
     if view == _VIEW_TOTAL:
@@ -681,7 +690,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             non_dep, auto_bu, auto_ids,
             scope=scope, depth_offset=depth_offset, show_tool_facet=True,
         )
-    elif view == _VIEW_REGR:
+    elif is_baseline_view:
         nd_base, ab_base, ids_base = _regression_baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
         if nd_base.empty:

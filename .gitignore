@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+
+# Secrets — NEVER commit these (they live in the Streamlit Cloud secrets panel)
+.streamlit/secrets.toml
+*.env
+
+# OS noise
+.DS_Store

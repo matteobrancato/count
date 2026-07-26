@@ -1,0 +1,9 @@
+# Development-only tooling — deliberately NOT in requirements.txt so it never
+# ships to Streamlit Cloud (smaller, faster deploys and no extra attack surface).
+#
+#   pip install -r requirements-dev.txt
+#   pytest        # regression suite  (tests/)
+#   ruff check .  # lint
+-r requirements.txt
+pytest==9.1.1
+ruff

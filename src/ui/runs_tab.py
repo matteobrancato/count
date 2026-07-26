@@ -871,7 +871,9 @@ def _parse_case_id(text: str) -> int | None:
     m = re.search(r"/cases/view/(\d+)", text)
     if m:
         return int(m.group(1))
-    m = re.search(r"\bC?0*(\d+)\b", text.strip())
+    # IGNORECASE: users type "c3500712" as often as "C3500712"; without it the
+    # lowercase form was rejected with "Couldn't read a case ID".
+    m = re.search(r"\bc?0*(\d+)\b", text.strip(), re.IGNORECASE)
     return int(m.group(1)) if m else None
 
 
