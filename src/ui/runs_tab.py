@@ -32,6 +32,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import quote
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -683,12 +684,29 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
                  column_config=col_cfg)
 
 
+_STAB_RUNS = [5, 10, 25, 50, 100]
+# Ladder the "Min executions" pills are drawn from — always trimmed to the
+# number of runs being analysed, so the control can never ask for more
+# executions than there are runs.
+_STAB_MIN_LADDER = [1, 2, 3, 5, 10, 25, 50, 75, 100]
 _STAB_RUNS_HELP = ("How many of the most recent completed runs to walk. More runs "
-                   "= a longer history, but a slower first load.")
+                   "= a longer history, but a slower first load (each run is a "
+                   "separate TestRail fetch).")
 _STAB_MIN_HELP  = ("A case needs at least this many pass / fail / retest results "
                    "before it gets a real verdict; below it, it is filed under "
                    "Insufficient data. Lower values surface more cases but are "
-                   "noisier.")
+                   "noisier. The options adapt to the number of runs analysed.")
+
+
+def _min_exec_options(n_runs: int) -> list[int]:
+    """Executions ladder for *n_runs*, at most six pills, always ending on the
+    full run count so 'every run' is one click away."""
+    opts = [v for v in _STAB_MIN_LADDER if v <= n_runs]
+    if n_runs not in opts:
+        opts.append(n_runs)
+    while len(opts) > 6:
+        opts.pop(1)                      # thin the middle, keep 1 and the top
+    return opts
 
 
 def _stab_control(label: str, options: list[int], default: int, key: str,
@@ -713,19 +731,25 @@ def render_stability(bu: str, project_ids: set[int]) -> None:
     # Two compact pill controls on one line — they used to be a selectbox and a
     # number input stacked with their own labels and floating help icons, which
     # took three lines and read as a form rather than a quick knob.
-    c_runs, c_min, _pad = st.columns([2, 2, 1], vertical_alignment="center")
+    c_runs, c_min = st.columns([2, 3], vertical_alignment="center")
     with c_runs:
-        n_runs = _stab_control("Runs to analyse", [3, 5, 10, 20], 5,
+        n_runs = _stab_control("Runs to analyse", _STAB_RUNS, 5,
                                f"stab_runs_seg_{bu}", _STAB_RUNS_HELP)
     with c_min:
-        min_exec = min(_stab_control("Min executions", [1, 2, 3, 5], 5,
-                                     f"stab_minexec_seg_{bu}", _STAB_MIN_HELP),
-                       int(n_runs))
+        opts = _min_exec_options(int(n_runs))
+        # The key carries n_runs: when the ladder changes, the widget is a new
+        # one, so a value from a longer ladder can never linger out of range.
+        min_exec = _stab_control("Min executions", opts, min(5, int(n_runs)),
+                                 f"stab_minexec_seg_{bu}_{n_runs}", _STAB_MIN_HELP)
 
     try:
+        # Each run is its own TestRail fetch, so the wait scales with the
+        # number analysed — say so instead of always promising 15-45s.
+        _eta = ("15-45s" if n_runs <= 10 else
+                "up to a minute" if n_runs <= 25 else "a few minutes")
         with st.spinner(
             f"Fetching last {n_runs} completed runs + their tests "
-            "(can take 15-45s on cold start)…"
+            f"({_eta} on a cold start, then cached)…"
         ):
             runs = _completed_runs_for_bu(bu, project_ids, limit=int(n_runs))
             if not runs:
@@ -1097,6 +1121,32 @@ def _render_case_header(case: dict, case_id: int, suite_id: int, base_url: str) 
     )
 
 
+def _days_to_release(ver: dict) -> tuple[str, str]:
+    """Human 'time to release' for a Jira version, plus the colour to say it in.
+
+    No history is stored anywhere, so a real burn-down would be invented data —
+    this is the honest, zero-cost version of the same question.
+    """
+    if ver.get("released"):
+        return "already released", COLORS["success"]
+    raw = (ver.get("release_date") or "").strip()
+    if not raw:
+        return "no release date set", COLORS["muted"]
+    try:
+        due = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return raw, COLORS["muted"]
+    # Compare DATES, not instants: a release due today is "due today", not
+    # "1 day overdue" because the clock has already passed midnight.
+    days = (due - datetime.now(timezone.utc).date()).days
+    if days < 0:
+        return f"{abs(days)} day{'s' if abs(days) != 1 else ''} overdue", COLORS["danger"]
+    if days == 0:
+        return "due today", COLORS["danger"]
+    return (f"{days} day{'s' if days != 1 else ''} to release",
+            COLORS["warning"] if days <= 7 else COLORS["muted"])
+
+
 @st.fragment
 def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> None:
     """'Is the release ready?' — TestRail's latest regression run joined with
@@ -1177,6 +1227,26 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
         return
     done_pct = (n_done / n_total * 100) if (n_total and n_done is not None) else 0.0
 
+    # ── Version header: name links straight to the Jira release page ────────
+    jira_base = JIRA_BROWSE_URL.rsplit("/browse/", 1)[0]
+    ver_url = (f"{jira_base}/projects/{project_key}/versions/{ver['id']}"
+               if ver.get("id") else
+               f"{jira_base}/issues/?jql={quote(base_jql)}")
+    days_txt, days_color = _days_to_release(ver)
+    st.markdown(
+        f"<div style='display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;"
+        f"margin:2px 0 6px'>"
+        f"<a href='{ver_url}' target='_blank' style='font-size:16px;font-weight:750;"
+        f"color:{COLORS['brand']};text-decoration:none'>{html.escape(chosen)} ↗</a>"
+        f"<span style='font-size:12.5px;color:{days_color};font-weight:600'>{days_txt}</span>"
+        f"<a href='{jira_base}/issues/?jql={quote(base_jql)}' target='_blank' "
+        f"style='font-size:12px;color:{COLORS['muted']}'>open the full scope in Jira ↗</a>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.progress(min(done_pct / 100, 1.0),
+                text=f"{done_pct:.0f}% done · {n_done or 0:,} of {n_total:,} issues")
+
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Issues in scope", f"{n_total:,}")
     m2.metric("Done", f"{n_done:,}" if n_done is not None else "—",
@@ -1196,6 +1266,41 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
     else:
         st.error(f"🔴 **{chosen} is not ready** — {done_pct:.0f}% done, "
                  f"{n_bugs if n_bugs is not None else '?'} open bugs in scope.")
+
+    # ── What is actually blocking: the open bugs, each one click away ────────
+    # A count alone ends the conversation at "there are 7"; the list turns it
+    # into "these 7, and who has them".
+    if not n_bugs:
+        return
+    bugs = jc.search_issues(
+        base_jql + " AND issuetype = Bug AND statusCategory != Done", limit=50)
+    if not bugs:
+        return
+    st.markdown(f"**🐞 Open bugs in {html.escape(chosen)}**")
+    bdf = pd.DataFrame([{
+        "url":      f"{JIRA_BROWSE_URL}{b['key']}",
+        "Summary":  b["summary"],
+        "Status":   f"{b['glyph']} {b['status']}",
+        "Priority": b["priority"],
+        "Assignee": b["assignee"],
+        "Updated":  b["updated"],
+    } for b in bugs])
+    st.dataframe(
+        bdf, width="stretch", hide_index=True,
+        column_config={
+            "url": st.column_config.LinkColumn(
+                "Bug", width="small", display_text=r"/browse/([A-Z][A-Z0-9_]+-\d+)",
+                help="Open this bug in Jira."),
+            "Summary":  st.column_config.TextColumn("Summary", width="large"),
+            "Status":   st.column_config.TextColumn("Status", width="small"),
+            "Priority": st.column_config.TextColumn("Priority", width="small"),
+            "Assignee": st.column_config.TextColumn("Assignee", width="medium"),
+            "Updated":  st.column_config.TextColumn("Updated", width="small"),
+        },
+    )
+    if n_bugs > len(bugs):
+        st.caption(f"Showing the first {len(bugs)} of {n_bugs:,} — "
+                   f"use the Jira link above for the full list.")
 
 
 @st.fragment

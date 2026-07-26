@@ -165,6 +165,7 @@ def fetch_versions(project_key: str) -> list[dict]:
             return []
         versions = [
             {
+                "id":           str(v.get("id") or ""),
                 "name":         v.get("name", ""),
                 "released":     bool(v.get("released")),
                 "release_date": v.get("releaseDate") or "",
@@ -212,3 +213,60 @@ def count_issues(jql: str) -> int | None:
     except Exception:                                                   # noqa: BLE001
         logger.exception("Jira count failed for %s", jql)
         return None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def search_issues(jql: str, limit: int = 50) -> list[dict]:
+    """Issues matching a JQL, normalised — [] when it can't be resolved.
+
+    Read-only, like the rest of this client.  Bounded by *limit* so a broad
+    query can never pull a whole project into the page.  Tries the current
+    `search/jql` endpoint first, then the legacy `search` one, so it works on
+    both Jira Cloud API generations (same approach as `count_issues`).
+    """
+    conf = _conf()
+    if not conf or not jql.strip():
+        return []
+    base, user, token = conf
+    auth   = HTTPBasicAuth(user, token)
+    fields = "summary,status,priority,assignee,issuetype,updated"
+
+    def _normalise(issues: list[dict]) -> list[dict]:
+        out = []
+        for it in issues:
+            f        = it.get("fields") or {}
+            status   = f.get("status") or {}
+            category = ((status.get("statusCategory") or {}).get("key") or "").lower()
+            out.append({
+                "key":             it.get("key", ""),
+                "summary":         (f.get("summary") or "").strip(),
+                "status":          status.get("name") or "—",
+                "status_category": category,
+                "glyph":           STATUS_GLYPH.get(category, "•"),
+                "priority":        ((f.get("priority") or {}).get("name")) or "—",
+                "assignee":        ((f.get("assignee") or {}).get("displayName")) or "Unassigned",
+                "type":            ((f.get("issuetype") or {}).get("name")) or "—",
+                "updated":         (f.get("updated") or "")[:10],
+            })
+        return out
+
+    try:
+        resp = requests.post(
+            f"{base}/rest/api/3/search/jql",
+            json={"jql": jql, "maxResults": limit, "fields": fields.split(",")},
+            auth=auth, timeout=_TIMEOUT,
+        )
+        if resp.ok:
+            return _normalise(resp.json().get("issues") or [])
+        resp = requests.get(
+            f"{base}/rest/api/3/search",
+            params={"jql": jql, "maxResults": limit, "fields": fields},
+            auth=auth, timeout=_TIMEOUT,
+        )
+        if resp.ok:
+            return _normalise(resp.json().get("issues") or [])
+        logger.warning("Jira search failed (%s): %s", resp.status_code, jql)
+        return []
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("Jira search failed for %s", jql)
+        return []

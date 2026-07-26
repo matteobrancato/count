@@ -8,7 +8,13 @@ from .. import metrics
 from ..bu_rules import ALL_RULES
 from ..rules_engine import evaluate_rules
 from . import global_filter
-from .styles import COLORS, COVERAGE_TARGET, coverage_health, section_title
+from .styles import (
+    COLORS,
+    COVERAGE_TARGET,
+    coverage_health,
+    section_title,
+    stat_card,
+)
 
 
 def _scope_summary(scope: str) -> pd.DataFrame:
@@ -234,40 +240,6 @@ def _build_bu_chart(df_bu: pd.DataFrame) -> alt.LayerChart:
 
 
 # ── UI card helpers ───────────────────────────────────────────────────────────
-def _fw_card(col, icon: str, name: str, subtitle: str, bg: str) -> None:
-    col.markdown(
-        f"""<div style="background:{bg};border:1px solid {COLORS['border']};border-radius:14px;
-                    padding:14px 16px;display:flex;align-items:center;gap:12px;min-height:74px;
-                    box-sizing:border-box;box-shadow:0 1px 2px rgba(15,23,42,0.04)">
-            <span style="font-size:25px;line-height:1;flex:0 0 auto">{icon}</span>
-            <div style="min-width:0">
-                <div style="font-weight:700;font-size:13px;color:{COLORS['ink']};
-                            line-height:1.25">{name}</div>
-                <div style="font-size:11px;color:{COLORS['muted']};margin-top:2px;
-                            line-height:1.3">{subtitle}</div>
-            </div>
-        </div>""",
-        unsafe_allow_html=True,
-    )
-
-
-def _metric_badge(col, value: str, label: str, sub: str = "") -> None:
-    sub_html = (f'<div style="font-size:11px;color:{COLORS["muted"]};margin-top:1px">{sub}</div>'
-                if sub else "")
-    col.markdown(
-        f"""<div style="background:{COLORS['surface']};border:1px solid {COLORS['border']};
-                    border-radius:14px;padding:12px 14px;text-align:center;min-height:74px;
-                    box-sizing:border-box;box-shadow:0 1px 2px rgba(15,23,42,0.04);
-                    display:flex;flex-direction:column;justify-content:center">
-            <div style="font-size:23px;font-weight:800;color:{COLORS['brand']};line-height:1.1">{value}</div>
-            <div style="font-size:11px;font-weight:600;color:{COLORS['ink']};margin-top:2px;
-                        text-transform:uppercase;letter-spacing:0.04em">{label}</div>
-            {sub_html}
-        </div>""",
-        unsafe_allow_html=True,
-    )
-
-
 def _leaderboard_chart(summary: pd.DataFrame) -> alt.LayerChart:
     """Executive glance: one RAG-coloured bar per BU, sorted by regression
     coverage %, with a dashed 80%-target line.  Same numbers as the Backlog tab
@@ -311,24 +283,64 @@ def _leaderboard_chart(summary: pd.DataFrame) -> alt.LayerChart:
 
 
 def _panel_header(bu: str, n_auto: int, cov: float | None) -> None:
-    """Per-BU panel header: name + RAG coverage + automated-case count, so each
-    detail chart carries its own executive summary and magnitude."""
+    """Panel heading, in the same markup as the Coverage tab's chart panels, so
+    a reader moving between the two tabs sees one component, not two."""
+    sub = f"{n_auto:,} automated rows"
     if cov is not None:
-        dot, color = coverage_health(float(cov))
-        sub = (f'<span style="color:{color};font-weight:700">{dot} {float(cov):.1f}%'
-               f'</span><span style="color:{COLORS["muted"]}"> coverage · '
-               f'{n_auto:,} automated cases</span>')
-    else:
-        sub = f'<span style="color:{COLORS["muted"]}">{n_auto:,} automated cases</span>'
+        _dot, colour = coverage_health(cov)
+        sub = (f"<span style='color:{colour};font-weight:700'>{cov:.1f}% Coverage"
+               f"</span> · {sub}")
     st.markdown(
-        f'<div style="margin:10px 0 2px">'
-        f'<span style="font-weight:700;font-size:13.5px;color:{COLORS["ink"]}">{bu}</span>'
-        f'<div style="font-size:11.5px;margin-top:1px">{sub}</div></div>',
+        f'<span class="cov-panel-head" style="height:auto">'
+        f'<span class="cov-panel-title">{bu}</span>'
+        f'<span class="cov-panel-sub">{sub}</span></span>',
+        unsafe_allow_html=True,
+    )
+
+# ── render ────────────────────────────────────────────────────────────────────
+def _backlog_badge_html(backlog: int, total: int) -> str:
+    """The Backlog health pill, reused verbatim from the Backlog tab."""
+    from .backlog_tab import _backlog_badge_html as _impl
+    return _impl(backlog, total)
+
+
+def _framework_line(summary, all_auto, scope: str, a_tot: dict) -> None:
+    """Two muted lines replacing the three static framework cards.
+
+    Those cards described the tooling ("AI-powered test automation platform")
+    and carried no number.  The split matters: Java / TestIM / iOS / Android are
+    BASELINE rows (they reconcile with the cards above), while the smoke suite
+    and the automated total count the WHOLE automated set — mixing the two
+    populations on one line is what makes numbers look wrong.
+    """
+    per_fw: list[str] = []
+    cols = (("iOS", "Android") if scope == "mobile_app"
+            else ("Java", "TestIM") if scope == "website" else ())
+    for col in cols:
+        if col in summary:
+            per_fw.append(f"{col} <b>{int(summary[col].sum()):,}</b>")
+    if per_fw:
+        note = (" — a case can be covered by both, so these can sum to more "
+                "than Automated" if len(per_fw) == 2 and scope == "website" else "")
+        st.markdown(
+            f"<div style='margin:4px 0 0;font-size:12px;color:{COLORS['muted']}'>"
+            f"Baseline by framework: " + " &nbsp;·&nbsp; ".join(per_fw) + note
+            + "</div>", unsafe_allow_html=True)
+
+    try:
+        smoke = int(metrics.totals(metrics.select_smoke(all_auto))["total"])
+    except Exception:                                                   # noqa: BLE001
+        smoke = 0
+    extra = [f"{int(a_tot['total']):,} automated rows in total"]
+    if smoke:
+        extra.append(f"{smoke:,} in the smoke suite (Highest priority)")
+    st.markdown(
+        f"<div style='margin:2px 0 0;font-size:12px;color:{COLORS['faint']}'>"
+        f"Beyond the baseline: " + " &nbsp;·&nbsp; ".join(extra) + "</div>",
         unsafe_allow_html=True,
     )
 
 
-# ── render ────────────────────────────────────────────────────────────────────
 @st.fragment
 def render() -> None:
     # Standard tab opener (subheader + caption) — same pattern as every other tab.
@@ -337,13 +349,9 @@ def render() -> None:
     # / Microservices).  Microservices no longer mixes into the Website view.
     scope, _bu = global_filter.current()
     scope_lbl  = global_filter.scope_label(scope)
-    is_web     = scope == "website"
     is_mapp    = scope == "mobile_app"
 
-    st.caption(
-        f"Automated tests per Business Unit · **{scope_lbl}**. Solid bar segments "
-        f"are the baseline; faded segments are other automated tests."
-    )
+    st.caption(f"Automation baseline per Business Unit · **{scope_lbl}**.")
 
     with st.spinner("📱 Loading Mobile App report — first load can take ~30-60s, "
                     "then it's cached…" if is_mapp else "Loading…"):
@@ -357,39 +365,59 @@ def render() -> None:
         return
 
     a_tot = metrics.totals(all_auto)
-    n_unique = int(all_auto["case_id"].nunique())
+    summary = _scope_summary(scope)
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    if is_web:
-        # Full header: framework cards (website frameworks) + Smoke/Total badges.
-        s_tot = metrics.totals(metrics.select_smoke(all_auto))
-        c_fw1, c_fw2, c_fw3, _sp, c_m1, c_m2 = st.columns(
-            [2, 2, 2, 0.2, 1.35, 1.35], gap="small")
-        _fw_card(c_fw1, "☕", "Java / Selenium / Cucumber",
-                 "Legacy framework used by aLab", COLORS["java_bg"])
-        _fw_card(c_fw2, "🤖", "TestIM",
-                 "AI-powered test automation platform", COLORS["testim_bg"])
-        _fw_card(c_fw3, "🎭", "TypeScript / Playwright",
-                 "Modern end-to-end web automation", COLORS["playwright_bg"])
-        # `metrics.totals()` counts ROWS (len of the expansion), not cases —
-        # these badges used to be labelled "Test Cases", which named the number
-        # after the wrong unit.  Same vocabulary as every other tab now.
-        _metric_badge(c_m1, f"{s_tot['total']:,}", "Automated Rows", "Smoke Suite")
-        _metric_badge(c_m2, f"{a_tot['total']:,}", "Automated Rows", "All Areas")
-    else:
-        # Scope-appropriate compact header (the framework cards are website-only).
-        _sp, c_m1, c_m2 = st.columns([5, 1.6, 1.6], gap="small")
-        _metric_badge(c_m1, f"{n_unique:,}", "Automated Cases", scope_lbl)
-        _metric_badge(c_m2, f"{a_tot['total']:,}", "Automated Rows", "All Areas")
+    # ── Header: the same five cards, in the same words, as the Backlog tab ────
+    # It used to open with three framework "cards" carrying marketing blurbs and
+    # no data, plus two badges in a typography nothing else in the app uses.  An
+    # executive now reads the baseline in the vocabulary they already know.
+    if not summary.empty and "Total" in summary.columns:
+        _tot  = int(summary["Total"].sum())
+        _auto = int(summary["Automated"].sum())
+        _back = int(summary["Backlog"].sum())
+        _tbu  = int(summary["To Update"].sum())
+        _na   = int(summary["Not Applicable"].sum())
+        _unk  = int(summary["Unknown"].sum()) if "Unknown" in summary else 0
+        # "Automatable" excludes Not Applicable AND Unknown — the same
+        # denominator `backlog_tab._stats` uses, so the two tabs agree.
+        _automatable = _auto + _back + _tbu
+        cov     = (_auto / _tot * 100) if _tot else 0.0
+        cov_aut = (_auto / _automatable * 100) if _automatable else 0.0
+        na_pct  = (_na / (_automatable + _na) * 100) if (_automatable + _na) else 0.0
 
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        cards = [("Total", _tot, ""), ("Automated", _auto, ""),
+                 ("Backlog", _back, _backlog_badge_html(_back, _tot)),
+                 ("To Update", _tbu, ""), ("Not Applicable", _na, "")]
+        if _unk:
+            cards.append(("Unknown", _unk, ""))
+        cols = st.columns(len(cards))
+        for col, (label, n, badge) in zip(cols, cards):
+            stat_card(col, label, n, None, badge_html=badge)
+
+        below = [r for _, r in summary.iterrows()
+                 if float(r.get("Coverage %") or 0) < COVERAGE_TARGET]
+        target_note = (
+            f" &nbsp;·&nbsp; <span style='color:{COLORS['danger']};font-weight:600'>"
+            f"{len(below)} of {len(summary)} Business Units below the "
+            f"{COVERAGE_TARGET:.0f}% target</span>"
+            if len(summary) > 1 and below else ""
+        )
+        st.markdown(
+            f"<div style='margin:10px 0 2px;font-size:13px;color:{COLORS['text']}'>"
+            f"<b>Coverage</b> <code>{cov:.1f}%</code> &nbsp;·&nbsp; "
+            f"<b>Coverage vs Automatable</b> <code>{cov_aut:.1f}%</code> &nbsp;·&nbsp; "
+            f"<b>Not Applicable</b> <code>{na_pct:.1f}%</code>{target_note}</div>",
+            unsafe_allow_html=True,
+        )
+        _framework_line(summary, all_auto, scope, a_tot)
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
     # ── EXECUTIVE SUMMARY: coverage leaderboard (scope-filtered) ──────────────
     cov_by_bu: dict[str, float] = {}
-    summary = _scope_summary(scope)
     if not summary.empty and "Coverage %" in summary.columns and len(summary) > 1:
         cov_by_bu = {str(r["BU"]): float(r["Coverage %"]) for _, r in summary.iterrows()}
-        section_title("🏆 Baseline coverage by Business Unit")
+        section_title("Coverage by Business Unit")
         st.altair_chart(_leaderboard_chart(summary), width="stretch")
         st.caption(
             f"Automated share of the baseline per BU — same numbers as the "
@@ -415,23 +443,18 @@ def render() -> None:
                        f'{_dot(_GREY)}<span style="color:{COLORS["muted"]}">'
                        f'Unspecified / API</span>')
     legend_html = (
-        f'<div style="display:flex;align-items:center;gap:16px;'
-        f'font-size:12px;color:{COLORS["text"]}">{devs_legend}'
-        f'<span style="color:{COLORS["muted"]};font-size:11px;margin-left:6px;'
+        f'<span style="display:flex;align-items:center;justify-content:flex-end;'
+        f'gap:16px;font-size:12px;color:{COLORS["text"]}">{devs_legend}'
+        f'<span style="color:{COLORS["muted"]};font-size:11px;'
         f'border-left:1px solid {COLORS["border"]};padding-left:10px">'
         f'solid = baseline&nbsp;·&nbsp;faded = other</span>'
-        f'</div>'
+        f'</span>'
     )
-    st.markdown(
-        f'<div style="display:flex;align-items:center;justify-content:space-between;'
-        f'flex-wrap:wrap;gap:8px;margin-bottom:10px">'
-        f'<div style="font-weight:700;font-size:15px;color:{COLORS["ink"]};'
-        f'border-left:3px solid {COLORS["brand"]};padding-left:10px">'
-        f'📊 Automated tests by device</div>'
-        f'{legend_html}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    c_head, c_legend = st.columns([2, 3], vertical_alignment="center")
+    with c_head:
+        section_title("Automated Tests by Device", top=0)
+    with c_legend:
+        st.markdown(legend_html, unsafe_allow_html=True)
 
     # ── Charts — one responsive panel per BU, in aligned 2-column rows ────────
     bus = _ordered_bus(set(all_auto["bu"].unique()))
@@ -452,10 +475,3 @@ def render() -> None:
                 _panel_header(bu, int(auto_by_bu.get(bu, 0)), cov_by_bu.get(bu))
                 st.altair_chart(_build_bu_chart(df[df["bu"] == bu]),
                                 width="stretch")
-
-    st.markdown(
-        f"<div style='font-size:11px;color:{COLORS['muted']};margin-top:2px'>"
-        f"* Solid regression segments use the same baseline as the Backlog tab"
-        f"</div>",
-        unsafe_allow_html=True,
-    )

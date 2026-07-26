@@ -250,3 +250,32 @@ class TestRegressionFlag:
         self._stub_backlog(monkeypatch, pd.DataFrame(
             columns=["case_id", "country_label", "device"]))
         assert rt._add_regression_flag(pd.DataFrame(), pd.DataFrame(), "website").empty
+
+
+# ── release readiness: "how long until it ships" ─────────────────────────────
+class TestDaysToRelease:
+    """A release due today must read 'due today' — comparing instants instead of
+    dates made it '1 day overdue' as soon as the clock passed midnight."""
+
+    @staticmethod
+    def _ver(days_out: int) -> dict:
+        from datetime import datetime, timedelta, timezone
+        d = datetime.now(timezone.utc).date() + timedelta(days=days_out)
+        return {"released": False, "release_date": d.isoformat()}
+
+    @pytest.mark.parametrize("days,expected", [
+        (12, "12 days to release"), (1, "1 day to release"),
+        (0, "due today"), (-1, "1 day overdue"), (-5, "5 days overdue"),
+    ])
+    def test_wording(self, days, expected):
+        from src.ui.runs_tab import _days_to_release
+        assert _days_to_release(self._ver(days))[0] == expected
+
+    def test_degrades_gracefully(self):
+        from src.ui.runs_tab import _days_to_release
+        assert _days_to_release({"released": True})[0] == "already released"
+        assert _days_to_release({"released": False,
+                                 "release_date": ""})[0] == "no release date set"
+        # An unparseable date is shown as-is rather than raising.
+        assert _days_to_release({"released": False,
+                                 "release_date": "TBD"})[0] == "TBD"

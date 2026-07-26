@@ -94,8 +94,7 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
         """,
         unsafe_allow_html=True,
     )
-    # Collapsed: the page opens on three numbers, not on nine tables.
-    with st.expander("Breakdown", expanded=False):
+    with st.expander("Breakdown", expanded=True):
         t1, t2, t3 = st.tabs(["By BU", "By Country", "By Device"])
         with t1:
             st.dataframe(metrics.breakdown_by(subset, ["bu"]),
