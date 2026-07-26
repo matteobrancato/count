@@ -1,23 +1,29 @@
-"""Runs tab — live TestRail runs, stability, release readiness & case deep-dive.
+"""Live TestRail data for one BU — runs, stability, readiness & case deep-dive.
 
-Four sections, filtered by the global scope+BU selector:
+The four sections are split across TWO tabs, both filtered by the global
+scope+BU selector.  This module holds every section (they share the TestRail
+helpers below); `stability_tab.py` composes the second tab.
 
+  Runs tab
   1. **Active runs** — TestRail-style visual rows (stacked result bar, passed %,
      bug badges) with a name filter and a sortable table view; bugs are
      enriched live from Jira (status / fix version) when configured.
-  2. **Stability history** — classify each case over the last *N* completed
-     runs: always pass / always fail / flaky / insufficient data.
-  3. **Release readiness** — the latest completed regression run joined with a
+  2. **Release readiness** — the latest completed regression run joined with a
      Jira fix version's scope state (done %, open bugs, RAG verdict).
+
+  Stability tab
+  3. **Stability history** — classify each case over the last *N* completed
+     runs: always pass / always fail / flaky / insufficient data.
   4. **In-depth Test Analysis** — paste a case URL/ID to trace every run it
      went through, its bug history and what it covers.
 
 Sections 1-3 query TestRail LIVE (~30-45s on a cold BU).  They load AUTOMATICALLY
 IN A BACKGROUND THREAD: a tiny polling fragment shows progress while the daemon
 warms the caches, so the session thread stays free and the rest of the dashboard
-is fully usable meanwhile — no blocking, no button.  The deep-dive is always
-available.  Active-run data has a 10-min TTL; completed-run data never changes
-once a run is closed, so it gets a longer TTL.
+is fully usable meanwhile — no blocking, no button.  ONE warm-up serves both
+tabs (see `live_context`), so the split costs no extra TestRail calls.  The
+deep-dive is always available.  Active-run data has a 10-min TTL; completed-run
+data never changes once a run is closed, so it gets a longer TTL.
 """
 from __future__ import annotations
 
@@ -709,7 +715,7 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
 
 
 @st.fragment
-def _render_stability(bu: str, project_ids: set[int]) -> None:
+def render_stability(bu: str, project_ids: set[int]) -> None:
     section_title("📈 Test Stability")
     st.caption(
         "Classify cases by their result pattern across the last N **completed** runs. "
@@ -1181,7 +1187,7 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
 
 
 @st.fragment
-def _render_case_deep_dive() -> None:
+def render_case_deep_dive() -> None:
     section_title("🔬 In-depth Test Analysis")
     st.caption(
         "The full story of **one test case**: every recent run it appeared in and "
@@ -1417,14 +1423,18 @@ def _runs_loading_poller(key: tuple[str, str], bu: str) -> None:
     )
 
 
-@st.fragment
-def render() -> None:
-    # Section title removed (redundant with the "Runs" tab label).
-    st.caption(
-        "Live view of active TestRail runs per BU, with bugs extracted from "
-        "failed results, plus a stability classifier over recent completed runs."
-    )
+def live_context(key_prefix: str) -> tuple[str, str, set[int], str] | None:
+    """Resolve scope/BU and make sure this BU's live TestRail data is warm.
 
+    Shared by the Runs and Stability tabs, so the two NEVER start two fetches:
+    they wait on the same background warm-up and then read the same caches.
+
+    Returns ``(scope, bu, project_ids, base_url)`` once the data is ready, or
+    ``None`` when the caller should stop — the reason (no BU / project IDs not
+    resolvable / still loading / the load failed) has already been rendered.
+
+    *key_prefix* keeps the Retry button's widget key unique per caller.
+    """
     # Scope + BU come from the GLOBAL control bar.  The scope maps 1:1 to
     # TestRail projects — web and mobile-app runs live in DIFFERENT projects
     # (e.g. TPS has a dedicated MAPP project), so mixing scopes under one BU
@@ -1432,50 +1442,56 @@ def render() -> None:
     scope, bu = global_filter.current()
     if not bu:
         st.info("No Business Units in this scope.")
-        return
+        return None
     st.caption(f"Showing **{bu}** · {global_filter.scope_label(scope)}")
 
     project_ids = _bu_project_ids((scope,)).get(bu, set())
     if not project_ids:
         st.warning(f"Could not resolve TestRail project IDs for **{bu}**.")
-        return
+        return None
 
     base_url = tr.TestRailCredentials.from_secrets().base_url
     key = (scope, bu)
-    warm = (time.time() - _RUNS_WARM.get(key, 0.0)) < _RUNS_WARM_TTL
 
-    if not warm:
-        job = _bg_get(key)
-        status = job.get("status") if job else None
-        if status == "done":
-            _RUNS_WARM[key] = time.time()   # promote to warm; TTL expiry restarts later
+    if (time.time() - _RUNS_WARM.get(key, 0.0)) < _RUNS_WARM_TTL:
+        _RUNS_WARM[key] = time.time()       # refresh the TTL while in active use
+        return scope, bu, project_ids, base_url
+
+    job    = _bg_get(key)
+    status = job.get("status") if job else None
+    if status == "done":
+        _RUNS_WARM[key] = time.time()       # promote to warm; TTL expiry restarts later
+        _bg_clear(key)
+        return scope, bu, project_ids, base_url
+    if status == "error":
+        st.warning(
+            f"⚠️ Couldn't load **{bu}** live data: `{job.get('error', '')[:160]}`"
+        )
+        if st.button("↻ Retry", key=f"{key_prefix}_retry_{scope}_{bu}"):
             _bg_clear(key)
-            warm = True
-        elif status == "error":
-            st.warning(
-                f"⚠️ Couldn't load **{bu}** live data: `{job.get('error', '')[:160]}`"
-            )
-            if st.button("↻ Retry", key=f"runs_retry_{scope}_{bu}"):
-                _bg_clear(key)
-                st.rerun()
-            st.divider()
-            _render_case_deep_dive()   # deep-dive is independent (URL-driven)
-            return
-        else:
-            # None → kick off the background warm; loading → keep polling.
-            if status is None:
-                _start_bg_load(key, bu, project_ids, base_url)
-            _runs_loading_poller(key, bu)
-            st.divider()
-            _render_case_deep_dive()
-            return
+            st.rerun()
+        return None
+
+    # None → kick off the background warm; loading → keep polling.
+    if status is None:
+        _start_bg_load(key, bu, project_ids, base_url)
+    _runs_loading_poller(key, bu)
+    return None
+
+
+@st.fragment
+def render() -> None:
+    # Section title removed (redundant with the "Runs" tab label).
+    st.caption(
+        "Live view of active TestRail runs per BU, with bugs extracted from "
+        "failed results, and how close the latest regression run is to done."
+    )
+    ctx = live_context("runs")
+    if ctx is None:
+        return
+    _scope, bu, project_ids, base_url = ctx
 
     # Warm → everything is a cache hit, so this renders instantly.
     _render_active_runs(bu, project_ids, base_url)
     st.divider()
-    _render_stability(bu, project_ids)
-    st.divider()
     _render_release_readiness(bu, project_ids, base_url)
-    st.divider()
-    _render_case_deep_dive()
-    _RUNS_WARM[key] = time.time()

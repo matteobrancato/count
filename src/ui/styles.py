@@ -776,6 +776,37 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 .bl-summary .cov-fill {{ height: 100%; border-radius: 4px; }}
 .bl-summary .cov-val {{ font-weight: 700; font-size: 12.5px; min-width: 46px; text-align: right; }}
 
+/* ── Coverage chart panels — a fixed-height head so both charts start on the
+   same line, whatever width the captions wrap at. ──────────────────────────── */
+.cov-panel-head {{
+    display: block;
+    height: 56px;
+    margin: 6px 0 2px;
+}}
+.cov-panel-title {{
+    display: block;
+    font-weight: 700;
+    font-size: 15px;
+    color: {c['ink']};
+    border-left: 3px solid {c['brand']};
+    padding-left: 10px;
+    line-height: 1.35;
+}}
+.cov-panel-sub {{
+    display: block;
+    font-size: 12px;
+    color: {c['muted']};
+    padding-left: 13px;
+    margin-top: 3px;
+    line-height: 1.4;
+}}
+
+/* Granularity picker — a quiet, secondary control next to the view radio.
+   (st.segmented_control renders as data-testid="stButtonGroup".) */
+.st-key-cov_gran_row [data-testid="stButtonGroup"] button p {{
+    font-size: 12.5px !important;
+}}
+
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
 

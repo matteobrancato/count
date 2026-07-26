@@ -212,6 +212,24 @@ def _coverage_table(
 
 
 # ── charts ───────────────────────────────────────────────────────────────────
+def _panel_head(title: str, caption: str) -> None:
+    """Heading + caption for a chart panel, at a FIXED height.
+
+    The two panels sit in side-by-side columns, so a caption that wrapped to two
+    lines on one side pushed that chart 22px below its neighbour.  One block of
+    a fixed height makes both charts start on exactly the same line, whatever
+    the column width.  Inline <span>s (not <div>s) so the block keeps its full
+    height inside Streamlit's markdown container — see the note in app.py.
+    """
+    st.markdown(
+        f'<span class="cov-panel-head">'
+        f'<span class="cov-panel-title">{title}</span>'
+        f'<span class="cov-panel-sub">{caption}</span>'
+        f'</span>',
+        unsafe_allow_html=True,
+    )
+
+
 def _area_color_map(cov: pd.DataFrame) -> dict[str, str]:
     """Stable area → palette-color mapping, shared between pie and bar charts.
 
@@ -280,20 +298,23 @@ def _build_pie(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Chart | None
     data = data.assign(
         _share=data["automated"] / grand * 100,
         _lbl=lambda d: [
-            f"{s} · {p:.0f}%" if p >= 7 else ""      # tiny slices stay unlabelled
-            for s, p in zip(d["section"], d["automated"] / grand * 100)
+            f"{p:.0f}%" if p >= 7 else ""            # tiny slices stay unlabelled
+            for p in (d["automated"] / grand * 100)
         ],
     )
     base = base.properties(data=data)
 
-    arc = base.mark_arc(innerRadius=52, outerRadius=104, cornerRadius=3,
+    # Bigger ring than before: the labels moved inside, so the chart no longer
+    # has to reserve a band of empty space around it for outer text.
+    arc = base.mark_arc(innerRadius=62, outerRadius=124, cornerRadius=3,
                         stroke=COLORS["canvas"], strokeWidth=3)
-    # Labels ON the chart: an unlabelled donut forces the reader to hover every
-    # slice or colour-match it against the bar chart — it looked decorative
-    # rather than informative.
-    labels = base.mark_text(radius=126, fontSize=10.5, font="Inter",
-                            fill=COLORS["text"], limit=130).encode(
-        text=alt.Text("_lbl:N"), color=alt.value(COLORS["text"]),
+    # Percentages INSIDE the ring.  Area names used to sit outside it, but the
+    # panel is only ~550px wide, so every one of them was cut off mid-word
+    # ("Product Information Ma…").  The names live in the bar chart to the
+    # right, which shares this chart's colours — hence the caption.
+    labels = base.mark_text(radius=93, fontSize=11.5, fontWeight="bold",
+                            font="Inter").encode(
+        text=alt.Text("_lbl:N"), color=alt.value("#FFFFFF"),
     )
     # The hole is free real estate: put the total there.
     centre = alt.Chart(pd.DataFrame([{"t": f"{int(grand):,}"}])).mark_text(
@@ -533,17 +554,16 @@ def _render_coverage_section(
     st.markdown("")
     left, right = st.columns([1, 1.2], gap="large")
     with left:
-        st.markdown("##### 🥧 Automated distribution")
-        st.caption("Share of automated rows per area (slice size = Desktop + Mobile)")
+        _panel_head("🥧 Automated distribution",
+                    "Share of automated rows per area (Desktop + Mobile).")
         pie = _build_pie(cov, color_map)
         if pie is None:
             st.info("No automated cases yet.")
         else:
             st.altair_chart(pie, width="stretch")
     with right:
-        st.markdown("##### 📊 Coverage % per area")
-        st.caption("Sorted by coverage % (zero-automated areas pushed to the bottom). "
-                   "Colors match the pie chart — same color = same area.")
+        _panel_head("📊 Coverage % per area",
+                    "Sorted by coverage %. Same colour = same area as the pie.")
         bar = _build_coverage_bar(cov, color_map)
         st.altair_chart(bar, width="stretch")
 
@@ -633,15 +653,20 @@ _VIEW_OPTIONS_MAPP = [_VIEW_TOTAL, _VIEW_REGR_MAPP, _VIEW_PS]
 _VIEW_DEFAULT_INDEX = 1                                  # the baseline view
 
 _VIEW_DESC = {
-    _VIEW_TOTAL: "Coverage over the **full universe** of non-deprecated cases "
-                 "for this BU — the broadest picture of automation reach.",
-    _VIEW_REGR:  "Restricted to the **regression baseline** "
-                 "(`big_regr_desktop` / `big_regr_mobile`) — computed exactly "
-                 "like the Backlog tab, so the numbers line up 1:1 with it.",
-    _VIEW_PS:    "Restricted to **Production Sanity** cases (the "
-                 "`Test Automation PRD Run` checkbox) — the automation "
-                 "coverage of the prod-sanity scope specifically.",
+    _VIEW_TOTAL: "**Full universe** of non-deprecated cases for this BU — the "
+                 "broadest picture of automation reach.",
+    _VIEW_REGR:  "**Regression baseline** (`big_regr_desktop` / "
+                 "`big_regr_mobile`) — the same numbers as the Backlog tab.",
+    _VIEW_PS:    "**Production Sanity** cases only (the `Test Automation PRD "
+                 "Run` checkbox).",
 }
+
+# Section-depth picker: named levels beat raw 0-3 on a slider.
+_GRAN_LEVELS: list[int] = [0, 1, 2, 3]
+_GRAN_LABELS: dict[int, str] = {0: "Main", 1: "Sub", 2: "+2", 3: "+3"}
+_GRAN_HELP = ("Section depth: Main = top-level category (auto-detected, strips "
+              "dominant root folders like SD or WTR); Sub = secondary; "
+              "+2 / +3 = deeper sub-sections.")
 
 
 def _coverage_for(scope: str, bu_choice: str) -> None:
@@ -679,27 +704,42 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
     # ── ONE view + granularity on ONE control row ─────────────────────────────
-    # View radio (left) and the granularity slider (right) share a line so the
-    # metrics sit high on the page.  The slider is per-(scope, BU) so it persists
+    # View radio (left) and the granularity picker (right) share a line so the
+    # metrics sit high on the page.  The picker is per-(scope, BU) so it persists
     # when switching views.  The shared-suite exclusion note rides along the
     # per-view description caption below (kept compact).
+    #
+    # Granularity used to be a slider: three stacked lines (label / value /
+    # track) with the help icon flung to the far right of the label row, in a
+    # block 28px taller than the radio it sits next to.  A segmented control is
+    # one line, the same height as the radio, and names the depths instead of
+    # asking the reader to decode 0-3.
     is_mapp = scope == "mobile_app"
     options = _VIEW_OPTIONS_MAPP if is_mapp else _VIEW_OPTIONS
-    c_radio, c_gran, _c_pad = st.columns([3, 1.3, 0.7], vertical_alignment="center")
+    c_radio, c_gran = st.columns([3, 2], vertical_alignment="center")
     with c_radio:
         view = st.radio(
             "Coverage view", options, index=_VIEW_DEFAULT_INDEX,
             horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
             label_visibility="collapsed",
         )
-    with c_gran:
-        depth_offset = st.slider(
-            "Granularity", 0, 3, 0,
-            key=f"cov_gran_{scope}_{bu_choice}",
-            help=("0 = Main Category (auto-detected — strips dominant root "
-                  "containers like \"SD\" or \"WTR\"); 1 = Secondary; "
-                  "2-3 = deeper sub-sections."),
+    with c_gran, st.container(
+        key="cov_gran_row", horizontal=True, vertical_alignment="center",
+        horizontal_alignment="right", gap="small",
+    ):
+        st.markdown(
+            f"<span title='{_GRAN_HELP}' style='font-size:13px;"
+            f"color:{COLORS['muted']};white-space:nowrap;cursor:help'>"
+            f"Granularity</span>",
+            unsafe_allow_html=True,
         )
+        depth_offset = st.segmented_control(
+            "Granularity", _GRAN_LEVELS, default=0, required=True,
+            format_func=lambda v: _GRAN_LABELS[v],
+            key=f"cov_gran_seg_{scope}_{bu_choice}",
+            label_visibility="collapsed",
+        )
+        depth_offset = int(depth_offset if depth_offset is not None else 0)
     note = (f"  ·  ℹ️ {n_other_bu:,} cases excluded (other BUs on this shared suite)"
             if n_other_bu else "")
     is_baseline_view = view in (_VIEW_REGR, _VIEW_REGR_MAPP)

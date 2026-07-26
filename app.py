@@ -8,7 +8,7 @@ from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
 from src.ui import (
     backlog_tab, chat_assistant, coverage_tab, data_quality, global_filter,
-    kpi_strip, overview_tab, report_tab, runs_tab, styles,
+    kpi_strip, overview_tab, report_tab, runs_tab, stability_tab, styles,
 )
 # Explorer is temporarily disabled (minimalism experiment) — import kept next to
 # its commented render call so re-enabling is a two-line change.
@@ -295,9 +295,9 @@ def main() -> None:
         # experiment.  Everything for it is kept (pivot_tab.py, its render call
         # below) so re-enabling is: add "📊 Explorer" back to this list, restore
         # `tab_explore` in the unpacking, and uncomment the _render_tab line.
-        (tab_backlog, tab_coverage, tab_runs, tab_overview,
+        (tab_backlog, tab_coverage, tab_runs, tab_stability, tab_overview,
          tab_report) = st.tabs(
-            ["📋 Backlog", "📐 Coverage", "🏃 Runs",
+            ["📋 Backlog", "📐 Coverage", "🏃 Runs", "📈 Stability",
              "🧭 Overview", "📄 Report"]
         )
 
@@ -381,9 +381,13 @@ def main() -> None:
     # Runs is rendered LAST on purpose (its position in the tab bar is
     # unchanged — content binds to its tab regardless of execution order):
     # on the first visit of a BU it fires 30-50s of TestRail calls (plan
-    # details, failed results, stability tests), and executing it last
+    # details, failed results, stability tests — shared with Stability), and
+    # executing it last
     # means every other tab is ready in seconds instead of queueing behind it.
     _render_tab(tab_runs,     runs_tab.render,     "Runs",     "runs_anim")
+    # Stability rides on the SAME background warm-up as Runs (see
+    # runs_tab.live_context), so it costs nothing extra and must come after it.
+    _render_tab(tab_stability, stability_tab.render, "Stability", "stability_anim")
 
     # Dexter's snapshot builds OFF the critical path: everything above has
     # already rendered; this line only costs time when its cache is cold
