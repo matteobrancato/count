@@ -408,6 +408,11 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 /* Narrow viewports: the tab bar wins the row — drop the utility bar below it
    instead of letting the two overlap. */
 @media (max-width: 1250px) {{
+    /* Narrow screens: let the KPI chips wrap onto a second line.  The row is
+       `overflow-x: auto` with the scrollbar hidden, so on a laptop the last
+       chip sat outside the card with nothing to suggest it could be scrolled
+       to — silently truncated KPIs.  Two short lines beat one hidden one. */
+    .kpi-row {{ flex-wrap: wrap !important; overflow-x: visible !important; }}
     /* The container is created with width="content", so BOTH it and Streamlit's
        layout wrapper hug the content — they must span the row for the bar to
        align right once it is back in the normal flow. */
@@ -747,12 +752,14 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 .bl-summary tr:last-child td {{ border-bottom: none; }}
 .bl-summary tbody tr {{ transition: background .12s ease; }}
 .bl-summary tbody tr:hover td {{ background: {c['canvas']}; }}
-/* The BU the global filter is on — findable at a glance in an 8-row table. */
-.bl-summary tbody tr.sel td {{
-    background: {c['brand_soft']};
-    box-shadow: inset 3px 0 0 {c['brand']};
+/* The BU the global filter is on — just its name underlined.  A tinted row
+   with an accent bar shouted louder than the data it was pointing at. */
+.bl-summary tbody tr.sel .bu {{
+    text-decoration: underline;
+    text-decoration-color: {c['brand']};
+    text-underline-offset: 3px;
+    text-decoration-thickness: 2px;
 }}
-.bl-summary tbody tr.sel .bu {{ color: {c['brand_strong']}; }}
 .bl-summary th.l, .bl-summary td.l {{ text-align: left; }}
 .bl-summary .bu {{ font-weight: 700; color: {c['ink']}; }}
 .bl-summary .strong {{ font-weight: 700; color: {c['ink']}; }}
