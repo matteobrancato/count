@@ -716,8 +716,9 @@ def _build_coverage_brief() -> str:
             + " > ".join(f"{bu} {pct:.1f}%" for bu, pct in regr_ranking)
         )
     rank_lines.append(
-        "Secondary — overall coverage of the whole case universe (use ONLY "
-        "when the user explicitly asks about overall/universe coverage): "
+        "Secondary — automated share of the whole case universe, CASE basis "
+        "(this is not 'coverage'; use ONLY if the user explicitly asks about "
+        "the whole universe rather than the baseline): "
         + " > ".join(f"{bu} {pct}%" for bu, pct in ranking)
     )
     if mobile_only:
@@ -732,16 +733,21 @@ def _build_coverage_brief() -> str:
     # cross-BU aggregates are computed here in Python and handed over verbatim.
     agg_lines = ["## GROUP TOTALS (precomputed — use these, do NOT re-add BU numbers yourself)"]
     if grand_total:
+        # CASE basis, and summed across BUs — a case shared between two BUs is
+        # counted twice.  It is therefore neither "coverage" (which is always
+        # rows ÷ rows) nor a figure any screen shows: label it so Dexter cannot
+        # quote it as either.  The row-basis group total is the line below.
         overall = grand_auto / grand_total * 100
         agg_lines.append(
-            f"- All BUs combined: {grand_auto:,} automated of {grand_total:,} "
-            f"cases → {overall:.1f}% overall coverage"
+            f"- Whole case universe, all BUs added up: {grand_auto:,} automated "
+            f"of {grand_total:,} cases ({overall:.1f}%) — case basis, BU sums "
+            f"overlap on shared suites. NOT coverage, do NOT quote as coverage."
         )
     if ranking:
         avg = sum(p for _, p in ranking) / len(ranking)
         agg_lines.append(
-            f"- Average coverage across the {len(ranking)} BUs: {avg:.1f}% "
-            f"(simple mean of per-BU percentages)"
+            f"- Average across the {len(ranking)} BUs of their case-basis "
+            f"percentages: {avg:.1f}% (a simple mean, not a coverage figure)"
         )
     if regr_ranking:
         agg_lines.append(

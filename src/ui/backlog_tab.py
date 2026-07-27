@@ -696,10 +696,15 @@ def _detail_view(
 
 
 # ── render ────────────────────────────────────────────────────────────────────
-def _summary_table_html(df: pd.DataFrame, num_cols: list[str]) -> str:
+def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
+                        selected_bu: str = "") -> str:
     """Presentation-grade HTML for the All-BU summary — same data as the native
     dataframe, with an RAG coverage bar and tidy typography.  Styling lives in
-    the `.bl-summary` CSS block in styles.py."""
+    the `.bl-summary` CSS block in styles.py.
+
+    *selected_bu* marks the row the global filter is on, so the reader can find
+    "their" BU in an eight-row table without counting down the rows.
+    """
     strong_cols = {"Total", "Automated", "Backlog"}   # numbers a manager reads first
     head = (
         '<thead><tr>'
@@ -723,8 +728,9 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str]) -> str:
             f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
             f'</div></td>'
         )
+        sel_cls = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
         body_rows.append(
-            f'<tr><td class="l">{dot}</td>'
+            f'<tr{sel_cls}><td class="l">{dot}</td>'
             f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
             f'<td class="l"><span class="scope-pill">{html.escape(str(r["Scope"]))}</span></td>'
             f'{nums}{cov_cell}</tr>'
@@ -822,7 +828,8 @@ def render() -> None:
             mime="text/csv",
             help="Download the table above, exactly as shown, as a CSV.",
         )
-    st.markdown(_summary_table_html(display, num_cols), unsafe_allow_html=True)
+    st.markdown(_summary_table_html(display, num_cols, selected_bu=bu),
+                unsafe_allow_html=True)
 
     st.divider()
 

@@ -68,6 +68,32 @@ def _apply_selection(df: pd.DataFrame, selection: dict[str, list[str]]) -> pd.Da
     return df[combined]
 
 
+# Raw frame columns → the words used everywhere else on the dashboard.
+_BREAKDOWN_LABELS = {
+    "bu":            "Business Unit",
+    "country_label": "Country",
+    "device":        "Device",
+    "count":         "Automated Rows",
+}
+
+
+def _breakdown_table(subset: pd.DataFrame, keys: list[str]) -> None:
+    """One breakdown table with human column names.
+
+    `metrics.breakdown_by` returns the raw frame columns (`bu`, `count`), which
+    read as database internals next to cards that say "Automated Cases".
+    """
+    df = metrics.breakdown_by(subset, keys)
+    st.dataframe(
+        df.rename(columns=_BREAKDOWN_LABELS), width="stretch", hide_index=True,
+        column_config={
+            "Automated Rows": st.column_config.NumberColumn(
+                "Automated Rows",
+                help="Expanded rows: one per case × country × device."),
+        },
+    )
+
+
 # --------------------------------------------------------------------- cards
 def _metric_card(title: str, subset: pd.DataFrame, accent: str,
                  tooltip: str = "") -> None:
@@ -96,15 +122,11 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
     )
     with st.expander("Breakdown", expanded=True):
         t1, t2, t3 = st.tabs(["By BU", "By Country", "By Device"])
-        with t1:
-            st.dataframe(metrics.breakdown_by(subset, ["bu"]),
-                         width="stretch", hide_index=True)
-        with t2:
-            st.dataframe(metrics.breakdown_by(subset, ["bu", "country_label"]),
-                         width="stretch", hide_index=True)
-        with t3:
-            st.dataframe(metrics.breakdown_by(subset, ["bu", "country_label", "device"]),
-                         width="stretch", hide_index=True)
+        for tab, keys in ((t1, ["bu"]),
+                          (t2, ["bu", "country_label"]),
+                          (t3, ["bu", "country_label", "device"])):
+            with tab:
+                _breakdown_table(subset, keys)
 
 
 # --------------------------------------------------------------------- render
@@ -152,12 +174,12 @@ def render() -> None:
     c1, c2, c3 = st.columns(3, gap="medium")
     with c1:
         _metric_card(
-            "Smoke (Highest priority)", smoke, COLORS["warning"],
+            "Smoke Suite", smoke, COLORS["warning"],
             tooltip="Automated cases whose Priority is Highest.",
         )
     with c2:
         _metric_card(
-            "All automated cases", regr, COLORS["brand"],
+            "All Automated Cases", regr, COLORS["brand"],
             tooltip=("Every automated case (deduplicated) in this scope — "
                      "NOT the regression baseline. For the baseline figures "
                      "see the Backlog tab."),

@@ -747,6 +747,12 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 .bl-summary tr:last-child td {{ border-bottom: none; }}
 .bl-summary tbody tr {{ transition: background .12s ease; }}
 .bl-summary tbody tr:hover td {{ background: {c['canvas']}; }}
+/* The BU the global filter is on — findable at a glance in an 8-row table. */
+.bl-summary tbody tr.sel td {{
+    background: {c['brand_soft']};
+    box-shadow: inset 3px 0 0 {c['brand']};
+}}
+.bl-summary tbody tr.sel .bu {{ color: {c['brand_strong']}; }}
 .bl-summary th.l, .bl-summary td.l {{ text-align: left; }}
 .bl-summary .bu {{ font-weight: 700; color: {c['ink']}; }}
 .bl-summary .strong {{ font-weight: 700; color: {c['ink']}; }}
