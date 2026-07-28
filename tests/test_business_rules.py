@@ -504,3 +504,84 @@ class TestExportEvidence:
 
 _STATUS_AUTO_FOR_TEST = {"Automated", "Automated DEV", "Automated UAT",
                          "Automated Prod"}
+
+
+# ── Coverage: readable labels and honest TestRail links ──────────────────────
+class TestCoverageSectionLinks:
+    """A row of the coverage table can span several TestRail sections, because
+    the label is the path cut at the chosen depth.  Linking such a row would
+    land the reader on an arbitrary one of them, so those rows carry no link."""
+
+    @staticmethod
+    def _frame():
+        # Two top-level branches, so the container detector strips only "SD":
+        # with a single branch it would treat that level as a container too and
+        # every row would already be a leaf.
+        rows = [{"case_id": i, "section_path": "SD > Content > [DRG] Analytics",
+                 "section_id": 11, "suite_id": 7} for i in range(1, 4)]
+        rows += [{"case_id": i, "section_path": "SD > Content > [DRG] SEO",
+                  "section_id": 12, "suite_id": 7} for i in range(4, 7)]
+        rows += [{"case_id": i, "section_path": "SD > Checkout > [DRG] Cart",
+                  "section_id": 21, "suite_id": 7} for i in range(7, 10)]
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _patch_base(monkeypatch):
+        from types import SimpleNamespace
+        from src import testrail_client as tr
+        monkeypatch.setattr(
+            tr.TestRailCredentials, "from_secrets",
+            staticmethod(lambda: SimpleNamespace(base_url="https://x.testrail.io")),
+        )
+
+    def test_single_section_rows_get_a_link(self, monkeypatch):
+        self._patch_base(monkeypatch)
+        table, _chain = cov._coverage_table(
+            self._frame(), pd.DataFrame(columns=["section_path", "device"]),
+            {1}, depth_offset=2)
+        assert (table["section_url"].str.startswith("https://x.testrail.io")).all()
+        assert "group_id=11" in " ".join(table["section_url"])
+
+    def test_rows_spanning_several_sections_get_none(self, monkeypatch):
+        self._patch_base(monkeypatch)
+        # depth 0 collapses Analytics + SEO into one "Content" row (two
+        # sections → no link), while "Checkout" is still a single section and
+        # keeps its link.  The point is the discrimination, not blanket silence.
+        table, _chain = cov._coverage_table(
+            self._frame(), pd.DataFrame(columns=["section_path", "device"]),
+            {1}, depth_offset=0)
+        url = dict(zip(table["section"], table["section_url"]))
+        assert url["Content"] == ""
+        assert url["Checkout"].endswith("group_id=21")
+
+    def test_area_label_is_the_leaf_of_the_path(self, monkeypatch):
+        self._patch_base(monkeypatch)
+        table, _chain = cov._coverage_table(
+            self._frame(), pd.DataFrame(columns=["section_path", "device"]),
+            {1}, depth_offset=2)
+        assert {"[DRG] Analytics", "[DRG] SEO", "[DRG] Cart"} <= set(table["area"])
+        # the full path survives for sorting, colours and the tooltip
+        assert all(" > " in v for v in table["section"])
+
+    def test_chart_uses_the_short_label_and_keeps_its_height(self, monkeypatch):
+        self._patch_base(monkeypatch)
+        table, _chain = cov._coverage_table(
+            self._frame(), pd.DataFrame(columns=["section_path", "device"]),
+            {1}, depth_offset=2)
+        spec = cov._build_coverage_bar(table, cov._area_color_map(table)).to_dict()
+        enc = spec["layer"][0]["encoding"]
+        # The short label is a DATA column, not an axis expression: an axis
+        # `labelExpr` collapses a step-height chart to zero height (measured:
+        # the bars vanished entirely).
+        assert enc["y"]["field"] == "_label"
+        assert "labelExpr" not in enc["y"]["axis"]
+        assert spec["height"] == {"step": 26}
+        # No href channel: Streamlit's embed renders no links for it, so a
+        # clickable-looking bar would do nothing.
+        assert "href" not in enc
+
+    def test_chart_survives_a_frame_without_links(self):
+        table = pd.DataFrame([{"section": "A", "total": 2, "desktop": 1,
+                               "mobile": 0, "unspecified": 0, "automated": 1,
+                               "auto_unique": 1, "coverage_pct": 50.0}])
+        cov._build_coverage_bar(table, {"A": "#000"}).to_dict()   # must not raise

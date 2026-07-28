@@ -38,6 +38,7 @@ import pandas as pd
 import streamlit as st
 
 from ..bu_rules import ALL_RULES, filter_conditional_tokens
+from .. import testrail_client as tr
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, section_title
@@ -156,18 +157,26 @@ def _coverage_table(
 
     chain = _detect_container_chain(non_dep["section_path"])
 
-    work = non_dep[["case_id", "section_path"]].copy()
+    keep = ["case_id", "section_path"] + [c for c in ("section_id", "suite_id")
+                                          if c in non_dep.columns]
+    work = non_dep[keep].copy()
     work["section"] = work["section_path"].fillna("").map(
         lambda p: _section_for_path(p, chain, depth_offset)
     )
     work["_is_auto"] = work["case_id"].isin(auto_ids)
 
-    grouped = (
-        work.groupby("section", dropna=False)
-        .agg(total=("case_id", "nunique"),
-             auto_unique=("_is_auto", "sum"))
-        .reset_index()
-    )
+    aggs = {"total": ("case_id", "nunique"), "auto_unique": ("_is_auto", "sum")}
+    # A row of this table can span SEVERAL TestRail sections (the label is the
+    # path truncated at the chosen depth).  Carrying the section count lets us
+    # link only the rows that map to exactly one — a link that silently landed
+    # on one of five sections would be worse than no link.
+    if "section_id" in work.columns:
+        aggs |= {"_n_sections": ("section_id", "nunique"),
+                 "_section_id": ("section_id", "first")}
+    if "suite_id" in work.columns:
+        aggs["_suite_id"] = ("suite_id", "first")
+
+    grouped = work.groupby("section", dropna=False).agg(**aggs).reset_index()
     grouped["auto_unique"] = grouped["auto_unique"].astype(int)
 
     # Desktop / Mobile / Unspecified EXPANDED row counts.
@@ -231,8 +240,41 @@ def _coverage_table(
         ascending=[True, False, False],
     ).drop(columns=["_zero_flag"]).reset_index(drop=True)
 
-    return grouped[["section", "total", "desktop", "mobile", "unspecified",
-                    "automated", "auto_unique", "coverage_pct"]], chain
+    # ── Readable label + a link to the section in TestRail ──────────────────
+    # At depth > 0 every label repeats its parent ("Content Management > [DRG]
+    # Google A…"), so the axis showed the shared prefix and truncated the part
+    # that tells them apart.  The chart uses the LEAF; the full path stays in
+    # the tooltip and in the table.
+    grouped["area"] = grouped["section"].map(
+        lambda v: v.split(" > ")[-1].strip() if isinstance(v, str) else v)
+    grouped["section_url"] = _section_urls(grouped)
+
+    cols = ["section", "area", "section_url", "total", "desktop", "mobile",
+            "unspecified", "automated", "auto_unique", "coverage_pct"]
+    return grouped[[c for c in cols if c in grouped.columns]], chain
+
+
+def _section_urls(grouped: pd.DataFrame) -> pd.Series:
+    """A TestRail link per row — only where the row IS one section.
+
+    TestRail can open a suite grouped and scrolled to a section, which is the
+    closest thing to "show me these cases".  Rows that aggregate several
+    sections get no link rather than a link to an arbitrary one of them.
+    """
+    blank = pd.Series([""] * len(grouped), index=grouped.index)
+    if "_section_id" not in grouped.columns or "_suite_id" not in grouped.columns:
+        return blank
+    try:
+        base = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")
+    except Exception:                                                   # noqa: BLE001
+        return blank
+    single = grouped.get("_n_sections", pd.Series(1, index=grouped.index)) == 1
+    urls = (base + "/index.php?/suites/view/"
+            + grouped["_suite_id"].astype("Int64").astype(str)
+            + "&group_by=cases:section_id&group_order=asc&group_id="
+            + grouped["_section_id"].astype("Int64").astype(str))
+    return urls.where(single & grouped["_suite_id"].notna()
+                      & grouped["_section_id"].notna(), "")
 
 
 # ── charts ───────────────────────────────────────────────────────────────────
@@ -360,6 +402,8 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     area in both views.
     """
     data = cov.copy()
+    if "section_url" not in data.columns:
+        data["section_url"] = ""
     data["label"]     = data["coverage_pct"].map(lambda v: f"{v:.1f}%")
     # Sort key that mirrors the table: non-zero by coverage DESC, then zero rows
     # (sorted by total DESC so larger empty areas float to the top of the zero block).
@@ -372,9 +416,23 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
     # Build the ordered list for the Y axis (Altair sorts categorical Y by an
     # explicit list).  Convert tuples to a deterministic stringified key so
     # Altair's sort uses the right order.
-    y_order = data.sort_values("_sort_key").apply(
-        lambda r: r["section"], axis=1,
-    ).tolist()
+    y_order = data.sort_values("_sort_key")["section"].tolist()
+
+    # Axis label = the LEAF of the path.  At depth > 0 every label shared the
+    # same parent prefix, so truncation ate the only distinguishing part.  It
+    # is computed HERE rather than with an axis `labelExpr`, which silently
+    # collapses the chart to zero height when the height is step-based.
+    # Two areas can share a leaf name ("[DRG] Cart" under two parents), so an
+    # ambiguous leaf falls back to its full path — the y field must stay unique
+    # or the two would merge into one bar.
+    if "area" not in data.columns:
+        data["area"] = data["section"].map(
+            lambda v: v.split(" > ")[-1].strip() if isinstance(v, str) else v)
+    dupes = data["area"].value_counts()
+    data["_label"] = [a if dupes.get(a, 0) == 1 else s
+                      for a, s in zip(data["area"], data["section"])]
+    label_of = dict(zip(data["section"], data["_label"]))
+    y_labels = [label_of[s] for s in y_order]
 
     color_scale = alt.Scale(
         domain=list(color_map.keys()),
@@ -390,11 +448,20 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
                     axis=alt.Axis(title="Coverage %", grid=True,
                                   gridColor=COLORS["grid"], domain=False,
                                   labelColor=COLORS["muted"], titleColor=COLORS["muted"])),
-            y=alt.Y("section:N", sort=y_order,
-                    axis=alt.Axis(title=None, labelLimit=240,
+            # The axis shows the LEAF ("[DRG] Google Analytics"), not the whole
+            # path — at depth > 0 every label shared the same parent prefix, so
+            # the truncation ate the only part that told them apart.  Sorting
+            # still keys on the full path, which is unique.
+            y=alt.Y("_label:N", sort=y_labels,
+                    axis=alt.Axis(title=None, labelLimit=260,
                                   domain=False, ticks=False,
                                   labelColor=COLORS["text"])),
             color=alt.Color("section:N", scale=color_scale, legend=None),
+            # NOTE: no `href` encoding here.  The data carries the section URL
+            # and Vega-Lite accepts the channel, but Streamlit's chart embed
+            # renders no <a> elements for it (verified: 98 marks, 0 links), so
+            # the bars would look clickable and do nothing.  The link lives in
+            # the Coverage Table below, where Streamlit's LinkColumn is native.
             tooltip=[
                 alt.Tooltip("section:N",      title="Area"),
                 alt.Tooltip("total:Q",        title="Total cases",        format=","),
@@ -408,7 +475,7 @@ def _build_coverage_bar(cov: pd.DataFrame, color_map: dict[str, str]) -> alt.Cha
         .mark_text(align="left", dx=5, fontSize=10, color=COLORS["muted"])
         .encode(
             x=alt.X("coverage_pct:Q"),
-            y=alt.Y("section:N", sort=y_order),
+            y=alt.Y("_label:N", sort=y_labels),
             text=alt.Text("label:N"),
         )
     )
@@ -642,6 +709,7 @@ def _render_coverage_section(
         "automated":    int(cov["automated"].sum()),
         "auto_unique":  int(cov["auto_unique"].sum()),
         "coverage_pct": cov_pct,
+        "section_url":  "",          # the Total row is not a TestRail section
     }])
     display = pd.concat([display, total_row], ignore_index=True)
 
@@ -651,6 +719,12 @@ def _render_coverage_section(
     if show_unspecified:
         cols.append("unspecified")
     cols += ["automated", "coverage_pct"]
+    # Link column only when there is something to link — a column of empty
+    # cells would just take width away from the numbers.
+    has_links = ("section_url" in display.columns
+                 and display["section_url"].astype(str).str.len().gt(0).any())
+    if has_links:
+        cols.append("section_url")
 
     auto_label = "Automated"
 
@@ -675,6 +749,9 @@ def _render_coverage_section(
             "automated":    st.column_config.NumberColumn(
                 auto_label,
                 help="Sum of expanded rows per device.  Matches the Excel \"Total\" column."),
+            "section_url":  st.column_config.LinkColumn(
+                "TestRail", width="small", display_text="open ↗",
+                help="Open this section in TestRail."),
             "coverage_pct": st.column_config.ProgressColumn(
                 "Coverage %", format="%.1f%%", min_value=0, max_value=100,
                 help=("Automated rows ÷ baseline rows per area — the Backlog "
