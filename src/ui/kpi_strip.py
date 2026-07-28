@@ -106,8 +106,10 @@ def render() -> None:
     chips.append(_chip(
         dot, "Backlog", f"{base['backlog']:,}",
         sub=f"{kpct:.1f}% of baseline",
-        tooltip=(f"Pure backlog rows in the regression baseline "
-                 f"(healthy ≤ {BACKLOG_OK_PCT:.0f}%)."),
+        tooltip=(f"Baseline rows whose case is automated NOWHERE — a script to "
+                 f"write from scratch. Rows of cases already automated in another "
+                 f"country/device are counted separately as Partially Automated. "
+                 f"Healthy ≤ {BACKLOG_OK_PCT:.0f}%."),
     ))
 
     best, worst = k["per_bu"][0], k["per_bu"][-1]

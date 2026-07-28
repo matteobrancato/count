@@ -375,19 +375,23 @@ def render() -> None:
         _tot  = int(summary["Total"].sum())
         _auto = int(summary["Automated"].sum())
         _back = int(summary["Backlog"].sum())
+        _part = int(summary["Partially Automated"].sum()) \
+            if "Partially Automated" in summary else 0
         _tbu  = int(summary["To Update"].sum())
         _na   = int(summary["Not Applicable"].sum())
         _unk  = int(summary["Unknown"].sum()) if "Unknown" in summary else 0
         # "Automatable" excludes Not Applicable AND Unknown — the same
         # denominator `backlog_tab._stats` uses, so the two tabs agree.
-        _automatable = _auto + _back + _tbu
+        _automatable = _auto + _back + _part + _tbu
         cov     = (_auto / _tot * 100) if _tot else 0.0
         cov_aut = (_auto / _automatable * 100) if _automatable else 0.0
         na_pct  = (_na / (_automatable + _na) * 100) if (_automatable + _na) else 0.0
 
         cards = [("Total", _tot, ""), ("Automated", _auto, ""),
-                 ("Backlog", _back, _backlog_badge_html(_back, _tot)),
-                 ("To Update", _tbu, ""), ("Not Applicable", _na, "")]
+                 ("Backlog", _back, _backlog_badge_html(_back, _tot))]
+        if _part:
+            cards.append(("Partially Automated", _part, ""))
+        cards += [("To Update", _tbu, ""), ("Not Applicable", _na, "")]
         if _unk:
             cards.append(("Unknown", _unk, ""))
         cols = st.columns(len(cards))

@@ -758,13 +758,16 @@ def _build_coverage_brief() -> str:
         bk_tot  = sum(int(v.get("Total") or 0)     for v in backlog_by_bu.values())
         bk_auto = sum(int(v.get("Automated") or 0) for v in backlog_by_bu.values())
         bk_back = sum(int(v.get("Backlog") or 0)   for v in backlog_by_bu.values())
+        bk_part = sum(int(v.get("Partially Automated") or 0)
+                      for v in backlog_by_bu.values())
         bk_tbu  = sum(int(v.get("To Update") or 0) for v in backlog_by_bu.values())
         bk_na   = sum(int(v.get("Not Applicable") or 0)
                       for v in backlog_by_bu.values())
         agg_lines.append(
             f"- Regression baseline, all BUs combined: {bk_auto:,} automated of "
-            f"{bk_tot:,} rows — Backlog {bk_back:,}, To-update {bk_tbu:,}, "
-            f"N/A {bk_na:,}"
+            f"{bk_tot:,} rows — Backlog {bk_back:,} (never automated anywhere), "
+            f"Partially Automated {bk_part:,} (the case is automated in another "
+            f"country/device), To-update {bk_tbu:,}, N/A {bk_na:,}"
         )
 
     header = (

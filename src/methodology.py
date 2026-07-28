@@ -41,7 +41,8 @@ shown: the big number is rows, the small caption is unique cases.
 | **Automated** | status is Automated / Automated DEV / UAT / Prod *and* the row is in the automated set |
 | **To update** | status "To be updated" — was automated, needs maintenance |
 | **Not Applicable** | status "Automation not applicable" |
-| **Backlog** | any other non-automated status (Not automated, In progress, Ready to be automated, Blocked, …) |
+| **Backlog** | a non-automated status **and** the case is automated nowhere — a script to write from scratch |
+| **Partially Automated** | same status, but the case IS automated in another country or on the other device — only the missing country/device is left |
 | **Unknown** | no automation status filled in, so we can't say — shown only when it happens, and it means a field is missing in TestRail |
 
 **Coverage** — one definition everywhere: automated **rows** ÷ baseline rows.
@@ -73,6 +74,11 @@ immediate refresh (it re-reads TestRail, so it takes a minute).
 # model rather than a reader (kept terse to save context tokens).
 METHODOLOGY_FOR_LLM = """
 - Data is pulled from TestRail; DEPRECATED cases are ALWAYS excluded.
+- Backlog vs Partially Automated: a row is BACKLOG only when its case has no
+  automated row anywhere; if the case is automated in another country/device the
+  row is PARTIALLY AUTOMATED.  Neither counts as Automated, so Coverage is the
+  same either way — the split only says whether the work is a new script or an
+  extension of an existing one.
 - Coverage % = automated ROWS ÷ baseline ROWS.  ONE definition: the Backlog tab,
   the Coverage tab and the KPI strip always agree for the same BU.  Never quote
   a case-based percentage as "coverage".
@@ -94,8 +100,10 @@ METHODOLOGY_FOR_LLM = """
     · Automated     — status Automated / Automated DEV / UAT / Prod
     · To be updated — status "To be updated" (was automated, needs maintenance)
     · N/A           — status "Automation not applicable"
-    · Backlog       — any OTHER non-automated status (Not automated, In progress,
-                      Ready to be automated, Blocked, Assigned to Testim)
+    · Backlog       — any OTHER non-automated status AND the case is automated
+                      nowhere (no automated row in any country / device)
+    · Partially automated — same statuses, but the case IS automated in another
+                      country or device: only that combination is missing
     · Unknown       — no automation status filled in at all
   "Coverage" = Automated ÷ all rows; "Coverage vs Automatable" excludes
   N/A.  A BU's Backlog is considered healthy while it stays under 3% of the total.

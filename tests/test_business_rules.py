@@ -333,3 +333,59 @@ class TestDexterAgreesWithDashboard:
         from src.ui import chat_assistant as ai
         empty = pd.DataFrame(columns=["case_id", "category"])
         assert ai._regression_stats(empty)["coverage_pct"] == 0.0
+
+
+# ── Backlog split: work to start vs work to extend ───────────────────────────
+class TestBacklogSplit:
+    """A case automated for NL but not BE is not the same job as a case nobody
+    ever automated.  The first is "Partially Automated", the second "Backlog" —
+    and neither may leak into Automated, so Coverage must not move."""
+
+    @staticmethod
+    def _rule():
+        return SimpleNamespace(
+            bu="Drogas", scope="website", suite_id=1,
+            countries_filter=["DRG LV", "DRG LT"],
+            country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            country_field_label="multi_countries",
+        )
+
+    def _frames(self):
+        rule = self._rule()
+        raw = pd.DataFrame([
+            # automated on LV only → its LT row is "partially automated"
+            _case(case_id=1, multi_countries=["DRG LV", "DRG LT"]),
+            # automated nowhere → both rows are real Backlog
+            _case(case_id=2, multi_countries=["DRG LV", "DRG LT"]),
+        ])
+        auto = pd.DataFrame([
+            {"case_id": 1, "country_label": "LV", "device": "Desktop"},
+        ])
+        return bl._classify_expanded(bl._expand_baseline(raw, [rule]), auto)
+
+    def test_row_of_a_case_automated_elsewhere_is_not_backlog(self):
+        exp = self._frames()
+        cats = dict(zip(zip(exp["case_id"], exp["country_label"]), exp["category"]))
+        assert cats[(1, "LV")] == "automated"
+        assert cats[(1, "LT")] == "partially_automated"
+        assert cats[(2, "LV")] == "backlog"
+        assert cats[(2, "LT")] == "backlog"
+
+    def test_coverage_is_unchanged_by_the_split(self):
+        s = bl._stats(self._frames(), pd.DataFrame())
+        # 1 automated of 4 rows — the split moved nothing into Automated.
+        assert s["automated"] == 1
+        assert round(s["cov_total"], 1) == 25.0
+        # Partially automated rows stay automatable, so this ratio is untouched.
+        assert round(s["cov_automatable"], 1) == 25.0
+
+    def test_categories_still_sum_to_the_total(self):
+        s = bl._stats(self._frames(), pd.DataFrame())
+        assert (s["automated"] + s["backlog"] + s["partially_automated"]
+                + s["to_be_updated"] + s["not_applicable"] + s["unknown"]
+                ) == s["total"] == 4
+
+    def test_backlog_shrinks_and_the_difference_is_the_new_bucket(self):
+        s = bl._stats(self._frames(), pd.DataFrame())
+        assert s["backlog"] == 2            # was 3 before the split
+        assert s["partially_automated"] == 1

@@ -564,6 +564,7 @@ def _render_coverage_section(
         total     = int(len(expanded))
         auto_rows = int((expanded["category"] == "automated").sum())
         backlog   = int((expanded["category"] == "backlog").sum())
+        partial   = int((expanded["category"] == "partially_automated").sum())
         cov_pct   = (auto_rows / total * 100) if total else 0.0
         c1.metric("Total", f"{total:,}",
                   help=f"Baseline rows: case × country × device — the same rows "
@@ -571,9 +572,10 @@ def _render_coverage_section(
         c2.metric("Automated", f"{auto_rows:,}",
                   help=f"{auto_unique:,} unique cases.")
         c3.metric("Backlog", f"{backlog:,}",
-                  help="Rows still to automate — the same figure as the Backlog "
-                       "tab (To update and Not applicable are counted separately "
-                       "there).")
+                  help=f"Not automated in ANY country or device — the same "
+                       f"figure as the Backlog tab. A further {partial:,} rows "
+                       f"belong to cases automated elsewhere (Partially "
+                       f"Automated there).")
         _cov_help = ("Automated rows ÷ baseline rows — the SAME basis as the "
                      "Backlog tab and the KPI strip, so all three agree.")
     else:

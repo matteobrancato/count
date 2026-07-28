@@ -360,6 +360,21 @@ def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFra
     expanded["case_id"] = expanded["case_id"].astype(int)
     merged = expanded.merge(auto_keys, on=["case_id", "country_label", "device"], how="left")
     expanded.loc[merged["_auto"].fillna(False).to_numpy(), "category"] = "automated"
+
+    # ── Split the backlog by whether the CASE is automated anywhere ──────────
+    # A test automated for NL but not BE used to land in the backlog with the
+    # same weight as a test nobody has ever automated — and the QA leads read
+    # those as two different jobs: extend an existing script vs write a new one.
+    # "Backlog" therefore means "no automation anywhere"; the rest becomes
+    # "partially_automated".  Both stay OUT of Automated, so Coverage is
+    # untouched, and Total still equals the sum of the categories.
+    auto_cases = set(expanded.loc[expanded["category"] == "automated", "case_id"])
+    if auto_cases:
+        expanded.loc[
+            (expanded["category"] == "backlog")
+            & expanded["case_id"].isin(auto_cases),
+            "category",
+        ] = "partially_automated"
     return expanded
 
 
@@ -369,6 +384,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     cats   = expanded["category"].value_counts()
     n_auto = int(cats.get("automated",      0))
     n_back = int(cats.get("backlog",         0))
+    n_part = int(cats.get("partially_automated", 0))
     n_tbu  = int(cats.get("to_be_updated",   0))
     n_na   = int(cats.get("not_applicable",  0))
     n_unk  = int(cats.get("unknown",         0))
@@ -413,8 +429,10 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
 
     # "To be updated" stays inside the automatable/scoped denominators (it was
     # previously part of Backlog), so Coverage % and N/A % are unchanged.
-    automatable = n_auto + n_back + n_tbu
-    scoped      = n_auto + n_back + n_tbu + n_na
+    # `automatable` keeps its meaning — everything that could still be
+    # automated — so splitting the backlog leaves both ratios untouched.
+    automatable = n_auto + n_back + n_part + n_tbu
+    scoped      = n_auto + n_back + n_part + n_tbu + n_na
 
     # Mobile-App breakdown: MAPP has no Java/Testim — its meaningful split is the
     # OS, which the baseline rows already carry as the device.
@@ -429,6 +447,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         "testim":          n_testim, "u_testim":  u_testim,
         "ios":             n_ios,    "android":   n_android,
         "backlog":         n_back,   "u_back":    u_back,
+        "partially_automated": n_part, "u_part":  _u("partially_automated"),
         "to_be_updated":   n_tbu,    "u_tbu":     u_tbu,
         "not_applicable":  n_na,     "u_na":      u_na,
         "unknown":         n_unk,
@@ -497,6 +516,7 @@ def _build_summary(
             "Automated": s["automated"],
             **breakdown,
             "Backlog":   s["backlog"],
+            "Partially Automated": s["partially_automated"],
             "To Update": s["to_be_updated"],
             "Not Applicable": s["not_applicable"],
             "Unknown":   s["unknown"],
@@ -579,7 +599,8 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
     disp["Device"]   = disp["device"]
     disp["Category"] = disp["category"].map({
         "automated":      "Automated",
-        "backlog":        "Backlog",
+        "backlog":              "Backlog",
+        "partially_automated":  "Partially Automated",
         "to_be_updated":  "To Update",
         "not_applicable": "Not Applicable",
     }).fillna("Other")
@@ -640,23 +661,34 @@ def _detail_view(
     s = _stats(expanded, auto)
 
     # ── Row 1: Total · Automated · Backlog · To update · N/A ─────────────────
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     _stat_card(c1, "Total", s["total"], s["u_total"])
     _stat_card(
         c2, "Automated", s["automated"], s["u_auto"],
         help_text=f"Coverage {s['cov_total']:.1f}% · "
                   f"vs Automatable {s['cov_automatable']:.1f}%",
     )
-    _stat_card(c3, "Backlog", s["backlog"], s["u_back"],
-               badge_html=_backlog_badge_html(s["backlog"], s["total"]))
     _stat_card(
-        c4, "To Update", s["to_be_updated"], s["u_tbu"],
+        c3, "Backlog", s["backlog"], s["u_back"],
+        badge_html=_backlog_badge_html(s["backlog"], s["total"]),
+        help_text="Not automated in ANY country or device — a script that "
+                  "has to be written from scratch.",
+    )
+    _stat_card(
+        c4, "Partially Automated", s["partially_automated"], s["u_part"],
+        help_text="The case IS automated somewhere, just not for this "
+                  "country / device — extending an existing script, not "
+                  "writing a new one. Counts as automatable, so Coverage "
+                  "is unchanged.",
+    )
+    _stat_card(
+        c5, "To Update", s["to_be_updated"], s["u_tbu"],
         help_text="Status 'To be updated' — was automated but needs maintenance. "
                   "Split out of Backlog (still counts as automatable, so coverage % "
                   "is unchanged).",
     )
     _stat_card(
-        c5, "Not Applicable", s["not_applicable"], s["u_na"],
+        c6, "Not Applicable", s["not_applicable"], s["u_na"],
         help_text=f"{s['na_pct']:.1f}% of scoped rows",
     )
 
@@ -785,7 +817,8 @@ def render() -> None:
     # iOS/Android for Mobile App (see `_build_summary`).
     num_cols = [col for col in ["Total", "Automated", "Java", "TestIM",
                                 "iOS", "Android", "Backlog",
-                                "To Update", "Not Applicable", "Unknown"]
+                                "Partially Automated", "To Update",
+                                "Not Applicable", "Unknown"]
                 if col in display.columns]
 
     # Header + RAG legend + export on ONE row.  The CSV is a text-sized label
