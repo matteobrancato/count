@@ -74,7 +74,7 @@ BU_RUN_ALIASES: dict[str, list[str]] = {
 # requirement (substring match, case-insensitive: "Highest" matches "Highest"
 # and "4 - Highest" but NOT "High").  Applied at EVERY expansion site — the
 # automated set (rules_engine), the regression baseline (backlog_tab), the
-# Coverage denominator and the Explorer status breakdown — so all numbers stay
+# Coverage denominator and the per-country status breakdown — so all numbers stay
 # consistent.  Currently: ICI's LU counts only for Highest-priority cases.
 CONDITIONAL_COUNTRY_TOKENS: dict[str, str] = {
     "IPXL LU": "Highest",

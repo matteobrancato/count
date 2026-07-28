@@ -605,7 +605,7 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     Two-phase warm-up:
       1. Fetch raw cases + sections for every suite in parallel (API layer).
       2. Run evaluate_rules() for every scope so the Python expansion/matching
-         is also cached.  All subsequent tab renders (Overview, Backlog, Explorer)
+         is also cached.  All subsequent tab renders (Overview, Backlog, Coverage)
          hit the @st.cache_data cache and return instantly.
 
     *on_step* is an optional callback(str) — the UI passes one to surface a
@@ -637,7 +637,7 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     # CORE scopes only: website + next_gen (the Backlog baseline, KPI strip and
     # every default view need them).  Mobile App — 7 of 16 suites, nearly half
     # the rate-limit-bound download — is DEFERRED: it loads on demand the first
-    # time someone selects the Mobile App scope (Coverage/Explorer show a
+    # time someone selects the Mobile App scope (Coverage shows a
     # spinner for that one-time fetch).
     core_rules = [r for r in ALL_RULES if r.scope in ("website", "next_gen")]
     suite_ids = sorted({r.suite_id for r in core_rules})

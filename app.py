@@ -10,9 +10,6 @@ from src.ui import (
     backlog_tab, chat_assistant, coverage_tab, data_quality, global_filter,
     kpi_strip, overview_tab, report_tab, runs_tab, stability_tab, styles,
 )
-# Explorer is temporarily disabled (minimalism experiment) — import kept next to
-# its commented render call so re-enabling is a two-line change.
-from src.ui import pivot_tab  # noqa: F401  (used by the commented Explorer tab)
 from src.ui.styles import COLORS
 
 
@@ -291,10 +288,6 @@ def main() -> None:
     _scope_now, _ = global_filter.current()
     with st.container(key="tabs_zone"):
         _freshness_label(_scope_now)
-        # NOTE: the Explorer tab is temporarily disabled — a minimalism
-        # experiment.  Everything for it is kept (pivot_tab.py, its render call
-        # below) so re-enabling is: add "📊 Explorer" back to this list, restore
-        # `tab_explore` in the unpacking, and uncomment the _render_tab line.
         (tab_backlog, tab_coverage, tab_runs, tab_stability, tab_overview,
          tab_report) = st.tabs(
             ["📋 Backlog", "📐 Coverage", "🏃 Runs", "📈 Stability",
@@ -375,7 +368,6 @@ def main() -> None:
 
     # Each remaining tab renders in isolation (see `_render_tab`).
     _render_tab(tab_coverage, coverage_tab.render, "Coverage")
-    # _render_tab(tab_explore,  pivot_tab.render,    "Explorer", "explorer_anim")
     _render_tab(tab_overview, overview_tab.render, "Overview", "overview_anim")
     _render_tab(tab_report,   report_tab.render,   "Report",   "report_anim")
     # Runs is rendered LAST on purpose (its position in the tab bar is

@@ -19,7 +19,7 @@ import streamlit as st
 
 from ..bu_rules import ALL_RULES
 
-# Canonical display order for website BUs (matches the historical Explorer
+# Canonical display order for website BUs (the order the team reads them in,
 # ordering); BUs not listed fall to the end alphabetically.
 _BU_ORDER = [
     "Drogas", "ICI Paris XL", "Kruidvat", "Marionnaud", "Savers",

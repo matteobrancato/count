@@ -329,7 +329,7 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
     bu_suites = {r.suite_id for r in rules_bu}
     raw_bu  = raw[raw["suite_id"].isin(bu_suites)] if not raw.empty else raw
     auto_bu = auto[auto["bu"] == canonical] if not auto.empty else auto
-    # Same conventions as the Coverage tab / Explorer: dedupe dual-framework
+    # Same convention as the Coverage tab: dedupe dual-framework
     # rows and drop other-BU cases on shared suites from the denominator.
     if not auto_bu.empty:
         auto_bu = auto_bu.drop_duplicates(subset=["case_id", "country_label", "device"])

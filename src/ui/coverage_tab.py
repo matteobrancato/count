@@ -4,7 +4,7 @@ Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
   * Section names normalised by auto-stripping dominant "container roots"
     (e.g. "SD" or "WTR > Root") so the rows match the Excel "Main Category".
   * Desktop / Mobile / Unspecified columns count EXPANDED rows (same convention
-    as Explorer / Report) — a case automated for both devices counts twice.
+    as the Report tab) — a case automated for both devices counts twice.
   * Coverage % on the baseline view divides EXPANDED ROWS, reusing the Backlog
     tab's own classified frame — so both tabs report one number for a BU, by
     construction rather than by coincidence (locked by tests/test_business_rules
@@ -426,11 +426,11 @@ def _filter_to_bu_countries(
     non_dep: pd.DataFrame, rules_bu: list,
 ) -> tuple[pd.DataFrame, int]:
     """Keep only cases whose country field carries one of the BU's tokens —
-    the SAME convention as the Explorer tab (pivot_tab._suite_status).
+    the same convention the automated set uses, so the two agree.
 
     On suites shared between BUs (Eastern Europe, Kruidvat/Trekpleister,
     Superdrug/Savers) this removes the other BUs' cases from the denominator,
-    so Coverage totals match Explorer instead of counting the whole suite for
+    so Coverage totals match the automated set instead of counting the whole suite for
     every BU.  Returns (filtered, n_excluded); BUs without country filters are
     passed through untouched."""
     country_col = "multi_countries"
@@ -587,7 +587,7 @@ def _render_coverage_section(
         c2.metric("Automated Cases", f"{auto_unique:,}")
         c3.metric("Automated Rows", f"{len(auto_bu):,}",
                   help="Expanded rows: Desktop + Mobile. Same convention as "
-                       "Explorer / Report.")
+                       "the Report tab.")
         _cov_help = ("Automated cases ÷ total cases.  This view has no baseline "
                      "row expansion (that is defined on the regression baseline "
                      "only), so it counts cases — hence the label.")
@@ -740,9 +740,9 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 
     raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
     auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
-    # Dedup dual-framework rows on (case, country, device) — the Explorer
-    # convention (pivot_tab._dedup_auto).  Without this a case automated by
-    # BOTH Java and Testim counted as two D+M rows here but one in Explorer.
+    # Dedup dual-framework rows on (case, country, device) — the same
+    # convention the Report tab uses.  Without this a case automated by
+    # BOTH Java and Testim would count as two D+M rows here but one there.
     if not auto_bu.empty:
         auto_bu = auto_bu.drop_duplicates(subset=["case_id", "country_label", "device"])
 

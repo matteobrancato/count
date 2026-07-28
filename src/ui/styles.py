@@ -764,6 +764,16 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 .bl-summary .bu {{ font-weight: 700; color: {c['ink']}; }}
 .bl-summary .strong {{ font-weight: 700; color: {c['ink']}; }}
 .bl-summary .mut {{ color: {c['muted']}; }}
+/* Backlog health, table-weight: the card's pill without its tinted background,
+   which would compete with the coverage bars on every row. */
+.bl-summary .bl-pct {{
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-top: 1px;
+    cursor: help;
+}}
 .bl-summary .scope-pill {{
     display: inline-block;
     font-size: 11px;

@@ -14,7 +14,7 @@ Device expansion
 
 Country expansion
 ─────────────────
-  Website BUs  : multi_countries filtered to BU tokens (same as Explorer)
+  Website BUs  : multi_countries filtered to BU tokens
   Microservices     : custom_country_coverage filtered to ALL_COUNTRY_TOKENS
 
 Classification (per expanded row)
@@ -914,6 +914,24 @@ def _detail_view(
 
 
 # ── render ────────────────────────────────────────────────────────────────────
+def _backlog_pct_html(backlog: int, total: int) -> str:
+    """The same health verdict as the card's pill, quiet enough for a table row.
+
+    The pill's tinted background repeated on eight rows would fight the coverage
+    bars for attention, so here it is just the percentage in the verdict colour.
+    """
+    if not total:
+        return ""
+    pct   = backlog / total * 100
+    over  = pct > _BACKLOG_THRESHOLD_PCT
+    color = COLORS["danger"] if over else COLORS["success"]
+    return (
+        f"<span class='bl-pct' style='color:{color}' "
+        f"title='Backlog is {pct:.1f}% of the baseline Total "
+        f"(healthy \u2264 {_BACKLOG_THRESHOLD_PCT:.0f}%).'>{pct:.1f}%</span>"
+    )
+
+
 def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
                         selected_bu: str = "") -> str:
     """Presentation-grade HTML for the All-BU summary — same data as the native
@@ -936,7 +954,10 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         _dot, color = coverage_health(cov)
         nums = "".join(
             f'<td class="{"strong" if col in strong_cols else "mut"}">'
-            f'{int(r[col]):,}</td>'
+            f'{int(r[col]):,}'
+            + (_backlog_pct_html(int(r[col]), int(r["Total"]))
+               if col == "Backlog" else "")
+            + '</td>'
             for col in num_cols
         )
         cov_cell = (
