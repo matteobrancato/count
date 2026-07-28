@@ -845,6 +845,49 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     overflow-y: auto;
 }}
 
+/* ── Clickable stat tiles ───────────────────────────────────────────────────
+   Streamlit cannot bind a callback to custom HTML, so each tile holds its
+   download button stretched invisibly across it: the card IS the click target
+   and no second control appears.  The button keeps its label for screen
+   readers and its tooltip on hover. */
+[class*="st-key-tile_"] {{
+    position: relative !important;
+}}
+[class*="st-key-tile_"] [data-testid="stDownloadButton"] {{
+    position: absolute !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    z-index: 3;
+}}
+[class*="st-key-tile_"] [data-testid="stDownloadButton"] button {{
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    opacity: 0 !important;
+    cursor: pointer !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transform: none !important;
+}}
+/* Hover: lift the card so the tile reads as actionable. */
+[class*="st-key-tile_"]:hover .stat-card {{
+    border-color: {c['brand']} !important;
+    box-shadow: 0 4px 14px rgba(46, 91, 255, 0.16) !important;
+    transform: translateY(-1px);
+}}
+[class*="st-key-tile_"] .stat-card {{
+    transition: border-color .15s ease, box-shadow .15s ease, transform .12s ease;
+}}
+/* Keyboard focus must stay visible even though the button is transparent. */
+[class*="st-key-tile_"] [data-testid="stDownloadButton"] button:focus-visible {{
+    opacity: 1 !important;
+    outline: 2px solid {c['brand']} !important;
+    outline-offset: -2px;
+    background: rgba(46, 91, 255, 0.06) !important;
+    color: transparent !important;
+}}
+
 /* ── Trim Streamlit's default footer (purely decorative) ──────────────────── */
 footer {{ visibility: hidden; height: 0; }}
 

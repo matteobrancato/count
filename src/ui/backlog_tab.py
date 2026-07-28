@@ -42,6 +42,7 @@ Scopes
 from __future__ import annotations
 
 import html
+import re
 
 import pandas as pd
 import streamlit as st
@@ -86,6 +87,15 @@ _STATUS_TO_UPDATE: set[str] = {
 # no big_regr label for MAPP — priority IS the baseline definition).  Matched
 # normalised (strip + lowercase).
 _MAPP_PRIORITIES: set[str] = {"high", "highest"}
+
+
+# Which status field owns a device row.  Used both when classifying (a TestIM
+# case is judged per device) and when explaining that classification in the
+# export, so the two can never tell different stories.
+_DEVICE_STATUS_COL = {
+    "Desktop": "status_Automation Status Testim Desktop",
+    "Mobile":  "status_Automation Status Testim Mobile View",
+}
 
 
 def _is_to_update(series: pd.Series) -> pd.Series:
@@ -250,10 +260,6 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     # Fix: re-classify a device row using its TestIM-specific status field ONLY when
     # that field is actually populated.  If empty (default / never set), keep the
     # initial classification based on combined status fields (which captures Java).
-    _DEVICE_STATUS_COL = {
-        "Desktop": "status_Automation Status Testim Desktop",
-        "Mobile":  "status_Automation Status Testim Mobile View",
-    }
     for dev, scol in _DEVICE_STATUS_COL.items():
         if scol not in raw.columns:
             continue
@@ -648,6 +654,58 @@ _EXPORT_CATEGORIES = [
 ]
 
 
+_CATEGORY_LABELS = {
+    "total": "Total", "automated": "Automated", "backlog": "Backlog",
+    "partially_automated": "Partially Automated", "to_be_updated": "To Update",
+    "not_applicable": "Not Applicable", "unknown": "Unknown",
+}
+
+
+def _deciding_field(case: dict, device: str, category: str) -> tuple[str, str]:
+    """Which TestRail field decided this row, and with what value.
+
+    Mirrors `_expand_baseline`: a device row is judged by its own TestIM field
+    when that field is populated, otherwise by whichever status field carries a
+    verdict.  The answer must match the row's category — reporting "Automated
+    UAT" next to a row that is NOT automated (because that automation covers a
+    different country) would make the export lie about its own numbers.
+    """
+    if category == "partially_automated":
+        return ("Country / device coverage",
+                "Automated on another country or device, not on this one")
+    if not case:
+        return ("—", "—")
+
+    def _val(col):
+        v = case.get(col)
+        return v.strip() if isinstance(v, str) and v.strip() else None
+
+    def _fits(v: str) -> bool:
+        if category == "automated":
+            return v in _STATUS_AUTO
+        if category == "not_applicable":
+            return v in _STATUS_NA
+        if category == "to_be_updated":
+            return v.strip().lower() in _STATUS_TO_UPDATE
+        if category == "backlog":
+            return (v not in _STATUS_AUTO and v not in _STATUS_NA
+                    and v.strip().lower() not in _STATUS_TO_UPDATE)
+        return True                        # "total" export: any verdict will do
+
+    dev_col = _DEVICE_STATUS_COL.get(device)
+    ordered = ([dev_col] if dev_col else []) + [
+        c for c in case if c.startswith("status_") and c != dev_col
+    ]
+    # The device's own field first, then the rest — the classifier's order.
+    for col in ordered:
+        if col and (v := _val(col)) and _fits(v):
+            return (col[len("status_"):], v)
+    for col in ordered:                    # fall back to any populated field
+        if col and (v := _val(col)):
+            return (col[len("status_"):], v)
+    return ("—", "not set")
+
+
 def _category_rows(expanded: pd.DataFrame, category: str,
                    scope: str) -> pd.DataFrame:
     """The exact rows behind one tile, ready to hand to a QA lead.
@@ -666,31 +724,62 @@ def _category_rows(expanded: pd.DataFrame, category: str,
     if rows.empty:
         return pd.DataFrame()
 
-    meta_cols = ["case_id", "title", "url", "section_path"]
+    base_cols = ["case_id", "title", "url", "section_path", "priority_label",
+                 "type_label", "device", "automation_tool", "labels",
+                 "multi_countries", "country_coverage"]
+    meta_by_case: dict[int, dict] = {}
     try:
         raw, _auto, _rules = _load_scope(scope)     # cache hit, no TestRail call
-        meta = raw[[c for c in meta_cols if c in raw.columns]].drop_duplicates("case_id")
+        cols = ([c for c in base_cols if c in raw.columns]
+                + [c for c in raw.columns if c.startswith("status_")])
+        meta = raw[cols].drop_duplicates("case_id").copy()
         meta["case_id"] = meta["case_id"].astype(int)
+        meta_by_case = meta.set_index("case_id").to_dict("index")
+        # `device` here is the TestRail field, not the expanded row's device.
+        meta = meta.rename(columns={"device": "device_field"})
     except Exception:                                                   # noqa: BLE001
-        meta = pd.DataFrame(columns=meta_cols)
+        meta = pd.DataFrame(columns=["case_id"])
 
     out = rows[["case_id", "country_label", "device", "category"]].copy()
     out["case_id"] = out["case_id"].astype(int)
     if not meta.empty:
         out = out.merge(meta, on="case_id", how="left")
     out.insert(0, "Case ID", "C" + out["case_id"].astype(str))
-    label_of = dict(_EXPORT_CATEGORIES)
-    out["category"] = out["category"].map(
-        {"total": "Total", "automated": "Automated", "backlog": "Backlog",
-         "partially_automated": "Partially Automated",
-         "to_be_updated": "To Update", "not_applicable": "Not Applicable",
-         "unknown": "Unknown"}).fillna(out["category"])
+    out["category"] = out["category"].map(_CATEGORY_LABELS).fillna(out["category"])
+
+    # ── The evidence: which field decided, and every field it was decided from
+    # A QA lead should be able to re-run our reasoning by reading one line, so
+    # the row carries the deciding field AND the raw TestRail values behind it.
+    decided = [_deciding_field(meta_by_case.get(cid, {}), dev, cat)
+               for cid, dev, cat in zip(out["case_id"], out["device"],
+                                        rows["category"])]
+    out["Decided By"]    = [d[0] for d in decided]
+    out["Deciding Value"] = [d[1] for d in decided]
+
     out = out.rename(columns={"title": "Title", "country_label": "Country",
                               "device": "Device", "category": "Category",
-                              "section_path": "Section", "url": "TestRail Link"})
-    keep = [c for c in ["Case ID", "Title", "Country", "Device", "Category",
-                        "Section", "TestRail Link"] if c in out.columns]
-    _ = label_of
+                              "section_path": "Section", "url": "TestRail Link",
+                              "priority_label": "Priority", "type_label": "Type",
+                              "automation_tool": "Automation Tool"})
+    # Status fields keep their TestRail label, minus our internal prefix.
+    out = out.rename(columns={c: c[len("status_"):]
+                              for c in out.columns if c.startswith("status_")})
+    for col in ("labels", "multi_countries", "country_coverage"):
+        if col in out.columns:
+            out[col] = out[col].map(
+                lambda v: ", ".join(v) if isinstance(v, list) else (v or ""))
+    out = out.rename(columns={"labels": "Labels",
+                              "multi_countries": "Countries (multi_countries)",
+                              "country_coverage": "Country Coverage",
+                              "device_field": "Device (TestRail field)"})
+
+    lead = ["Case ID", "Title", "Country", "Device", "Category",
+            "Decided By", "Deciding Value"]
+    tail = ["Section", "TestRail Link"]
+    middle = [c for c in out.columns
+              if c not in lead + tail + ["case_id"]]
+    keep = ([c for c in lead if c in out.columns] + sorted(middle)
+            + [c for c in tail if c in out.columns])
     return out[keep].sort_values(["Category", "Case ID", "Country", "Device"])
 
 
@@ -717,54 +806,49 @@ def _detail_view(
     s = _stats(expanded, auto)
 
     # ── Row 1: Total · Automated · Backlog · To update · N/A ─────────────────
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    _stat_card(c1, "Total", s["total"], s["u_total"])
-    _stat_card(
-        c2, "Automated", s["automated"], s["u_auto"],
-        help_text=f"Coverage {s['cov_total']:.1f}% · "
-                  f"vs Automatable {s['cov_automatable']:.1f}%",
-    )
-    _stat_card(
-        c3, "Backlog", s["backlog"], s["u_back"],
-        badge_html=_backlog_badge_html(s["backlog"], s["total"]),
-        help_text="Not automated in ANY country or device — a script that "
-                  "has to be written from scratch.",
-    )
-    _stat_card(
-        c4, "Partially Automated", s["partially_automated"], s["u_part"],
-        help_text="The case IS automated somewhere, just not for this "
-                  "country / device — extending an existing script, not "
-                  "writing a new one. Counts as automatable, so Coverage "
-                  "is unchanged.",
-    )
-    _stat_card(
-        c5, "To Update", s["to_be_updated"], s["u_tbu"],
-        help_text="Status 'To be updated' — was automated but needs maintenance. "
-                  "Split out of Backlog (still counts as automatable, so coverage % "
-                  "is unchanged).",
-    )
-    _stat_card(
-        c6, "Not Applicable", s["not_applicable"], s["u_na"],
-        help_text=f"{s['na_pct']:.1f}% of scoped rows",
-    )
-
-    # ── One export per tile: the rows that make up that number ──────────────
-    # A tile answers "how many"; this answers "which ones", with a TestRail
-    # link per row so the reader can verify any single line at the source.
-    with st.container(key="tile_exports"):
-        for col, (cat, label) in zip([c1, c2, c3, c4, c5, c6], _EXPORT_CATEGORIES):
+    # Each tile is its own container so the download button can be stretched
+    # over it (see `.st-key-tile_` in styles.py): clicking the number gives you
+    # the rows behind it, with no second control on screen.
+    tiles = [
+        ("total", "Total", s["total"], s["u_total"], "",
+         "Every baseline row for this BU: case × country × device."),
+        ("automated", "Automated", s["automated"], s["u_auto"], "",
+         f"Coverage {s['cov_total']:.1f}% · "
+         f"vs Automatable {s['cov_automatable']:.1f}%"),
+        ("backlog", "Backlog", s["backlog"], s["u_back"],
+         _backlog_badge_html(s["backlog"], s["total"]),
+         "Not automated in ANY country or device — a script that has to be "
+         "written from scratch."),
+        ("partially_automated", "Partially Automated", s["partially_automated"],
+         s["u_part"], "",
+         "The case IS automated somewhere, just not for this country / device "
+         "— extending an existing script, not writing a new one. Counts as "
+         "automatable, so Coverage is unchanged."),
+        ("to_be_updated", "To Update", s["to_be_updated"], s["u_tbu"], "",
+         "Status 'To be updated' — was automated but needs maintenance. Split "
+         "out of Backlog (still counts as automatable, so coverage % is "
+         "unchanged)."),
+        ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"], "",
+         f"{s['na_pct']:.1f}% of scoped rows"),
+    ]
+    key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"{scope}_{bu}")
+    for col, (cat, label, n, u, badge, tip) in zip(st.columns(6), tiles):
+        with col.container(key=f"tile_{key_base}_{cat}"):
+            stat_card(st, label, n, u, badge_html=badge, help_text=tip)
             rows = _category_rows(expanded, cat, scope)
             if rows.empty:
                 continue
-            col.download_button(
-                f"⬇ {len(rows):,} rows",
+            st.download_button(
+                f"Download the {len(rows):,} rows behind {label}",
                 rows.to_csv(index=False).encode("utf-8"),
                 file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.csv",
                 mime="text/csv",
-                key=f"dl_{scope}_{bu}_{cat}",
-                help=f"Download every row behind {label} — case, country, "
-                     f"device and a direct TestRail link.",
+                key=f"dl_{key_base}_{cat}",
+                help=f"Download the {len(rows):,} rows behind {label} — every "
+                     f"TestRail field the classification was based on, plus a "
+                     f"direct link per case.",
             )
+
 
     # ── Coverage line (with N/A %) ────────────────────────────────────────────
     st.markdown(

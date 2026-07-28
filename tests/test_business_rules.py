@@ -435,3 +435,72 @@ class TestTileExports:
         exp = self._setup(monkeypatch)
         assert bl._category_rows(exp, "to_be_updated", "website").empty
         assert bl._category_rows(pd.DataFrame(), "backlog", "website").empty
+
+
+class TestExportEvidence:
+    """The export carries the TestRail fields the decision was made from, and
+    the "Decided By" column must agree with the row's category — quoting
+    "Automated UAT" next to a row that is not automated would make the file
+    contradict the number it is supposed to justify."""
+
+    @staticmethod
+    def _setup(monkeypatch):
+        rule = SimpleNamespace(
+            bu="ICI Paris XL", scope="website", suite_id=1,
+            countries_filter=["IPXL NL", "IPXL BE"],
+            country_labels={"IPXL NL": "NL", "IPXL BE": "BE"},
+            country_field_label="multi_countries",
+        )
+        raw = pd.DataFrame([
+            {"case_id": 1, "suite_id": 1, "labels": ["big_regr_desktop"],
+             "type_label": "Functional",
+             "multi_countries": ["IPXL NL", "IPXL BE"],
+             "country_coverage": ["IPXL NL"], "priority_label": "High",
+             "device": "Both", "title": "t", "section_path": "SD",
+             "url": "u", "automation_tool": None,
+             "status_Automation Status": "Ready to be automated",
+             "status_Automation Status Testim Desktop": "Automated UAT",
+             "status_Automation Status Testim Mobile View": None},
+            {"case_id": 2, "suite_id": 1, "labels": ["big_regr_desktop"],
+             "type_label": "Functional",
+             "multi_countries": ["IPXL NL", "IPXL BE"],
+             "country_coverage": [], "priority_label": "High",
+             "device": "Desktop", "title": "t2", "section_path": "SD",
+             "url": "u2", "automation_tool": None,
+             "status_Automation Status": "Blocked",
+             "status_Automation Status Testim Desktop": None,
+             "status_Automation Status Testim Mobile View": None},
+        ])
+        auto = pd.DataFrame([
+            {"case_id": 1, "country_label": "NL", "device": "Desktop"},
+        ])
+        monkeypatch.setattr(bl, "_load_scope", lambda scope: (raw, auto, [rule]))
+        return bl._classify_expanded(bl._expand_baseline(raw, [rule]), auto)
+
+    def test_carries_the_testrail_decision_fields(self, monkeypatch):
+        rows = bl._category_rows(self._setup(monkeypatch), "total", "website")
+        for col in ("Automation Status", "Automation Status Testim Desktop",
+                    "Country Coverage", "Countries (multi_countries)",
+                    "Labels", "Priority", "Type", "Decided By", "Deciding Value"):
+            assert col in rows.columns, col
+
+    def test_decision_column_agrees_with_the_category(self, monkeypatch):
+        rows = bl._category_rows(self._setup(monkeypatch), "total", "website")
+        by = {(r["Case ID"], r["Country"]): (r["Category"], r["Decided By"],
+                                             r["Deciding Value"])
+              for _, r in rows.iterrows()}
+        # automated → the field that actually says "automated"
+        cat, field, value = by[("C1", "NL")]
+        assert cat == "Automated" and value == "Automated UAT"
+        # partially automated → NOT an automated value, but the coverage reason
+        cat, field, value = by[("C1", "BE")]
+        assert cat == "Partially Automated"
+        assert "coverage" in field.lower()
+        assert value not in _STATUS_AUTO_FOR_TEST
+        # backlog → the blocking status, from the field that carries it
+        cat, field, value = by[("C2", "NL")]
+        assert (cat, field, value) == ("Backlog", "Automation Status", "Blocked")
+
+
+_STATUS_AUTO_FOR_TEST = {"Automated", "Automated DEV", "Automated UAT",
+                         "Automated Prod"}
