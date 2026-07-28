@@ -389,3 +389,49 @@ class TestBacklogSplit:
         s = bl._stats(self._frames(), pd.DataFrame())
         assert s["backlog"] == 2            # was 3 before the split
         assert s["partially_automated"] == 1
+
+
+# ── the export behind a tile must match the tile ─────────────────────────────
+class TestTileExports:
+    """Each tile offers a CSV of the rows behind its number.  If the two ever
+    disagree the feature is worse than useless — it hands a QA lead a file that
+    contradicts the screen."""
+
+    @staticmethod
+    def _setup(monkeypatch):
+        rule = SimpleNamespace(
+            bu="Drogas", scope="website", suite_id=1,
+            countries_filter=["DRG LV", "DRG LT"],
+            country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            country_field_label="multi_countries",
+        )
+        raw = pd.DataFrame([
+            _case(case_id=1, title="A", section_path="SD > X", url="u1"),
+            _case(case_id=2, title="B", section_path="SD > X", url="u2"),
+            _case(case_id=3, title="C", section_path="SD > Y", url="u3",
+                  **{"status_Automation Status": "Automation not applicable"}),
+        ])
+        auto = pd.DataFrame([
+            {"case_id": 1, "country_label": "LV", "device": "Desktop"},
+        ])
+        monkeypatch.setattr(bl, "_load_scope", lambda scope: (raw, auto, [rule]))
+        return bl._classify_expanded(bl._expand_baseline(raw, [rule]), auto)
+
+    def test_every_export_matches_its_tile(self, monkeypatch):
+        exp = self._setup(monkeypatch)
+        s = bl._stats(exp, pd.DataFrame())
+        for cat, _label in bl._EXPORT_CATEGORIES:
+            expected = s["total"] if cat == "total" else s.get(cat, 0)
+            assert len(bl._category_rows(exp, cat, "website")) == expected, cat
+
+    def test_export_carries_a_testrail_link_per_row(self, monkeypatch):
+        exp = self._setup(monkeypatch)
+        rows = bl._category_rows(exp, "backlog", "website")
+        assert "TestRail Link" in rows.columns
+        assert rows["TestRail Link"].notna().all()
+        assert rows["Case ID"].str.startswith("C").all()
+
+    def test_empty_category_yields_no_file(self, monkeypatch):
+        exp = self._setup(monkeypatch)
+        assert bl._category_rows(exp, "to_be_updated", "website").empty
+        assert bl._category_rows(pd.DataFrame(), "backlog", "website").empty

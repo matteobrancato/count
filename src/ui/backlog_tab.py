@@ -638,6 +638,62 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
         st.error(f"Pivot error: {exc}")
 
 
+_EXPORT_CATEGORIES = [
+    ("total",               "Total"),
+    ("automated",           "Automated"),
+    ("backlog",             "Backlog"),
+    ("partially_automated", "Partially Automated"),
+    ("to_be_updated",       "To Update"),
+    ("not_applicable",      "Not Applicable"),
+]
+
+
+def _category_rows(expanded: pd.DataFrame, category: str,
+                   scope: str) -> pd.DataFrame:
+    """The exact rows behind one tile, ready to hand to a QA lead.
+
+    Joins the classified baseline rows with the case metadata already in the
+    cached `raw_cases` frame — title, section and the TestRail case URL — so a
+    reader can open any row in TestRail.  Deep-linking the TILE to a filtered
+    TestRail list is not possible: TestRail cannot express our filter in a URL,
+    and it counts CASES while a tile counts ROWS, so the two would disagree on
+    screen.  Per-row links have neither problem.
+    """
+    if expanded is None or expanded.empty:
+        return pd.DataFrame()
+    rows = (expanded if category == "total"
+            else expanded[expanded["category"] == category])
+    if rows.empty:
+        return pd.DataFrame()
+
+    meta_cols = ["case_id", "title", "url", "section_path"]
+    try:
+        raw, _auto, _rules = _load_scope(scope)     # cache hit, no TestRail call
+        meta = raw[[c for c in meta_cols if c in raw.columns]].drop_duplicates("case_id")
+        meta["case_id"] = meta["case_id"].astype(int)
+    except Exception:                                                   # noqa: BLE001
+        meta = pd.DataFrame(columns=meta_cols)
+
+    out = rows[["case_id", "country_label", "device", "category"]].copy()
+    out["case_id"] = out["case_id"].astype(int)
+    if not meta.empty:
+        out = out.merge(meta, on="case_id", how="left")
+    out.insert(0, "Case ID", "C" + out["case_id"].astype(str))
+    label_of = dict(_EXPORT_CATEGORIES)
+    out["category"] = out["category"].map(
+        {"total": "Total", "automated": "Automated", "backlog": "Backlog",
+         "partially_automated": "Partially Automated",
+         "to_be_updated": "To Update", "not_applicable": "Not Applicable",
+         "unknown": "Unknown"}).fillna(out["category"])
+    out = out.rename(columns={"title": "Title", "country_label": "Country",
+                              "device": "Device", "category": "Category",
+                              "section_path": "Section", "url": "TestRail Link"})
+    keep = [c for c in ["Case ID", "Title", "Country", "Device", "Category",
+                        "Section", "TestRail Link"] if c in out.columns]
+    _ = label_of
+    return out[keep].sort_values(["Category", "Case ID", "Country", "Device"])
+
+
 def _detail_view(
     bu: str,
     scope: str,
@@ -691,6 +747,24 @@ def _detail_view(
         c6, "Not Applicable", s["not_applicable"], s["u_na"],
         help_text=f"{s['na_pct']:.1f}% of scoped rows",
     )
+
+    # ── One export per tile: the rows that make up that number ──────────────
+    # A tile answers "how many"; this answers "which ones", with a TestRail
+    # link per row so the reader can verify any single line at the source.
+    with st.container(key="tile_exports"):
+        for col, (cat, label) in zip([c1, c2, c3, c4, c5, c6], _EXPORT_CATEGORIES):
+            rows = _category_rows(expanded, cat, scope)
+            if rows.empty:
+                continue
+            col.download_button(
+                f"⬇ {len(rows):,} rows",
+                rows.to_csv(index=False).encode("utf-8"),
+                file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.csv",
+                mime="text/csv",
+                key=f"dl_{scope}_{bu}_{cat}",
+                help=f"Download every row behind {label} — case, country, "
+                     f"device and a direct TestRail link.",
+            )
 
     # ── Coverage line (with N/A %) ────────────────────────────────────────────
     st.markdown(
