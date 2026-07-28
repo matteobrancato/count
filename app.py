@@ -398,6 +398,19 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         pass
 
+    # Same idea for the Backlog tile exports: building one BU's evidence frame
+    # costs ~250ms, and it is the only thing left that a BU switch waits for.
+    # Doing it here — after the page is on screen, from frames that are already
+    # cached — trades a few seconds of invisible work for instant tile
+    # rendering on every BU.  NO TestRail calls: it reads the same cached
+    # expansion the tab just rendered.
+    try:
+        from src.ui.backlog_tab import _scoped_bus, _tile_exports
+        for _bu, _scope in _scoped_bus():
+            _tile_exports(_bu, _scope)
+    except Exception:  # noqa: BLE001
+        pass
+
     # Invisible: pre-expiry background re-warm while the app has viewers.
     _background_refresh()
 

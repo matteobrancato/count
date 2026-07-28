@@ -595,7 +595,7 @@ def _stat_card(col, label: str, n: int, u: int, *, badge_html: str = "",
 
 def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
     """Interactive pivot over the full regression baseline (all categories)."""
-    st.markdown("##### 📊 Pivot")
+    section_title("Pivot")
     if expanded.empty:
         return
 
@@ -706,28 +706,21 @@ def _deciding_field(case: dict, device: str, category: str) -> tuple[str, str]:
     return ("—", "not set")
 
 
-def _category_rows(expanded: pd.DataFrame, category: str,
-                   scope: str) -> pd.DataFrame:
-    """The exact rows behind one tile, ready to hand to a QA lead.
+def _evidence_frame(expanded: pd.DataFrame, scope: str) -> pd.DataFrame:
+    """Every baseline row with the TestRail evidence behind its classification.
 
-    Joins the classified baseline rows with the case metadata already in the
-    cached `raw_cases` frame — title, section and the TestRail case URL — so a
-    reader can open any row in TestRail.  Deep-linking the TILE to a filtered
-    TestRail list is not possible: TestRail cannot express our filter in a URL,
-    and it counts CASES while a tile counts ROWS, so the two would disagree on
-    screen.  Per-row links have neither problem.
+    Built ONCE per BU (see `_tile_exports`): the per-case metadata join, the
+    dict build and the deciding-field pass are the expensive part, and doing
+    them per tile cost ~460ms on every rerun of the tab.
     """
     if expanded is None or expanded.empty:
-        return pd.DataFrame()
-    rows = (expanded if category == "total"
-            else expanded[expanded["category"] == category])
-    if rows.empty:
         return pd.DataFrame()
 
     base_cols = ["case_id", "title", "url", "section_path", "priority_label",
                  "type_label", "device", "automation_tool", "labels",
                  "multi_countries", "country_coverage"]
     meta_by_case: dict[int, dict] = {}
+    meta = pd.DataFrame(columns=["case_id"])
     try:
         raw, _auto, _rules = _load_scope(scope)     # cache hit, no TestRail call
         cols = ([c for c in base_cols if c in raw.columns]
@@ -738,22 +731,20 @@ def _category_rows(expanded: pd.DataFrame, category: str,
         # `device` here is the TestRail field, not the expanded row's device.
         meta = meta.rename(columns={"device": "device_field"})
     except Exception:                                                   # noqa: BLE001
-        meta = pd.DataFrame(columns=["case_id"])
+        pass
 
-    out = rows[["case_id", "country_label", "device", "category"]].copy()
+    out = expanded[["case_id", "country_label", "device", "category"]].copy()
     out["case_id"] = out["case_id"].astype(int)
+    out["_cat"] = out["category"]
     if not meta.empty:
         out = out.merge(meta, on="case_id", how="left")
-    out.insert(0, "Case ID", "C" + out["case_id"].astype(str))
-    out["category"] = out["category"].map(_CATEGORY_LABELS).fillna(out["category"])
 
-    # ── The evidence: which field decided, and every field it was decided from
-    # A QA lead should be able to re-run our reasoning by reading one line, so
-    # the row carries the deciding field AND the raw TestRail values behind it.
+    out.insert(0, "Case ID", "C" + out["case_id"].astype(str))
     decided = [_deciding_field(meta_by_case.get(cid, {}), dev, cat)
                for cid, dev, cat in zip(out["case_id"], out["device"],
-                                        rows["category"])]
-    out["Decided By"]    = [d[0] for d in decided]
+                                        out["_cat"])]
+    out["category"]       = out["category"].map(_CATEGORY_LABELS).fillna(out["category"])
+    out["Decided By"]     = [d[0] for d in decided]
     out["Deciding Value"] = [d[1] for d in decided]
 
     out = out.rename(columns={"title": "Title", "country_label": "Country",
@@ -761,7 +752,6 @@ def _category_rows(expanded: pd.DataFrame, category: str,
                               "section_path": "Section", "url": "TestRail Link",
                               "priority_label": "Priority", "type_label": "Type",
                               "automation_tool": "Automation Tool"})
-    # Status fields keep their TestRail label, minus our internal prefix.
     out = out.rename(columns={c: c[len("status_"):]
                               for c in out.columns if c.startswith("status_")})
     for col in ("labels", "multi_countries", "country_coverage"):
@@ -777,10 +767,46 @@ def _category_rows(expanded: pd.DataFrame, category: str,
             "Decided By", "Deciding Value"]
     tail = ["Section", "TestRail Link"]
     middle = [c for c in out.columns
-              if c not in lead + tail + ["case_id"]]
+              if c not in lead + tail + ["case_id", "_cat"]]
     keep = ([c for c in lead if c in out.columns] + sorted(middle)
             + [c for c in tail if c in out.columns])
-    return out[keep].sort_values(["Category", "Case ID", "Country", "Device"])
+    return out[keep + ["_cat"]].sort_values(
+        ["Category", "Case ID", "Country", "Device"])
+
+
+def _category_rows(expanded: pd.DataFrame, category: str,
+                   scope: str) -> pd.DataFrame:
+    """The rows behind one tile — the whole frame for "total"."""
+    ev = _evidence_frame(expanded, scope)
+    if ev.empty:
+        return ev
+    sub = ev if category == "total" else ev[ev["_cat"] == category]
+    return sub.drop(columns=["_cat"])
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _tile_exports(bu: str, scope: str) -> dict[str, bytes]:
+    """Ready-to-download CSV bytes per tile, built once per BU and refresh.
+
+    Streamlit's download button needs its payload at render time, so without
+    this the six exports were rebuilt on EVERY rerun of the tab (~460ms with
+    ICI-sized data) even when nobody clicked one.  Keyed like the rest of the
+    data caches, so ↻ clears it alongside the numbers.
+    """
+    loader = _mapp_backlog_data if scope == "mobile_app" else _backlog_data
+    try:
+        _summary, expanded_by_bu, _auto_by_bu = loader()
+    except Exception:                                                   # noqa: BLE001
+        return {}
+    ev = _evidence_frame(expanded_by_bu.get((bu, scope)), scope)
+    if ev.empty:
+        return {}
+    out: dict[str, bytes] = {}
+    for cat, _label in _EXPORT_CATEGORIES:
+        sub = ev if cat == "total" else ev[ev["_cat"] == cat]
+        if not sub.empty:
+            out[cat] = sub.drop(columns=["_cat"]).to_csv(index=False).encode("utf-8")
+    return out
 
 
 def _detail_view(
@@ -832,19 +858,21 @@ def _detail_view(
          f"{s['na_pct']:.1f}% of scoped rows"),
     ]
     key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"{scope}_{bu}")
+    exports  = _tile_exports(bu, scope)      # cached: one build per refresh
     for col, (cat, label, n, u, badge, tip) in zip(st.columns(6), tiles):
         with col.container(key=f"tile_{key_base}_{cat}"):
             stat_card(st, label, n, u, badge_html=badge, help_text=tip)
-            rows = _category_rows(expanded, cat, scope)
-            if rows.empty:
+            payload = exports.get(cat)
+            if not payload:
                 continue
+            n_rows = payload.count(b"\n") - 1        # header excluded
             st.download_button(
-                f"Download the {len(rows):,} rows behind {label}",
-                rows.to_csv(index=False).encode("utf-8"),
+                f"Download the {n_rows:,} rows behind {label}",
+                payload,
                 file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.csv",
                 mime="text/csv",
                 key=f"dl_{key_base}_{cat}",
-                help=f"Download the {len(rows):,} rows behind {label} — every "
+                help=f"Download the {n_rows:,} rows behind {label} — every "
                      f"TestRail field the classification was based on, plus a "
                      f"direct link per case.",
             )
@@ -861,7 +889,7 @@ def _detail_view(
     st.divider()
 
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
-    st.markdown("##### Automated by framework")
+    section_title("Automated by Framework")
     f1, f2, f3 = st.columns(3)
     _stat_card(f1, "Java",   s["java"],   s["u_java"])
     _stat_card(f2, "TestIM", s["testim"], s["u_testim"])
@@ -898,14 +926,14 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
     strong_cols = {"Total", "Automated", "Backlog"}   # numbers a manager reads first
     head = (
         '<thead><tr>'
-        '<th class="l"></th><th class="l">Business Unit</th><th class="l">Scope</th>'
+        '<th class="l">Business Unit</th><th class="l">Scope</th>'
         + "".join(f'<th>{col}</th>' for col in num_cols)
         + '<th class="l">Coverage</th></tr></thead>'
     )
     body_rows = []
     for _, r in df.iterrows():
         cov = float(r["Coverage %"])
-        dot, color = coverage_health(cov)
+        _dot, color = coverage_health(cov)
         nums = "".join(
             f'<td class="{"strong" if col in strong_cols else "mut"}">'
             f'{int(r[col]):,}</td>'
@@ -920,7 +948,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         )
         sel_cls = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
         body_rows.append(
-            f'<tr{sel_cls}><td class="l">{dot}</td>'
+            f'<tr{sel_cls}>'
             f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
             f'<td class="l"><span class="scope-pill">{html.escape(str(r["Scope"]))}</span></td>'
             f'{nums}{cov_cell}</tr>'
@@ -989,13 +1017,7 @@ def render() -> None:
         # inline-block <span>, not a block <div> — same reason as the legend
         # below: a block element collapses against Streamlit's -1rem markdown
         # margin and lands 8px below the legend it should be level with.
-        st.markdown(
-            f'<span style="display:inline-block;font-weight:700;font-size:16px;'
-            f'color:{COLORS["ink"]};border-left:3px solid {COLORS["brand"]};'
-            f'padding-left:10px;line-height:1.25">'
-            f'All Business Units</span>',
-            unsafe_allow_html=True,
-        )
+        section_title("All Business Units", top=0)
     # Native horizontal flex row: legend and CSV share one optically centred
     # line, right-aligned against the table's right edge.
     with c_meta, st.container(

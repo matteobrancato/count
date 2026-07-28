@@ -73,7 +73,7 @@ def _apply_display_values(df: pd.DataFrame) -> pd.DataFrame:
 # ------------------------------------------------------------------ suite status breakdown
 def _suite_status(raw: pd.DataFrame, rules: list, key_prefix: str) -> None:
     """Status distribution across ALL cases in this BU's suite (country-filtered)."""
-    section_title("📋 Status by country")
+    section_title("Status by Country")
     if raw.empty:
         return
 
@@ -265,7 +265,7 @@ def _pivot_builder(
     *default_rows* / *default_cols* set the initial selection (display labels).
     Including the BU name in *key_prefix* ensures defaults reset when switching BUs.
     """
-    section_title("📊 Pivot")
+    section_title("Pivot")
     if df.empty:
         st.info("No automated cases match the current filters.")
         return
@@ -337,7 +337,7 @@ def _status_col_label(col: str) -> str:
 
 # ------------------------------------------------------------------ test list
 def _list_view(auto_df: pd.DataFrame, raw_df: pd.DataFrame) -> None:
-    section_title("🗂 Test list")
+    section_title("Test List")
     if auto_df.empty:
         st.info("No automated cases.")
         return

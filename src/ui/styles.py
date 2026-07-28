@@ -853,16 +853,29 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 [class*="st-key-tile_"] {{
     position: relative !important;
 }}
-[class*="st-key-tile_"] [data-testid="stDownloadButton"] {{
+/* Streamlit wraps every widget in a `position: relative` element container, so
+   an absolutely-positioned button resolves its offsets against THAT (a 16x0
+   box) instead of the tile.  Stretch the element container itself and the
+   button fills the card. */
+[class*="st-key-tile_"] [data-testid="stElementContainer"]:has([data-testid="stDownloadButton"]) {{
     position: absolute !important;
-    inset: 0 !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
     margin: 0 !important;
     z-index: 3;
+}}
+[class*="st-key-tile_"] [data-testid="stDownloadButton"] {{
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
 }}
 [class*="st-key-tile_"] [data-testid="stDownloadButton"] button {{
     width: 100% !important;
     height: 100% !important;
     min-height: 0 !important;
+    padding: 0 !important;
     opacity: 0 !important;
     cursor: pointer !important;
     border: none !important;

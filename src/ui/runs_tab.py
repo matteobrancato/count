@@ -556,7 +556,7 @@ _CLASS_EMOJI = {
 
 @st.fragment
 def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
-    section_title("🏃 Active Runs")
+    section_title("Active Runs")
     st.caption(
         "Non-completed TestRail runs matched to this BU by alias in the run/plan name. "
         "Sorted by last activity (most recent first)."
@@ -640,7 +640,7 @@ def _render_active_runs(bu: str, project_ids: set[int], base_url: str) -> None:
     # ── Bug detail table: bug ↔ test ↔ run ↔ date (+ live Jira state) ──────
     if not bug_records:
         return
-    st.markdown("##### 🐛 Bug → Test linkage")
+    section_title("Bug → Test Linkage")
     bdf = pd.DataFrame(bug_records)
 
     jira_info: dict[str, dict] = {}
@@ -742,7 +742,7 @@ def _stab_control(label: str, options: list[int], default: int, key: str,
 
 @st.fragment
 def render_stability(bu: str, project_ids: set[int]) -> None:
-    section_title("📈 Test Stability")
+    section_title("Test Stability")
 
     # Two compact pill controls on one line — they used to be a selectbox and a
     # number input stacked with their own labels and floating help icons, which
@@ -1168,7 +1168,7 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
     """'Is the release ready?' — TestRail's latest regression run joined with
     Jira's fix-version state.  The TestRail half always works; the Jira half
     appears only when the Atlassian secrets are configured."""
-    section_title("🚦 Release readiness")
+    section_title("Release Readiness")
     st.caption(
         "The latest **completed regression run** for this BU, and — pick a Jira "
         "fix version — how close its scope is to done."
@@ -1321,7 +1321,7 @@ def _render_release_readiness(bu: str, project_ids: set[int], base_url: str) -> 
 
 @st.fragment
 def render_case_deep_dive() -> None:
-    section_title("🔬 In-depth Test Analysis")
+    section_title("In-depth Test Analysis")
     st.caption(
         "The full story of **one test case**: every recent run it appeared in and "
         "the status it ended with, how many times it was executed, the JIRA bugs "
@@ -1420,7 +1420,7 @@ def render_case_deep_dive() -> None:
     s4.metric("Latest status", records[0]["Final status"],
               help=f"{records[0]['Run']} · {records[0]['Last run']}")
 
-    st.markdown("##### 🗓 Execution history")
+    section_title("Execution History")
     df = pd.DataFrame(records).drop(columns=["_ts", "_pass"])
     st.dataframe(
         df, width="stretch", hide_index=True,
@@ -1436,7 +1436,7 @@ def render_case_deep_dive() -> None:
     )
 
     if uniq_bugs:
-        st.markdown("##### 🐞 Bug history")
+        section_title("Bug History")
         latest: dict[str, tuple[int, str]] = {}
         for k, ts, rname in all_bugs:
             if k not in latest or ts > latest[k][0]:

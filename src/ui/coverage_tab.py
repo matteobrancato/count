@@ -615,20 +615,20 @@ def _render_coverage_section(
     st.markdown("")
     left, right = st.columns([1, 1.2], gap="large")
     with left:
-        _panel_head("🥧 Automated distribution", "")
+        _panel_head("Automated Distribution", "")
         pie = _build_pie(cov, color_map)
         if pie is None:
             st.info("No automated cases yet.")
         else:
             st.altair_chart(pie, width="stretch")
     with right:
-        _panel_head("📊 Coverage % per area",
+        _panel_head("Coverage % per Area",
                     "Sorted by coverage %. Same colour = same area as the pie.")
         bar = _build_coverage_bar(cov, color_map)
         st.altair_chart(bar, width="stretch")
 
     # ── table (detail, below the charts) ──────────────────────────────────────
-    section_title("📋 Coverage table")
+    section_title("Coverage Table")
     # (The auto-stripped container chain used to be spelled out here; it is
     # TestRail-folder trivia, not something a manager acts on.)
     display = cov.copy()
@@ -687,7 +687,7 @@ def _render_coverage_section(
     if show_tool_facet and scope == "mobile_app" and not auto_bu.empty \
             and "automation_tool" in auto_bu.columns:
         st.divider()
-        st.markdown("##### 🛠 Automated cases by automation tool")
+        section_title("Automated Cases by Automation Tool")
         tool = (
             auto_bu.dropna(subset=["automation_tool"])
             .drop_duplicates(subset=["case_id"])
