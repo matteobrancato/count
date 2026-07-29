@@ -590,6 +590,22 @@ def _backlog_badge_html(backlog: int, total: int) -> str:
     )
 
 
+def _framework_cards(s: dict) -> list[tuple[str, int, int]]:
+    """(label, rows, cases) for the frameworks that actually carry rows.
+
+    A card reading 0 is a label that lies: Watsons is 100% TestIM, so a "Java 0"
+    card next to it was pure noise, and the same holds for Playwright until the
+    migration produces its first labelled case.  Mobile App, whose rows carry the
+    `mobile_app` framework, gets an empty list — the caller then drops the whole
+    section instead of showing a row of zeros.
+    """
+    return [(name, n, u) for name, n, u in (
+        ("Java",       s["java"],       s["u_java"]),
+        ("TestIM",     s["testim"],     s["u_testim"]),
+        ("Playwright", s["playwright"], s["u_playwright"]),
+    ) if n]
+
+
 def _stat_card(col, label: str, n: int, u: int, *, badge_html: str = "",
                help_text: str = "") -> None:
     """Thin alias — the card itself lives in styles.stat_card, shared with the
@@ -893,33 +909,33 @@ def _detail_view(
     st.divider()
 
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
-    section_title("Automated by Framework")
-    # Java and TestIM are always shown (a BU can legitimately have none of one,
-    # and hiding it would read as "not measured").  Playwright appears only once
-    # it has rows, so the tab stays identical until the migration actually
-    # produces labelled cases.
-    frameworks = [("Java", s["java"], s["u_java"]),
-                  ("TestIM", s["testim"], s["u_testim"])]
-    if s["playwright"]:
-        frameworks.append(("Playwright", s["playwright"], s["u_playwright"]))
+    frameworks = _framework_cards(s)
+    if frameworks:
+        section_title("Automated by Framework")
+        # With a single framework the shares would read "100%", which the card
+        # above already says — the panel earns its space only when there is a
+        # split to explain.  Column count stays at 3 so the cards keep the same
+        # width from one BU to the next.
+        show_shares = len(frameworks) > 1
+        cols = st.columns(max(3, len(frameworks) + (1 if show_shares else 0)))
+        for col, (name, n, u) in zip(cols, frameworks):
+            _stat_card(col, name, n, u)
 
-    cols = st.columns(max(3, len(frameworks) + 1))
-    for col, (name, n, u) in zip(cols, frameworks):
-        _stat_card(col, name, n, u)
-
-    shares = "".join(
-        f"{name} &nbsp;<b>{(n / s['automated'] * 100 if s['automated'] else 0.0):.1f}%</b><br>"
-        for name, n, _ in frameworks
-    )
-    cols[len(frameworks)].markdown(
-        f"<div style='padding-top:8px;font-size:13px;color:{COLORS['text']}'>"
-        f"{shares}"
-        f"<span style='font-size:11px;color:{COLORS['muted']}'>"
-        f"(share of automated rows — each row counts for its newest framework)"
-        f"</span></div>",
-        unsafe_allow_html=True,
-    )
-    st.divider()
+        if show_shares:
+            shares = "".join(
+                f"{name} &nbsp;<b>"
+                f"{(n / s['automated'] * 100 if s['automated'] else 0.0):.1f}%</b><br>"
+                for name, n, _ in frameworks
+            )
+            cols[len(frameworks)].markdown(
+                f"<div style='padding-top:8px;font-size:13px;color:{COLORS['text']}'>"
+                f"{shares}"
+                f"<span style='font-size:11px;color:{COLORS['muted']}'>"
+                f"(share of automated rows — each row counts for its newest framework)"
+                f"</span></div>",
+                unsafe_allow_html=True,
+            )
+        st.divider()
 
     # ── Pivot ─────────────────────────────────────────────────────────────────
     bu_key = bu.lower().replace(" ", "_")

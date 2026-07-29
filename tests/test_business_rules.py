@@ -708,3 +708,37 @@ class TestPlaywrightMigrationCheck:
         assert dq._playwright_migration(self._raw([
             {"case_id": 4, "title": "t", "labels": ["big_regr_desktop"],
              "url": "", "status_Automation Status": "Automated"}])).empty
+
+
+class TestFrameworkCardSelection:
+    """Only frameworks that carry rows get a card — a tile reading 0 is a label
+    that lies, and Watsons (100% TestIM) had one sitting next to every number."""
+
+    @staticmethod
+    def _s(java=0, testim=0, playwright=0):
+        return {"java": java, "u_java": java,
+                "testim": testim, "u_testim": testim,
+                "playwright": playwright, "u_playwright": playwright}
+
+    def test_zero_frameworks_are_dropped(self):
+        assert [n for n, _, _ in bl._framework_cards(self._s(testim=1336))] == ["TestIM"]
+
+    def test_all_three_when_all_present(self):
+        assert [n for n, _, _ in
+                bl._framework_cards(self._s(java=5, testim=3, playwright=2))] == [
+                    "Java", "TestIM", "Playwright"]
+
+    def test_order_is_oldest_to_newest(self):
+        assert [n for n, _, _ in
+                bl._framework_cards(self._s(java=1, playwright=1))] == ["Java", "Playwright"]
+
+    def test_mobile_app_shows_no_framework_section(self):
+        """MAPP rows carry the `mobile_app` framework, so all three counters are
+        zero — the caller drops the whole section rather than print zeros."""
+        assert bl._framework_cards(self._s()) == []
+
+    def test_counts_are_carried_through(self):
+        assert bl._framework_cards({"java": 0, "u_java": 0,
+                                    "testim": 1336, "u_testim": 731,
+                                    "playwright": 0, "u_playwright": 0}) == [
+            ("TestIM", 1336, 731)]
