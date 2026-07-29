@@ -60,9 +60,12 @@ The Backlog is considered healthy while it stays under **3%** of the baseline.
 
 **Production Sanity** — the subset of tests executed only in production.
 
-**Frameworks** — a website case can be covered by both Java and Testim, so the
-two percentages can add up to more than 100%. Mobile App uses its own tooling
-(the "Automation MAPP Tool" field) rather than Java/Testim.
+**Frameworks** — the three generations of tooling, oldest to newest: Java,
+Testim, then Playwright. A test can carry more than one, so each row is
+attributed to the **newest** framework that covers it — the percentages add up
+to 100% and no row is counted twice. Playwright is identified by the
+`playwright` label, Testim and Java by their Automation Status fields. Mobile
+App uses its own tooling (the "Automation MAPP Tool" field).
 
 **Freshness** — numbers refresh automatically every few hours; the "Updated …"
 label next to the tabs shows their real age, and the ↻ next to it forces an
@@ -109,6 +112,10 @@ METHODOLOGY_FOR_LLM = """
   N/A.  A BU's Backlog is considered healthy while it stays under 3% of the total.
 - Health colours: 🟢 ≥80% (target) · 🟡 60-79% · 🔴 <60%.
 - Production Sanity = tests executed only in production.
-- Frameworks: Testim (Desktop/Mobile) and Java.  A case can be covered by both,
-  so Java% + Testim% may sum to more than 100%.  Mobile App uses its own tooling.
+- Frameworks, oldest to newest: Java, Testim (Desktop/Mobile), Playwright.
+  A test can carry more than one, so each row counts for the NEWEST framework
+  covering it (Playwright > Testim > Java) — the three add up to Automated
+  exactly, never more.  Playwright comes from the `playwright` case label;
+  Java and Testim from their Automation Status fields.  Mobile App uses its
+  own tooling.
 """.strip()

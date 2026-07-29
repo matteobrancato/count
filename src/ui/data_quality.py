@@ -50,9 +50,9 @@ def _scan(scope: str = "website") -> dict[str, pd.DataFrame]:
     The country-token checks (1 & 2) only make sense where cases carry country
     tokens — Mobile App has no country dimension, so for that scope only the
     suspicious-areas and unknown-rows checks run."""
-    from . import backlog_tab as bl
+    from .backlog_tab import _load_scope
 
-    raw, _auto, rules = bl._load_scope(scope)   # raw is already non-deprecated
+    raw, _auto, rules = _load_scope(scope)   # raw is already non-deprecated
     out: dict[str, pd.DataFrame] = {}
 
     # Token universe per suite (union across every BU sharing it).
@@ -113,6 +113,7 @@ def _scan(scope: str = "website") -> dict[str, pd.DataFrame]:
 
     # Unknown rows in the regression baseline.
     unknown_rows = []
+    from . import backlog_tab as bl
     loader = bl._mapp_backlog_data if scope == "mobile_app" else bl._backlog_data
     _summary, expanded_by_bu, _auto_by_bu = loader()
     for (bu, bu_scope), exp in expanded_by_bu.items():   # bu_scope: don't shadow `scope`
@@ -127,7 +128,65 @@ def _scan(scope: str = "website") -> dict[str, pd.DataFrame]:
             })
     out["unknown_rows"] = pd.DataFrame(unknown_rows)
 
+    out["playwright_migration"] = _playwright_migration(raw)
+
     return out
+
+
+def _playwright_migration(raw: pd.DataFrame) -> pd.DataFrame:
+    """Cases labelled `playwright` whose status fields do not agree with it.
+
+    The label is what makes a case count as Playwright, but it is NOT what makes
+    it count as automated — that still comes from a status field.  So a labelled
+    case with no automated status silently sits in the Backlog, and one that
+    still carries a Testim status is a half-finished migration.  Both are
+    invisible in every other view, which is exactly why they belong here.
+
+    Returns an empty frame until the migration actually starts, so the panel is
+    unchanged for as long as no case carries the label.
+    """
+    # Both constants come from the modules that OWN them, so the check can never
+    # drift from the engine it is checking.
+    from ..rules_engine import _PLAYWRIGHT_LABEL
+    from .backlog_tab import _STATUS_AUTO
+
+    cols = {"labels", "case_id"}
+    if raw.empty or not cols <= set(raw.columns):
+        return pd.DataFrame()
+
+    labelled = raw[raw["labels"].apply(
+        lambda ls: isinstance(ls, list)
+        and any(str(x).strip().lower() == _PLAYWRIGHT_LABEL for x in ls))]
+    if labelled.empty:
+        return pd.DataFrame()
+
+    status_cols = [c for c in labelled.columns if c.startswith("status_")]
+    testim_cols = [c for c in status_cols if "Testim" in c]
+
+    def _filled(row, columns) -> list[str]:
+        return [c for c in columns
+                if pd.notna(row.get(c)) and str(row.get(c)).strip()]
+
+    rows = []
+    for row in labelled.to_dict("records"):
+        automated = [c for c in _filled(row, status_cols)
+                     if str(row[c]).strip() in _STATUS_AUTO]
+        stale     = [c for c in _filled(row, testim_cols)]
+        if automated and not stale:
+            continue                                  # clean migration
+        problem = ("labelled playwright but no automated status — counts as "
+                   "Backlog, not as Playwright" if not automated
+                   else "still carries a Testim status — clean the old field")
+        rows.append({
+            "case_id": int(row["case_id"]),
+            "title":   str(row.get("title", ""))[:80],
+            "problem": problem,
+            "fields":  ", ".join(c.removeprefix("status_")
+                                 for c in (stale or _filled(row, status_cols)))
+                       or "(none filled)",
+            "url":     row.get("url", ""),
+        })
+    return pd.DataFrame(rows)
 
 
 _CHECKS = [
@@ -140,6 +199,10 @@ _CHECKS = [
     ("suspicious_areas", "🗑 Suspicious areas still holding cases",
      "Sections named like 'to be deleted' / 'deprecated' that still contain "
      "active cases — they pollute area breakdowns and coverage."),
+    ("playwright_migration", "🎭 Playwright migration to finish",
+     "Cases labelled `playwright` whose status fields disagree with the label: "
+     "no automated status (so they count as Backlog, not Playwright), or a "
+     "Testim status left behind by the migration."),
     ("unknown_rows", "❓ Unknown baseline rows",
      "Baseline rows with an automated-looking status not attributed to the "
      "BU's automated set (usually a country mismatch), or no status at all."),

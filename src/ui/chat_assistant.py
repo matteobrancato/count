@@ -169,7 +169,8 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
     Mobile App questions.
   • Coverage, totals, automated counts, comparisons, rankings, gaps, the
     No-Regression baseline, the backlog breakdown (Backlog / To-update / N/A),
-    frameworks (Java / Testim) → answer DIRECTLY from the snapshot.  Do NOT call
+    frameworks (Java / Testim / Playwright) → answer DIRECTLY from the snapshot.
+    Do NOT call
     a tool — the data is already in front of you.  This is fast and reliable.
   • Call a tool ONLY for live detail NOT in the snapshot (at most one):
       - get_active_runs(bu)    → currently open/running runs + pass rates
@@ -633,8 +634,9 @@ def _build_coverage_brief() -> str:
     blocks: list[str] = []
 
     # Regression-baseline / backlog breakdown — the SAME numbers as the Backlog
-    # tab (Total rows, Automated, Backlog, To-update, N/A, Java, Testim), so
-    # Dexter's regression answers line up 1:1 with the dashboard.  Best-effort:
+    # tab (Total rows, Automated, Backlog, To-update, N/A, and the framework
+    # split Java / Testim / Playwright), so Dexter's regression answers line up
+    # 1:1 with the dashboard.  Best-effort:
     # if it fails, the brief still carries the coverage numbers.
     backlog_by_bu: dict[str, dict] = {}
     try:
@@ -665,6 +667,8 @@ def _build_coverage_brief() -> str:
                 f"({float(bk['Coverage %']):.1f}%) — Backlog {int(bk['Backlog']):,}, "
                 f"To-update {int(bk['To Update']):,}, N/A {int(bk['Not Applicable']):,} "
                 f"· Java {int(bk['Java']):,} / Testim {int(bk['TestIM']):,}"
+                + (f" / Playwright {int(bk['Playwright']):,}"
+                   if int(bk.get('Playwright') or 0) else "")
             )
         else:
             rb = d.get("regression_baseline") or {}

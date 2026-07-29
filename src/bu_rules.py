@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-Framework = Literal["java", "testim_desktop", "testim_mobile", "mobile_app"]
+# "playwright" is never set by a Rule: no TestRail field identifies it.  It is
+# assigned after matching, from the `playwright` case label — see
+# `rules_engine._apply_framework_precedence`.
+Framework = Literal["java", "testim_desktop", "testim_mobile", "mobile_app",
+                    "playwright"]
 Scope = Literal["website", "mobile_app", "next_gen"]
 
 # --------------------------------------------------------------------- constants

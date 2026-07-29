@@ -243,6 +243,80 @@ def _devices_for(case: dict, reg: FieldRegistry) -> list[str]:
     return ["Unspecified"]
 
 
+# ── framework precedence ──────────────────────────────────────────────────────
+# The tools arrived in this order: Java → TestIM → Playwright.  When a case
+# carries traces of more than one (a TestIM status left behind after a rewrite,
+# say), the MOST RECENT one is the truth — the older field is a leftover.
+#
+# Playwright has no TestRail status field of its own: its cases set the generic
+# "Automation Status", which is exactly what the Java rules read.  Without this
+# step every Playwright test would be counted as Java, silently.
+_PLAYWRIGHT_LABEL = "playwright"
+_FRAMEWORK_PRIORITY: dict[str, int] = {
+    "java": 0, "mobile_app": 0,
+    "testim_desktop": 1, "testim_mobile": 1,
+    "playwright": 2,
+}
+
+
+def _playwright_case_ids(raw_cases: pd.DataFrame) -> set[int]:
+    """Case IDs labelled `playwright`, matched case-insensitively.
+
+    The comparison is normalised on purpose: a label typed "Playwright" would
+    otherwise stay Java without any error, which is the worst way to be wrong.
+    """
+    if raw_cases.empty or "labels" not in raw_cases.columns:
+        return set()
+    out: set[int] = set()
+    for cid, labels in zip(raw_cases["case_id"], raw_cases["labels"]):
+        if not isinstance(labels, list):
+            continue
+        if any(str(x).strip().lower() == _PLAYWRIGHT_LABEL for x in labels):
+            out.add(int(cid))
+    return out
+
+
+def _apply_framework_precedence(automated: pd.DataFrame,
+                                raw_cases: pd.DataFrame) -> pd.DataFrame:
+    """Give every (case × country × device) ONE framework: the newest that
+    covers it.
+
+    Rows are NOT removed and no membership changes — only the `framework`
+    label is rewritten — so Automated, Coverage, Backlog and every total stay
+    exactly as they were.  Only the per-framework breakdown moves.
+
+    Java vs TestIM is decided PER ROW: a case automated in TestIM on Desktop
+    and in Java on Desktop + Mobile keeps Java on the Mobile row, because
+    TestIM never covered it there.  The `playwright` label is a statement about
+    the whole case, so it applies to all of its rows.
+    """
+    if automated.empty or "framework" not in automated.columns:
+        return automated
+
+    fw = automated["framework"].astype(str)
+    prio = fw.map(_FRAMEWORK_PRIORITY).fillna(0).astype(int)
+
+    pw_ids = _playwright_case_ids(raw_cases)
+    if pw_ids:
+        # Mobile App has its own tooling field and its own breakdown; the
+        # website label must not reach it.
+        is_pw = automated["case_id"].astype(int).isin(pw_ids) & (fw != "mobile_app")
+        fw = fw.where(~is_pw, "playwright")
+        prio = prio.where(~is_pw, _FRAMEWORK_PRIORITY["playwright"])
+
+    keys = ["case_id", "country_label", "device"]
+    if not set(keys) <= set(automated.columns):
+        return automated.assign(framework=fw)
+
+    tmp = automated[keys].copy()
+    tmp["_fw"], tmp["_p"] = fw.to_numpy(), prio.to_numpy()
+    winners = (tmp.loc[tmp.groupby(keys, sort=False)["_p"].idxmax(),
+                       keys + ["_fw"]]
+                  .rename(columns={"_fw": "_win"}))
+    merged = tmp.merge(winners, on=keys, how="left")
+    return automated.assign(framework=merged["_win"].to_numpy())
+
+
 def _case_url(base_url: str, case_id: int) -> str:
     return f"{base_url.rstrip('/')}/index.php?/cases/view/{case_id}"
 
@@ -573,9 +647,13 @@ def _evaluate_rules_cached(rule_names: tuple[str, ...]) -> ExpansionResult:
                 row["section_path"] = sect_map.get(int(case.get("section_id") or 0), "")
                 automated_rows.append(row)
 
+    auto_df = pd.DataFrame(automated_rows) if automated_rows else pd.DataFrame()
+    raw_df  = pd.DataFrame(raw_rows)        if raw_rows       else pd.DataFrame()
+    # One framework per row, decided here so every tab, the export and Dexter
+    # read the same attribution.
     return ExpansionResult(
-        automated = pd.DataFrame(automated_rows) if automated_rows else pd.DataFrame(),
-        raw_cases = pd.DataFrame(raw_rows)        if raw_rows       else pd.DataFrame(),
+        automated = _apply_framework_precedence(auto_df, raw_df),
+        raw_cases = raw_df,
     )
 
 

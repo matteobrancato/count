@@ -315,16 +315,22 @@ def _framework_line(summary, all_auto, scope: str, a_tot: dict) -> None:
     """
     per_fw: list[str] = []
     cols = (("iOS", "Android") if scope == "mobile_app"
-            else ("Java", "TestIM") if scope == "website" else ())
+            else ("Java", "TestIM", "Playwright") if scope == "website" else ())
     for col in cols:
-        if col in summary:
-            per_fw.append(f"{col} <b>{int(summary[col].sum()):,}</b>")
+        if col not in summary:
+            continue
+        n = int(summary[col].sum())
+        # Playwright is listed only once the migration produces rows; an empty
+        # framework on an executive report reads as a broken number.
+        if n == 0 and col == "Playwright":
+            continue
+        per_fw.append(f"{col} <b>{n:,}</b>")
     if per_fw:
-        note = (" — a case can be covered by both, so these can sum to more "
-                "than Automated" if len(per_fw) == 2 and scope == "website" else "")
+        # Each row is attributed to ONE framework (the newest that covers it),
+        # so these add up to Automated exactly.
         st.markdown(
             f"<div style='margin:4px 0 0;font-size:12px;color:{COLORS['muted']}'>"
-            f"Baseline by framework: " + " &nbsp;·&nbsp; ".join(per_fw) + note
+            f"Baseline by framework: " + " &nbsp;·&nbsp; ".join(per_fw)
             + "</div>", unsafe_allow_html=True)
 
     try:

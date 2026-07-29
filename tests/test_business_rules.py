@@ -14,8 +14,10 @@ import pandas as pd
 import pytest
 
 from src import bu_rules as br
+from src import rules_engine as eng
 from src.ui import backlog_tab as bl
 from src.ui import coverage_tab as cov
+from src.ui import data_quality as dq
 from src.ui import styles
 
 
@@ -585,3 +587,124 @@ class TestCoverageSectionLinks:
                                "mobile": 0, "unspecified": 0, "automated": 1,
                                "auto_unique": 1, "coverage_pct": 50.0}])
         cov._build_coverage_bar(table, {"A": "#000"}).to_dict()   # must not raise
+
+
+class TestFrameworkPrecedence:
+    """Playwright is the third generation of tooling (Java → Testim →
+    Playwright).  A test can carry more than one, so each row is attributed to
+    the NEWEST framework covering it.
+
+    The property that matters: precedence RELABELS rows, it never adds or
+    removes them, so Total / Automated / Backlog / Coverage cannot move.
+    """
+
+    @staticmethod
+    def _raw(*labelled):
+        return pd.DataFrame([
+            {"case_id": cid, "labels": labels}
+            for cid, labels in labelled
+        ])
+
+    @staticmethod
+    def _auto(*rows):
+        return pd.DataFrame([
+            {"case_id": cid, "country_label": country,
+             "device": device, "framework": fw}
+            for cid, country, device, fw in rows
+        ])
+
+    def test_label_promotes_java_to_playwright(self):
+        out = eng._apply_framework_precedence(
+            self._auto((1, "NL", "Desktop", "java")),
+            self._raw((1, ["big_regr_desktop", "playwright"])))
+        assert list(out["framework"]) == ["playwright"]
+
+    def test_label_matched_case_insensitively(self):
+        out = eng._apply_framework_precedence(
+            self._auto((1, "NL", "Desktop", "testim_desktop")),
+            self._raw((1, ["Playwright"])))
+        assert list(out["framework"]) == ["playwright"]
+
+    def test_without_the_label_nothing_moves(self):
+        auto = self._auto((1, "NL", "Desktop", "java"),
+                          (2, "BE", "Desktop", "testim_desktop"))
+        out  = eng._apply_framework_precedence(auto, self._raw((1, ["big_regr_desktop"])))
+        assert list(out["framework"]) == ["java", "testim_desktop"]
+
+    def test_testim_wins_over_java_on_the_same_row(self):
+        out = eng._apply_framework_precedence(
+            self._auto((1, "NL", "Desktop", "java"),
+                       (1, "NL", "Desktop", "testim_desktop")),
+            self._raw((1, ["big_regr_desktop"])))
+        assert set(out["framework"]) == {"testim_desktop"}
+
+    def test_precedence_is_per_row_not_per_case(self):
+        """A Mobile row that only Java covers stays Java even when the case is
+        also automated with Testim on Desktop — otherwise the Mobile framework
+        split would credit a tool that never ran there."""
+        out = eng._apply_framework_precedence(
+            self._auto((1, "NL", "Desktop", "java"),
+                       (1, "NL", "Desktop", "testim_desktop"),
+                       (1, "NL", "Mobile",  "java")),
+            self._raw((1, ["big_regr_desktop", "big_regr_mobile"])))
+        by_device = dict(zip(out["device"], out["framework"]))
+        assert by_device == {"Desktop": "testim_desktop", "Mobile": "java"}
+
+    def test_mobile_app_is_never_relabelled(self):
+        """Mobile App has its own tooling field; a stray label must not move it
+        into the website framework split."""
+        out = eng._apply_framework_precedence(
+            self._auto((1, "NL", "iOS", "mobile_app")),
+            self._raw((1, ["playwright"])))
+        assert list(out["framework"]) == ["mobile_app"]
+
+    def test_row_count_and_membership_are_untouched(self):
+        auto = self._auto((1, "NL", "Desktop", "java"),
+                          (1, "NL", "Desktop", "testim_desktop"),
+                          (2, "BE", "Mobile",  "testim_mobile"),
+                          (3, "FR", "Desktop", "java"))
+        out  = eng._apply_framework_precedence(
+            auto, self._raw((1, ["playwright"]), (2, ["big_regr_mobile"])))
+        assert len(out) == len(auto)
+        keys = ["case_id", "country_label", "device"]
+        assert (out[keys].values == auto[keys].values).all()
+
+    def test_empty_inputs_are_safe(self):
+        assert eng._apply_framework_precedence(
+            pd.DataFrame(), pd.DataFrame()).empty
+
+
+class TestPlaywrightMigrationCheck:
+    """The label makes a case count as Playwright; a STATUS field is what makes
+    it count as automated.  When the two disagree the case is invisible
+    everywhere else, so the hygiene panel is the only place it can surface."""
+
+    @staticmethod
+    def _raw(rows):
+        return pd.DataFrame(rows)
+
+    def test_flags_label_without_automated_status(self):
+        out = dq._playwright_migration(self._raw([
+            {"case_id": 1, "title": "t", "labels": ["playwright"], "url": "",
+             "status_Automation Status": "To be automated"}]))
+        assert list(out["case_id"]) == [1]
+        assert "no automated status" in out.iloc[0]["problem"]
+
+    def test_flags_leftover_testim_status(self):
+        out = dq._playwright_migration(self._raw([
+            {"case_id": 2, "title": "t", "labels": ["playwright"], "url": "",
+             "status_Automation Status": "Automated",
+             "status_Automation Status Testim Desktop": "Automated"}]))
+        assert list(out["case_id"]) == [2]
+        assert "Testim" in out.iloc[0]["problem"]
+
+    def test_clean_migration_is_not_flagged(self):
+        assert dq._playwright_migration(self._raw([
+            {"case_id": 3, "title": "t", "labels": ["playwright"], "url": "",
+             "status_Automation Status": "Automated",
+             "status_Automation Status Testim Desktop": None}])).empty
+
+    def test_silent_until_the_migration_starts(self):
+        assert dq._playwright_migration(self._raw([
+            {"case_id": 4, "title": "t", "labels": ["big_regr_desktop"],
+             "url": "", "status_Automation Status": "Automated"}])).empty

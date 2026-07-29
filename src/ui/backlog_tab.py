@@ -405,8 +405,10 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     u_tbu   = _u("to_be_updated")
     u_na    = _u("not_applicable")
 
-    # Framework breakdown via merge (vectorised — no row-by-row apply)
-    n_java = u_java = n_testim = u_testim = 0
+    # Framework breakdown via merge (vectorised — no row-by-row apply).
+    # `rules_engine._apply_framework_precedence` has already given each row ONE
+    # framework (newest tool wins), so these three no longer overlap.
+    counts_fw = {"java": (0, 0), "testim": (0, 0), "playwright": (0, 0)}
     if not auto.empty and n_auto > 0:
         auto_exp = expanded[expanded["category"] == "automated"].copy()
         auto_exp["case_id"] = auto_exp["case_id"].astype(int)
@@ -415,8 +417,9 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         base["case_id"] = base["case_id"].astype(int)
 
         for fw_name, fw_mask in [
-            ("java",   base["framework"] == "java"),
-            ("testim", base["framework"].isin(["testim_desktop", "testim_mobile"])),
+            ("java",       base["framework"] == "java"),
+            ("testim",     base["framework"].isin(["testim_desktop", "testim_mobile"])),
+            ("playwright", base["framework"] == "playwright"),
         ]:
             keys = (
                 base[fw_mask][["case_id", "country_label", "device"]]
@@ -426,12 +429,11 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
             m    = auto_exp.merge(keys, on=["case_id", "country_label", "device"], how="left")
             flag = f"_{fw_name}"
             matched = m[m[flag].fillna(False)]
-            if fw_name == "java":
-                n_java   = int(m[flag].sum())
-                u_java   = int(matched["case_id"].nunique())
-            else:
-                n_testim = int(m[flag].sum())
-                u_testim = int(matched["case_id"].nunique())
+            counts_fw[fw_name] = (int(m[flag].sum()),
+                                  int(matched["case_id"].nunique()))
+    n_java, u_java             = counts_fw["java"]
+    n_testim, u_testim         = counts_fw["testim"]
+    n_playwright, u_playwright = counts_fw["playwright"]
 
     # "To be updated" stays inside the automatable/scoped denominators (it was
     # previously part of Backlog), so Coverage % and N/A % are unchanged.
@@ -451,6 +453,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         "automated":       n_auto,   "u_auto":    u_auto,
         "java":            n_java,   "u_java":    u_java,
         "testim":          n_testim, "u_testim":  u_testim,
+        "playwright":      n_playwright, "u_playwright": u_playwright,
         "ios":             n_ios,    "android":   n_android,
         "backlog":         n_back,   "u_back":    u_back,
         "partially_automated": n_part, "u_part":  _u("partially_automated"),
@@ -514,7 +517,8 @@ def _build_summary(
         # columns (a column that always reads 0 is a label that lies).
         breakdown = ({"iOS": s["ios"], "Android": s["android"]}
                      if scope == "mobile_app"
-                     else {"Java": s["java"], "TestIM": s["testim"]})
+                     else {"Java": s["java"], "TestIM": s["testim"],
+                           "Playwright": s["playwright"]})
         rows.append({
             "BU":        bu,
             "Scope":     _SCOPE_DISPLAY.get(scope, "Website"),
@@ -890,18 +894,28 @@ def _detail_view(
 
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
     section_title("Automated by Framework")
-    f1, f2, f3 = st.columns(3)
-    _stat_card(f1, "Java",   s["java"],   s["u_java"])
-    _stat_card(f2, "TestIM", s["testim"], s["u_testim"])
+    # Java and TestIM are always shown (a BU can legitimately have none of one,
+    # and hiding it would read as "not measured").  Playwright appears only once
+    # it has rows, so the tab stays identical until the migration actually
+    # produces labelled cases.
+    frameworks = [("Java", s["java"], s["u_java"]),
+                  ("TestIM", s["testim"], s["u_testim"])]
+    if s["playwright"]:
+        frameworks.append(("Playwright", s["playwright"], s["u_playwright"]))
 
-    java_pct   = s["java"]   / s["automated"] * 100 if s["automated"] else 0.0
-    testim_pct = s["testim"] / s["automated"] * 100 if s["automated"] else 0.0
-    f3.markdown(
+    cols = st.columns(max(3, len(frameworks) + 1))
+    for col, (name, n, u) in zip(cols, frameworks):
+        _stat_card(col, name, n, u)
+
+    shares = "".join(
+        f"{name} &nbsp;<b>{(n / s['automated'] * 100 if s['automated'] else 0.0):.1f}%</b><br>"
+        for name, n, _ in frameworks
+    )
+    cols[len(frameworks)].markdown(
         f"<div style='padding-top:8px;font-size:13px;color:{COLORS['text']}'>"
-        f"Java &nbsp;<b>{java_pct:.1f}%</b><br>"
-        f"TestIM &nbsp;<b>{testim_pct:.1f}%</b><br>"
+        f"{shares}"
         f"<span style='font-size:11px;color:{COLORS['muted']}'>"
-        f"(% of automated rows — may sum &gt;100% if both frameworks cover the same row)"
+        f"(share of automated rows — each row counts for its newest framework)"
         f"</span></div>",
         unsafe_allow_html=True,
     )
@@ -1018,12 +1032,13 @@ def render() -> None:
         display = summary.copy()   # safety net: never show a blank table
     # "Unknown" (automated-looking status not attributed to the BU, or none) is
     # shown only when it occurs, so Total always equals the sum of the columns.
-    if "Unknown" in display.columns and int(display["Unknown"].sum()) == 0:
-        display = display.drop(columns=["Unknown"])
+    for empty_col in ("Unknown", "Playwright"):
+        if empty_col in display.columns and int(display[empty_col].sum()) == 0:
+            display = display.drop(columns=[empty_col])
     # Column order is scope-aware: Java/TestIM for website & microservices,
     # iOS/Android for Mobile App (see `_build_summary`).
     num_cols = [col for col in ["Total", "Automated", "Java", "TestIM",
-                                "iOS", "Android", "Backlog",
+                                "Playwright", "iOS", "Android", "Backlog",
                                 "Partially Automated", "To Update",
                                 "Not Applicable", "Unknown"]
                 if col in display.columns]
