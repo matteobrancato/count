@@ -781,3 +781,75 @@ class TestSummaryTableScopeColumn:
             n_th = len(re.findall(r"<th[ >]", head))
             for row in body.split("<tr")[1:]:
                 assert row.count("<td") == n_th
+
+
+class TestUnknownRowsOfAutomatedCase:
+    """The status field is per CASE, the country coverage per COUNTRY.  A case
+    automated in 3 of its 5 countries leaves 2 rows the case-level field cannot
+    describe: it says "Automated", which is not a backlog value, so they used to
+    fall through to Unknown.  They are Partially Automated — the case IS
+    automated, just not there.
+
+    Modelled on the real Marionnaud case: baseline RO/IT/CZ/SK/HU from
+    multi_countries, automated CZ/SK/HU from Java Country Coverage.
+    """
+
+    @staticmethod
+    def _expanded(countries, base="unknown"):
+        return pd.DataFrame([
+            {"case_id": 1, "country_label": c, "device": "Desktop",
+             "_cat_base": base} for c in countries
+        ])
+
+    @staticmethod
+    def _auto(countries):
+        return pd.DataFrame([
+            {"case_id": 1, "country_label": c, "device": "Desktop"}
+            for c in countries
+        ])
+
+    def test_uncovered_countries_become_partially_automated(self):
+        out = bl._classify_expanded(
+            self._expanded(["RO", "IT", "CZ", "SK", "HU"]),
+            self._auto(["CZ", "SK", "HU"]))
+        by_country = dict(zip(out["country_label"], out["category"]))
+        assert by_country == {"CZ": "automated", "SK": "automated",
+                              "HU": "automated",
+                              "RO": "partially_automated",
+                              "IT": "partially_automated"}
+
+    def test_unknown_survives_when_the_case_is_automated_nowhere(self):
+        """Kruidvat / Watsons shape: the automated set is empty for this case, so
+        nothing explains the rows and Unknown is the honest answer."""
+        out = bl._classify_expanded(
+            self._expanded(["BE", "NL"]),
+            pd.DataFrame(columns=["case_id", "country_label", "device"]))
+        assert set(out["category"]) == {"unknown"}
+
+    def test_backlog_split_still_works(self):
+        out = bl._classify_expanded(
+            self._expanded(["BE", "NL"], base="backlog"), self._auto(["NL"]))
+        by_country = dict(zip(out["country_label"], out["category"]))
+        assert by_country == {"NL": "automated", "BE": "partially_automated"}
+
+    def test_other_categories_are_untouched(self):
+        """N/A and To Update must NOT be swallowed by the split — they are
+        decisions, not gaps."""
+        exp = pd.DataFrame([
+            {"case_id": 1, "country_label": "NL", "device": "Desktop",
+             "_cat_base": "unknown"},
+            {"case_id": 1, "country_label": "BE", "device": "Desktop",
+             "_cat_base": "not_applicable"},
+            {"case_id": 1, "country_label": "FR", "device": "Desktop",
+             "_cat_base": "to_be_updated"},
+        ])
+        out = bl._classify_expanded(exp, self._auto(["NL"]))
+        by_country = dict(zip(out["country_label"], out["category"]))
+        assert by_country == {"NL": "automated", "BE": "not_applicable",
+                              "FR": "to_be_updated"}
+
+    def test_total_still_equals_the_sum_of_categories(self):
+        exp = self._expanded(["RO", "IT", "CZ", "SK", "HU"])
+        out = bl._classify_expanded(exp, self._auto(["CZ", "SK", "HU"]))
+        assert len(out) == len(exp)
+        assert int(out["category"].value_counts().sum()) == 5

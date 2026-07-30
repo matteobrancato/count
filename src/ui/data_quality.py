@@ -204,8 +204,10 @@ _CHECKS = [
      "no automated status (so they count as Backlog, not Playwright), or a "
      "Testim status left behind by the migration."),
     ("unknown_rows", "❓ Unknown baseline rows",
-     "Baseline rows with an automated-looking status not attributed to the "
-     "BU's automated set (usually a country mismatch), or no status at all."),
+     "Baseline rows whose case is automated NOWHERE, yet no status explains "
+     "them — an automated-looking value in a field this BU's rules do not read, "
+     "a country field left empty, or no status at all.  (A case automated on "
+     "some other country/device counts as Partially Automated, not here.)"),
 ]
 
 

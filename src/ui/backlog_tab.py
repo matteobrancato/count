@@ -22,8 +22,11 @@ Classification (per expanded row)
   automated      → (case_id, country_label, device) is in evaluate_rules().automated
   not_applicable → any status field = "Automation not applicable"
   to_be_updated  → any status field = "To be updated" (split out of backlog)
-  backlog        → any other non-empty, non-automated status
-  unknown        → no status field populated
+  backlog        → any other non-empty, non-automated status, and the case is
+                   automated NOWHERE
+  partially_auto → same, or no status at all, but the case IS automated on some
+                   other country / device — only that combination is missing
+  unknown        → no status explains the row AND the case is automated nowhere
 
 Counts
 ──────
@@ -367,17 +370,26 @@ def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFra
     merged = expanded.merge(auto_keys, on=["case_id", "country_label", "device"], how="left")
     expanded.loc[merged["_auto"].fillna(False).to_numpy(), "category"] = "automated"
 
-    # ── Split the backlog by whether the CASE is automated anywhere ──────────
+    # ── Rows of a case that IS automated somewhere ───────────────────────────
     # A test automated for NL but not BE used to land in the backlog with the
     # same weight as a test nobody has ever automated — and the QA leads read
     # those as two different jobs: extend an existing script vs write a new one.
     # "Backlog" therefore means "no automation anywhere"; the rest becomes
     # "partially_automated".  Both stay OUT of Automated, so Coverage is
     # untouched, and Total still equals the sum of the categories.
+    #
+    # UNKNOWN rows of such a case belong here too.  The status field is
+    # case-level while country coverage is per-country, so when a case is
+    # automated in 3 of its 5 countries the other 2 have no status of their own
+    # to read: the case-level field says "Automated", which is not a backlog
+    # value, and the row falls through to unknown.  Those rows are not a
+    # mystery — the case is automated, just not there — which is exactly what
+    # Partially Automated means.  Unknown is left to mean what it should: the
+    # case is automated NOWHERE and no status explains why.
     auto_cases = set(expanded.loc[expanded["category"] == "automated", "case_id"])
     if auto_cases:
         expanded.loc[
-            (expanded["category"] == "backlog")
+            expanded["category"].isin(["backlog", "unknown"])
             & expanded["case_id"].isin(auto_cases),
             "category",
         ] = "partially_automated"
@@ -868,8 +880,10 @@ def _detail_view(
         ("partially_automated", "Partially Automated", s["partially_automated"],
          s["u_part"], "",
          "The case IS automated somewhere, just not for this country / device "
-         "— extending an existing script, not writing a new one. Counts as "
-         "automatable, so Coverage is unchanged."),
+         "— extending an existing script, not writing a new one. Includes rows "
+         "no status field can describe, since the status is per case and the "
+         "coverage per country. Counts as automatable, so Coverage is "
+         "unchanged."),
         ("to_be_updated", "To Update", s["to_be_updated"], s["u_tbu"], "",
          "Status 'To be updated' — was automated but needs maintenance. Split "
          "out of Backlog (still counts as automatable, so coverage % is "
@@ -1053,8 +1067,9 @@ def render() -> None:
     display = summary[summary["Scope"] == scope_display].copy()
     if display.empty:
         display = summary.copy()   # safety net: never show a blank table
-    # "Unknown" (automated-looking status not attributed to the BU, or none) is
-    # shown only when it occurs, so Total always equals the sum of the columns.
+    # "Unknown" (the case is automated nowhere and no status explains the row)
+    # is shown only when it occurs, so Total always equals the sum of the
+    # columns.
     for empty_col in ("Unknown", "Playwright"):
         if empty_col in display.columns and int(display[empty_col].sum()) == 0:
             display = display.drop(columns=[empty_col])

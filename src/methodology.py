@@ -42,7 +42,7 @@ shown: the big number is rows, the small caption is unique cases.
 | **To update** | status "To be updated" — was automated, needs maintenance |
 | **Not Applicable** | status "Automation not applicable" |
 | **Backlog** | a non-automated status **and** the case is automated nowhere — a script to write from scratch |
-| **Partially Automated** | same status, but the case IS automated in another country or on the other device — only the missing country/device is left |
+| **Partially Automated** | the case IS automated in another country or on the other device — only the missing country/device is left. Also covers rows whose status field cannot describe them: the status is per case, the coverage per country, so a case automated in 3 of its 5 countries leaves 2 rows the field says nothing about |
 | **Unknown** | no automation status filled in, so we can't say — shown only when it happens, and it means a field is missing in TestRail |
 
 **Coverage** — one definition everywhere: automated **rows** ÷ baseline rows.
@@ -79,7 +79,8 @@ METHODOLOGY_FOR_LLM = """
 - Data is pulled from TestRail; DEPRECATED cases are ALWAYS excluded.
 - Backlog vs Partially Automated: a row is BACKLOG only when its case has no
   automated row anywhere; if the case is automated in another country/device the
-  row is PARTIALLY AUTOMATED.  Neither counts as Automated, so Coverage is the
+  row is PARTIALLY AUTOMATED — including when no status field describes it, since
+  the status is per case while the coverage is per country.  Neither counts as Automated, so Coverage is the
   same either way — the split only says whether the work is a new script or an
   extension of an existing one.
 - Coverage % = automated ROWS ÷ baseline ROWS.  ONE definition: the Backlog tab,
