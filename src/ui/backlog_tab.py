@@ -972,9 +972,15 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
     "their" BU in an eight-row table without counting down the rows.
     """
     strong_cols = {"Total", "Automated", "Backlog"}   # numbers a manager reads first
+    # The scope radio above the tabs already filters the table to one scope, so
+    # the column repeats the same pill on every row — a whole column of no
+    # information, and the reason the table needed a horizontal scrollbar.  It
+    # comes back if a view ever does mix scopes (the safety-net fallback).
+    show_scope = df["Scope"].nunique() > 1 if "Scope" in df.columns else False
     head = (
         '<thead><tr>'
-        '<th class="l">Business Unit</th><th class="l">Scope</th>'
+        '<th class="l">Business Unit</th>'
+        + ('<th class="l">Scope</th>' if show_scope else '')
         + "".join(f'<th>{col}</th>' for col in num_cols)
         + '<th class="l">Coverage</th></tr></thead>'
     )
@@ -997,12 +1003,13 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
             f'</div></td>'
         )
-        sel_cls = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
+        sel_cls  = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
+        scope_td = (f'<td class="l"><span class="scope-pill">'
+                    f'{html.escape(str(r["Scope"]))}</span></td>') if show_scope else ''
         body_rows.append(
             f'<tr{sel_cls}>'
             f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
-            f'<td class="l"><span class="scope-pill">{html.escape(str(r["Scope"]))}</span></td>'
-            f'{nums}{cov_cell}</tr>'
+            f'{scope_td}{nums}{cov_cell}</tr>'
         )
     return (f'<div class="bl-summary"><table>{head}'
             f'<tbody>{"".join(body_rows)}</tbody></table></div>')

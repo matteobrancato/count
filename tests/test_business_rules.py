@@ -8,6 +8,7 @@ Run:  pytest -q
 """
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 import pandas as pd
@@ -742,3 +743,41 @@ class TestFrameworkCardSelection:
                                     "testim": 1336, "u_testim": 731,
                                     "playwright": 0, "u_playwright": 0}) == [
             ("TestIM", 1336, 731)]
+
+
+class TestSummaryTableScopeColumn:
+    """The scope radio already filters the table to one scope, so the Scope
+    column repeats one value on every row.  It is dropped in that case and kept
+    only when a view genuinely mixes scopes."""
+
+    @staticmethod
+    def _df(scopes):
+        return pd.DataFrame([
+            {"BU": f"BU{i}", "Scope": sc, "Total": 10, "Automated": 5,
+             "Backlog": 2, "Coverage %": 50.0}
+            for i, sc in enumerate(scopes)
+        ])
+
+    _NUM = ["Total", "Automated", "Backlog"]
+
+    def test_single_scope_drops_the_column(self):
+        out = bl._summary_table_html(self._df(["Website", "Website"]), self._NUM)
+        assert "scope-pill" not in out
+        assert ">Scope<" not in out
+
+    def test_mixed_scopes_keep_the_column(self):
+        out = bl._summary_table_html(
+            self._df(["Website", "Microservices"]), self._NUM)
+        assert out.count("scope-pill") == 2
+        assert ">Scope<" in out
+
+    def test_header_and_body_cell_counts_agree(self):
+        """A dropped header with a kept cell (or the reverse) shifts every number
+        one column to the side — the worst possible failure for this table."""
+        for scopes in (["Website", "Website"], ["Website", "Microservices"]):
+            out  = bl._summary_table_html(self._df(scopes), self._NUM)
+            head, body = out.split("<tbody>")
+            # "<th" also matches inside "<thead" — anchor on the tag boundary.
+            n_th = len(re.findall(r"<th[ >]", head))
+            for row in body.split("<tr")[1:]:
+                assert row.count("<td") == n_th

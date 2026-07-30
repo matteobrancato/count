@@ -730,25 +730,35 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 }}
 .bl-summary th {{
     text-align: right;
-    padding: 11px 14px;
+    padding: 9px 10px;
     font-size: 10.5px;
     font-weight: 700;
     color: {c['muted']};
     text-transform: uppercase;
     letter-spacing: 0.03em;
     border-bottom: 1px solid {c['border']};
-    white-space: nowrap;
+    /* Two-word headers wrap instead of forcing their column wide: "PARTIALLY
+       AUTOMATED" on one line was the single biggest reason the table needed a
+       horizontal scrollbar.  Bottom-aligned so one-line and two-line headers
+       sit on the same baseline as the numbers below them. */
+    white-space: normal;
+    line-height: 1.25;
+    vertical-align: bottom;
     background: {c['canvas']};
     position: sticky;
     top: 0;
 }}
 .bl-summary td {{
     text-align: right;
-    padding: 11px 14px;
+    padding: 11px 10px;
     color: {c['text']};
     border-bottom: 1px solid {c['grid']};
-    white-space: nowrap;
+    white-space: nowrap;   /* numbers must never wrap */
 }}
+/* Breathing room against the rounded border, without paying for it on all
+   thirteen columns. */
+.bl-summary th:first-child, .bl-summary td:first-child {{ padding-left: 15px; }}
+.bl-summary th:last-child,  .bl-summary td:last-child  {{ padding-right: 15px; }}
 .bl-summary tr:last-child td {{ border-bottom: none; }}
 .bl-summary tbody tr {{ transition: background .12s ease; }}
 .bl-summary tbody tr:hover td {{ background: {c['canvas']}; }}
@@ -786,8 +796,8 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 .bl-summary .cov-wrap {{
     display: flex;
     align-items: center;
-    gap: 9px;
-    min-width: 150px;
+    gap: 8px;
+    min-width: 118px;
 }}
 .bl-summary .cov-track {{
     flex: 1;
