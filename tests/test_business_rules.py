@@ -853,3 +853,48 @@ class TestUnknownRowsOfAutomatedCase:
         out = bl._classify_expanded(exp, self._auto(["CZ", "SK", "HU"]))
         assert len(out) == len(exp)
         assert int(out["category"].value_counts().sum()) == 5
+
+
+class TestCoverageExcludingPartial:
+    """Third figure on the detail line: Coverage with the partial gaps taken out
+    of the baseline.  The Backlog stays in — a test nobody ever automated is
+    real missing coverage, not a gap in an existing script."""
+
+    _COLS = ["case_id", "country_label", "device", "category"]
+
+    @classmethod
+    def _expanded(cls, cats):
+        return pd.DataFrame([
+            {"case_id": i, "country_label": "NL", "device": "Desktop",
+             "category": c} for i, c in enumerate(cats)
+        ], columns=cls._COLS)
+
+    def _stats(self, cats):
+        return bl._stats(self._expanded(cats),
+                         pd.DataFrame(columns=bl._AUTO_SLIM_COLS))
+
+    def test_partial_gaps_leave_the_denominator(self):
+        # 1 automated, 1 partially, 2 backlog → 1/3, not 1/4
+        s = self._stats(["automated", "partially_automated",
+                         "backlog", "backlog"])
+        assert s["cov_total"] == pytest.approx(25.0)
+        assert s["cov_ex_partial"] == pytest.approx(100 / 3)
+
+    def test_backlog_still_counts_in_full(self):
+        """Trekpleister's shape: no partial gaps, huge backlog — the figure must
+        NOT flatter it."""
+        s = self._stats(["automated"] + ["backlog"] * 3)
+        assert s["cov_ex_partial"] == pytest.approx(s["cov_total"])
+
+    def test_matches_the_marionnaud_numbers(self):
+        cats = (["automated"] * 3421 + ["backlog"] * 240
+                + ["partially_automated"] * 1419 + ["to_be_updated"] * 80
+                + ["not_applicable"] * 14 + ["unknown"] * 604)
+        s = self._stats(cats)
+        assert s["total"] == 5778
+        assert s["cov_total"]      == pytest.approx(59.2, abs=0.05)
+        assert s["cov_ex_partial"] == pytest.approx(78.5, abs=0.05)
+
+    def test_no_division_by_zero(self):
+        """A BU with a declared baseline but no rows in it."""
+        assert self._stats([])["cov_ex_partial"] == 0.0

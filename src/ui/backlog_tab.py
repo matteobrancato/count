@@ -453,6 +453,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     # automated — so splitting the backlog leaves both ratios untouched.
     automatable = n_auto + n_back + n_part + n_tbu
     scoped      = n_auto + n_back + n_part + n_tbu + n_na
+    ex_partial  = total - n_part
 
     # Mobile-App breakdown: MAPP has no Java/Testim — its meaningful split is the
     # OS, which the baseline rows already carry as the device.
@@ -474,6 +475,11 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         "unknown":         n_unk,
         "cov_total":       n_auto / total        * 100 if total        else 0.0,
         "cov_automatable": n_auto / automatable  * 100 if automatable  else 0.0,
+        # Coverage with the partial gaps taken out of the baseline: a test
+        # automated for NL but not BE is not held against the BU for BE.  The
+        # Backlog still counts in full — a test nobody ever automated is real
+        # missing coverage, not a gap in an existing script.
+        "cov_ex_partial":  n_auto / ex_partial   * 100 if ex_partial   else 0.0,
         "na_pct":          n_na   / scoped        * 100 if scoped       else 0.0,
     }
 
@@ -913,12 +919,18 @@ def _detail_view(
 
 
     # ── Coverage line (with N/A %) ────────────────────────────────────────────
-    st.markdown(
-        f"**Coverage:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
-        f"**Coverage vs Automatable:** `{s['cov_automatable']:.1f}%` &nbsp;·&nbsp; "
-        f"**Not Applicable:** `{s['na_pct']:.1f}%`",
-        unsafe_allow_html=True,
-    )
+    # The third figure appears only where there ARE partial gaps — everywhere
+    # else it repeats Coverage to the decimal, and a duplicated number reads as
+    # a broken one.
+    cov_parts = [
+        f"**Coverage:** `{s['cov_total']:.1f}%`",
+        f"**Coverage vs Automatable:** `{s['cov_automatable']:.1f}%`",
+    ]
+    if s["partially_automated"]:
+        cov_parts.append("**Coverage excluding Partially Automated:** "
+                         f"`{s['cov_ex_partial']:.1f}%`")
+    cov_parts.append(f"**Not Applicable:** `{s['na_pct']:.1f}%`")
+    st.markdown(" &nbsp;·&nbsp; ".join(cov_parts), unsafe_allow_html=True)
 
     st.divider()
 

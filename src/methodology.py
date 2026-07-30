@@ -55,6 +55,13 @@ the same Business Unit.
   cases instead — those two say **"Coverage by Case"** on the card so the basis is
   never in doubt.
 
+**Coverage excluding Partially Automated** — the same Coverage with the partial
+gaps taken out of the baseline: a test automated for NL but not BE is not held
+against the BU for BE. The Backlog still counts in full, because a test nobody
+ever automated is real missing coverage. Shown only where such gaps exist, and
+never in place of Coverage — it answers "how are we doing on what we started",
+not "how much of the regression is covered".
+
 **Health colours** — 🟢 at or above the 80% target · 🟡 60-79% · 🔴 below 60%.
 The Backlog is considered healthy while it stays under **3%** of the baseline.
 
@@ -83,6 +90,9 @@ METHODOLOGY_FOR_LLM = """
   the status is per case while the coverage is per country.  Neither counts as Automated, so Coverage is the
   same either way — the split only says whether the work is a new script or an
   extension of an existing one.
+- "Coverage excluding Partially Automated" = automated ÷ (total − partially),
+  shown per BU only where partial gaps exist.  It is NOT the headline Coverage
+  and must never be quoted as "the coverage"; always name it in full.
 - Coverage % = automated ROWS ÷ baseline ROWS.  ONE definition: the Backlog tab,
   the Coverage tab and the KPI strip always agree for the same BU.  Never quote
   a case-based percentage as "coverage".
