@@ -682,6 +682,11 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
         st.error(f"Pivot error: {exc}")
 
 
+# The six tiles that offer an export, as (category, label).  Nothing in the
+# render reads this list — the tiles are built from `_stats` — so it is the
+# CONTRACT the tests hold the tiles to: every entry here must be a category the
+# classifier can produce and `_csv_writer` can serialise.  Add a tile, add it
+# here, or the export tests stop covering it.
 _EXPORT_CATEGORIES = [
     ("total",               "Total"),
     ("automated",           "Automated"),
@@ -747,7 +752,7 @@ def _deciding_field(case: dict, device: str, category: str) -> tuple[str, str]:
 def _evidence_frame(expanded: pd.DataFrame, scope: str) -> pd.DataFrame:
     """Every baseline row with the TestRail evidence behind its classification.
 
-    Built ONCE per BU (see `_tile_exports`): the per-case metadata join, the
+    Built ONCE per BU (see `_tile_evidence`): the per-case metadata join, the
     dict build and the deciding-field pass are the expensive part, and doing
     them per tile cost ~460ms on every rerun of the tab.
     """
@@ -823,28 +828,42 @@ def _category_rows(expanded: pd.DataFrame, category: str,
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def _tile_exports(bu: str, scope: str) -> dict[str, bytes]:
-    """Ready-to-download CSV bytes per tile, built once per BU and refresh.
+def _tile_evidence(bu: str, scope: str) -> pd.DataFrame:
+    """The evidence behind a BU's tiles, built once per BU and refresh.
 
-    Streamlit's download button needs its payload at render time, so without
-    this the six exports were rebuilt on EVERY rerun of the tab (~460ms with
-    ICI-sized data) even when nobody clicked one.  Keyed like the rest of the
-    data caches, so ↻ clears it alongside the numbers.
+    Only the FRAME is cached.  Turning it into CSV bytes is left to the download
+    button's deferred callable (see `_csv_writer`), so a category nobody clicks
+    never costs a serialisation — and we stop holding six ready-made CSVs per
+    BU in memory for six hours, which on a 5,800-row BU is megabytes of files
+    that may never be downloaded.
+
+    The frame build itself stays cached because it is the expensive half
+    (~460ms with ICI-sized data: the per-case metadata join, the dict build and
+    the deciding-field pass).  Keyed like the rest of the data caches, so ↻
+    clears it alongside the numbers.
     """
     loader = _mapp_backlog_data if scope == "mobile_app" else _backlog_data
     try:
         _summary, expanded_by_bu, _auto_by_bu = loader()
     except Exception:                                                   # noqa: BLE001
-        return {}
-    ev = _evidence_frame(expanded_by_bu.get((bu, scope)), scope)
-    if ev.empty:
-        return {}
-    out: dict[str, bytes] = {}
-    for cat, _label in _EXPORT_CATEGORIES:
-        sub = ev if cat == "total" else ev[ev["_cat"] == cat]
-        if not sub.empty:
-            out[cat] = sub.drop(columns=["_cat"]).to_csv(index=False).encode("utf-8")
-    return out
+        return pd.DataFrame()
+    return _evidence_frame(expanded_by_bu.get((bu, scope)), scope)
+
+
+def _csv_writer(evidence: pd.DataFrame, category: str):
+    """A deferred payload for `st.download_button`: Streamlit runs it only when
+    the button is actually clicked (`data` accepts a callable since 1.36).
+
+    The frame is CAPTURED in the closure rather than looked up when the click
+    arrives.  The callable runs outside the script run, where a `st.cache_data`
+    lookup is not guaranteed to hit — and a miss there would re-run the whole
+    11-BU pipeline as the response to a download click.
+    """
+    def _build() -> bytes:
+        sub = (evidence if category == "total"
+               else evidence[evidence["_cat"] == category])
+        return sub.drop(columns=["_cat"]).to_csv(index=False).encode("utf-8")
+    return _build
 
 
 def _detail_view(
@@ -898,21 +917,22 @@ def _detail_view(
          f"{s['na_pct']:.1f}% of scoped rows"),
     ]
     key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"{scope}_{bu}")
-    exports  = _tile_exports(bu, scope)      # cached: one build per refresh
+    evidence = _tile_evidence(bu, scope)     # cached: one build per refresh
     for col, (cat, label, n, u, badge, tip) in zip(st.columns(6), tiles):
         with col.container(key=f"tile_{key_base}_{cat}"):
             stat_card(st, label, n, u, badge_html=badge, help_text=tip)
-            payload = exports.get(cat)
-            if not payload:
+            # The row count comes from the tile's own number instead of being
+            # counted back out of the CSV — the file no longer exists at render
+            # time, and the two were always the same figure anyway.
+            if evidence.empty or not n:
                 continue
-            n_rows = payload.count(b"\n") - 1        # header excluded
             st.download_button(
-                f"Download the {n_rows:,} rows behind {label}",
-                payload,
+                f"Download the {n:,} rows behind {label}",
+                _csv_writer(evidence, cat),
                 file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.csv",
                 mime="text/csv",
                 key=f"dl_{key_base}_{cat}",
-                help=f"Download the {n_rows:,} rows behind {label} — every "
+                help=f"Download the {n:,} rows behind {label} — every "
                      f"TestRail field the classification was based on, plus a "
                      f"direct link per case.",
             )

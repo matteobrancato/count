@@ -898,3 +898,79 @@ class TestCoverageExcludingPartial:
     def test_no_division_by_zero(self):
         """A BU with a declared baseline but no rows in it."""
         assert self._stats([])["cov_ex_partial"] == 0.0
+
+
+class TestDeferredTileDownloads:
+    """The CSV is produced by a callable Streamlit runs only on click, instead
+    of six ready-made files held in memory per BU.  Two things must survive
+    that move: the bytes, and the row count in the button's label — which now
+    comes from the tile's own number rather than from counting newlines in a
+    file that no longer exists at render time.
+    """
+
+    @staticmethod
+    def _setup(monkeypatch):
+        rule = SimpleNamespace(
+            bu="Drogas", scope="website", suite_id=1,
+            countries_filter=["DRG LV", "DRG LT"],
+            country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            country_field_label="multi_countries",
+        )
+        raw = pd.DataFrame([
+            _case(case_id=1, title="A", section_path="SD > X", url="u1"),
+            _case(case_id=2, title="B", section_path="SD > X", url="u2"),
+            _case(case_id=3, title="C", section_path="SD > Y", url="u3",
+                  **{"status_Automation Status": "Automation not applicable"}),
+        ])
+        auto = pd.DataFrame([{"case_id": 1, "country_label": "LV",
+                              "device": "Desktop"}])
+        monkeypatch.setattr(bl, "_load_scope", lambda scope: (raw, auto, [rule]))
+        exp = bl._classify_expanded(bl._expand_baseline(raw, [rule]), auto)
+        return exp, bl._evidence_frame(exp, "website")
+
+    def test_nothing_is_serialised_until_the_callable_runs(self, monkeypatch):
+        _exp, ev = self._setup(monkeypatch)
+        calls = []
+        original = pd.DataFrame.to_csv
+
+        def _spy(self, *a, **k):
+            calls.append(1)
+            return original(self, *a, **k)
+
+        monkeypatch.setattr(pd.DataFrame, "to_csv", _spy)
+        writer = bl._csv_writer(ev, "backlog")
+        assert calls == []          # building the writer must cost nothing
+        writer()
+        assert calls == [1]
+
+    def test_bytes_match_the_eager_implementation(self, monkeypatch):
+        _exp, ev = self._setup(monkeypatch)
+        for cat, _label in bl._EXPORT_CATEGORIES:
+            sub = ev if cat == "total" else ev[ev["_cat"] == cat]
+            eager = sub.drop(columns=["_cat"]).to_csv(index=False).encode("utf-8")
+            assert bl._csv_writer(ev, cat)() == eager, cat
+
+    def test_row_count_equals_the_tile_number(self, monkeypatch):
+        """The label says "Download the N rows behind X"; N is now the tile's
+        own figure, so it has to equal the rows actually in the file."""
+        exp, ev = self._setup(monkeypatch)
+        s = bl._stats(exp, pd.DataFrame())
+        for cat, _label in bl._EXPORT_CATEGORIES:
+            tile_n = s["total"] if cat == "total" else s.get(cat, 0)
+            if not tile_n:
+                continue
+            payload = bl._csv_writer(ev, cat)()
+            assert payload.count(b"\n") - 1 == tile_n, cat
+
+    def test_the_frame_is_captured_not_looked_up(self, monkeypatch):
+        """The callable runs outside the script run, so it must not depend on a
+        cache lookup that may miss there."""
+        _exp, ev = self._setup(monkeypatch)
+        writer = bl._csv_writer(ev, "backlog")
+
+        def _boom(*a, **k):                      # any data reload would raise
+            raise AssertionError("the writer reloaded the pipeline on click")
+
+        monkeypatch.setattr(bl, "_backlog_data", _boom)
+        monkeypatch.setattr(bl, "_load_scope", _boom)
+        assert writer()                          # must still produce the file
