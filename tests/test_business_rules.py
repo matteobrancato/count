@@ -1148,9 +1148,12 @@ class TestToUpdateBeatsAutomated:
 
 
 class TestCoverageExPartialInSummary:
-    """The All-BU table carries the ex-partial coverage as a quiet second line
-    under the bar.  It must appear only where it says something new — a repeated
-    number reads as a broken one — and must never be mistaken for the headline."""
+    """In the All-BU table the bar, the colour and the big figure are on
+    coverage EXCLUDING the partial gaps; the coverage over the whole baseline —
+    the one every other surface shows — sits underneath in grey.
+
+    The header names the big number, so neither can be misread, and the grey
+    line is what lets a reader reconcile the table with the KPI strip."""
 
     @staticmethod
     def _df(rows):
@@ -1166,25 +1169,37 @@ class TestCoverageExPartialInSummary:
 
     _NUM = ["Total", "Automated", "Backlog", "Partially Automated"]
 
-    def test_shown_when_the_bu_has_partial_gaps(self):
-        html_ = bl._summary_table_html(self._df([("ICI", 5713, 4472, 318)]), self._NUM)
-        assert "cov-ex" in html_
-        assert "78.3%" in html_ and "82.9%" in html_
-
-    def test_hidden_when_it_would_repeat_coverage(self):
-        html_ = bl._summary_table_html(self._df([("Watsons", 1535, 1336, 0)]), self._NUM)
-        assert "cov-ex" not in html_
-
-    def test_the_headline_is_still_the_real_coverage(self):
-        """The bar and the big number must stay on Coverage — the quiet line is
-        the extra, never the other way round."""
-        html_ = bl._summary_table_html(self._df([("ICI", 5713, 4472, 318)]), self._NUM)
+    def test_the_bar_is_on_the_ex_partial_figure(self):
+        html_ = self._html([("ICI", 5713, 4472, 318)])
         bar = html_[html_.index("cov-fill"):html_.index("cov-ex")]
-        assert "78.3%" in bar and "82.9%" not in bar
+        assert "82.9%" in bar and "78.3%" not in bar
 
-    def test_missing_column_does_not_break_the_table(self):
-        """Older cached payloads and the Mobile App summary have no such column."""
+    def test_the_whole_baseline_figure_stays_visible(self):
+        """Without it the table could not be reconciled with the KPI strip."""
+        html_ = self._html([("ICI", 5713, 4472, 318)])
+        assert "cov-ex" in html_ and "78.3%" in html_
+
+    def test_the_header_names_the_big_number(self):
+        assert "Coverage excl. Partially" in self._html([("ICI", 5713, 4472, 318)])
+
+    def test_the_colour_follows_the_ex_partial_figure(self):
+        """ICI is amber on the real coverage and green without the gaps — the
+        verdict must match the number it sits next to."""
+        from src.ui.styles import coverage_health
+        green = coverage_health(82.9)[1]
+        assert green in self._html([("ICI", 5713, 4472, 318)])
+
+    def test_one_line_only_when_they_agree(self):
+        html_ = self._html([("Watsons", 1535, 1336, 0)])
+        assert "cov-ex" not in html_ and "87.0%" in html_
+
+    def test_missing_column_falls_back_to_the_real_coverage(self):
+        """Older cached payloads and the Mobile App summary have no such column:
+        the table must then behave exactly as it did before."""
         df = self._df([("ICI", 5713, 4472, 318)]).drop(
             columns=["Coverage excl. Partially %"])
         html_ = bl._summary_table_html(df, self._NUM)
         assert "cov-ex" not in html_ and "78.3%" in html_
+
+    def _html(self, rows):
+        return bl._summary_table_html(self._df(rows), self._NUM)

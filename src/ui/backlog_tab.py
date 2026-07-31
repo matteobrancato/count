@@ -1058,11 +1058,18 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         '<th class="l">Business Unit</th>'
         + ('<th class="l">Scope</th>' if show_scope else '')
         + "".join(f'<th>{col}</th>' for col in num_cols)
-        + '<th class="l">Coverage</th></tr></thead>'
+        + '<th class="l">Coverage excl. Partially</th></tr></thead>'
     )
     body_rows = []
     for _, r in df.iterrows():
-        cov = float(r["Coverage %"])
+        # The bar, the colour and the big figure are on coverage EXCLUDING the
+        # partial gaps: the question this table is read for is "how are we doing
+        # on the tests we have started".  The coverage over the whole baseline —
+        # the figure the KPI strip, the Coverage tab, the Report and Dexter all
+        # show — stays underneath in grey, so the two can never be confused and
+        # the table still reconciles with the rest of the app.
+        real = float(r["Coverage %"])
+        cov  = float(r.get("Coverage excl. Partially %", real) or real)
         _dot, color = coverage_health(cov)
         nums = "".join(
             f'<td class="{"strong" if col in strong_cols else "mut"}">'
@@ -1072,18 +1079,15 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             + '</td>'
             for col in num_cols
         )
-        # Coverage with the partial gaps out of the baseline, quiet enough not to
-        # compete with the bar.  Only when it says something the bar does not:
-        # with no partial rows it repeats Coverage to the decimal, and a
-        # duplicated number reads as a broken one.
-        ex = float(r.get("Coverage excl. Partially %", cov) or cov)
+        # Only where the two differ: with no partial rows the second line would
+        # repeat the first to the decimal, and a duplicated number reads as a
+        # broken one.
         ex_html = ""
-        if abs(ex - cov) >= 0.05:
+        if abs(real - cov) >= 0.05:
             ex_html = (
-                f"<span class='cov-ex' title='Coverage with the Partially "
-                f"Automated rows taken out of the baseline — the country/device "
-                f"gaps of tests that ARE automated. The Backlog still counts in "
-                f"full.'>{ex:.1f}%</span>"
+                f"<span class='cov-ex' title='Coverage over the WHOLE baseline, "
+                f"partial gaps included — the figure the KPI strip, the Coverage "
+                f"tab, the Report and Dexter show.'>{real:.1f}%</span>"
             )
         cov_cell = (
             f'<td class="l"><div class="cov-wrap">'
@@ -1189,7 +1193,7 @@ def render() -> None:
             f'white-space:nowrap">'
             f'🟢 ≥ {COVERAGE_TARGET:.0f}% &nbsp;·&nbsp; 🟡 ≥ 60% &nbsp;·&nbsp; '
             f'🔴 below'
-            + ('&nbsp;·&nbsp; grey = excluding Partially Automated'
+            + ('&nbsp;·&nbsp; grey = whole baseline'
                if shows_ex else '')
             + '</span>',
             unsafe_allow_html=True,
