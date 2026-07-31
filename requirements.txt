@@ -7,3 +7,7 @@ requests==2.34.2
 tenacity==9.1.4
 altair==6.2.2
 google-genai==2.11.0
+# Two-sheet workbook for the Data-Quality unknown-rows export.  Present as a
+# transitive dep today; pinned so a host without it cannot silently break the
+# download (the code still falls back to CSV if it is missing).
+openpyxl==3.1.5

@@ -544,6 +544,16 @@ def _raw_case_row(
         "mapp_devices":   _mapp_devices_for(case, reg),   # iOS/Android for the MAPP baseline
         "multi_countries":  _get_multi_countries(case, reg, project_id),
         "country_coverage": _get_country_tokens(case, reg, "custom_country_coverage", project_id),
+        # The per-tool country fields.  Not used for matching — the matcher reads
+        # them straight off the case — but the Data-Quality panel needs them to
+        # explain WHY a row went Unknown: naming the field is useful, showing
+        # what it actually holds is what lets a QA lead fix a batch in one pass.
+        "testim_country_coverage": _get_country_tokens(
+            case, reg, "Testim Country Coverage", project_id),
+        "java_country_coverage": _get_country_tokens(
+            case, reg, "Java Country Coverage", project_id),
+        "country_validation": _get_country_tokens(
+            case, reg, "Country Validation", project_id),
         "labels":           _get_labels(case, project_id),
         "automation_tool":  _get_automation_tool(case, reg),
         "prod_sanity":    _get_prod_sanity(case, reg),

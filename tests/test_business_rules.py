@@ -1203,3 +1203,100 @@ class TestCoverageExPartialInSummary:
 
     def _html(self, rows):
         return bl._summary_table_html(self._df(rows), self._NUM)
+
+
+class TestUnknownReasons:
+    """The Unknown export has to say WHY, or it is just the same number in a
+    file.  Each reason is modelled on a case diagnosed against live TestRail
+    data, and the strings are stable because they are the grouping key of the
+    summary sheet — the whole point being that one fix clears a batch."""
+
+    @staticmethod
+    def _wire(monkeypatch, bu, case, country="NL", device="Desktop"):
+        exp = pd.DataFrame([{"case_id": case["case_id"], "country_label": country,
+                             "device": device, "category": "unknown"}])
+        raw = pd.DataFrame([case])
+        rules = [r for r in br.ALL_RULES if r.bu == bu and r.scope == "website"]
+        monkeypatch.setattr(bl, "_backlog_data",
+                            lambda: (pd.DataFrame(), {(bu, "website"): exp}, {}))
+        monkeypatch.setattr(bl, "_load_scope",
+                            lambda scope: (raw, pd.DataFrame(), rules))
+        return dq._unknown_detail(bu, "website")
+
+    def test_automated_in_a_field_the_bu_does_not_read(self, monkeypatch):
+        """The Kruidvat case: "Automation Status" = Automated, but KV is decided
+        by "Automation Status KV SPR"."""
+        out = self._wire(monkeypatch, "Kruidvat", {
+            "case_id": 4849997, "title": "Below MOV", "url": "u",
+            "status_Automation Status": "Automated",
+            "multi_countries": ["KVBE", "KVN"], "labels": ["big_regr_desktop"]})
+        # KV *does* read "Automation Status", but only through the Playwright
+        # rule, which is gated on the `playwright` label this case has not got.
+        assert out.iloc[0]["Reason"] == dq._R_MISSING_LABEL
+        assert "playwright" in out.iloc[0]["Evidence"]
+
+    def test_automated_in_a_field_no_rule_reads(self, monkeypatch):
+        """Trekpleister is decided by "Automation Status TP"; a value parked in
+        the MFR field is read by nobody here."""
+        out = self._wire(monkeypatch, "Trekpleister", {
+            "case_id": 7, "title": "x", "url": "u",
+            "status_Automation Status MFR": "Automated",
+            "multi_countries": ["TP"], "labels": ["big_regr_desktop"]})
+        assert out.iloc[0]["Reason"] == dq._R_WRONG_FIELD
+        assert "Automation Status TP" in out.iloc[0]["Evidence"]
+
+    def test_country_field_left_empty(self, monkeypatch):
+        """The Watsons case: Testim automated, Testim Country Coverage empty."""
+        out = self._wire(monkeypatch, "Watsons", {
+            "case_id": 2708290, "title": "Delivery address", "url": "u",
+            "status_Automation Status Testim Desktop": "Automated UAT",
+            "multi_countries": ["WTR"], "testim_country_coverage": [],
+            "labels": ["big_regr_desktop"]}, country="TR")
+        assert out.iloc[0]["Reason"] == dq._R_COUNTRY_EMPTY
+        assert "Testim Country Coverage" in out.iloc[0]["Evidence"]
+
+    def test_country_field_covers_another_country(self, monkeypatch):
+        """The Marionnaud case: status in the MFR field, coverage says MCH."""
+        out = self._wire(monkeypatch, "Marionnaud", {
+            "case_id": 4850869, "title": "eGiftcard", "url": "u",
+            "status_Automation Status MFR": "Automated",
+            "java_country_coverage": ["MCH"],
+            "multi_countries": ["MFR", "MCH"], "labels": ["big_regr_desktop"]},
+            country="FR")
+        assert out.iloc[0]["Reason"] == dq._R_COUNTRY_MISS
+        assert "MCH" in out.iloc[0]["Evidence"]
+
+    def test_no_status_at_all(self, monkeypatch):
+        out = self._wire(monkeypatch, "Kruidvat", {
+            "case_id": 1, "title": "x", "url": "u",
+            "multi_countries": ["KVN"], "labels": ["big_regr_desktop"]})
+        assert out.iloc[0]["Reason"] == dq._R_NO_STATUS
+
+    def test_evidence_columns_are_carried(self, monkeypatch):
+        out = self._wire(monkeypatch, "Kruidvat", {
+            "case_id": 1, "title": "x", "url": "https://tr/1",
+            "status_Automation Status": "Automated",
+            "multi_countries": ["KVN"], "labels": ["big_regr_desktop"]})
+        for col in ("Case ID", "Country", "Device", "Reason", "Evidence",
+                    "multi_countries", "Testim Country Coverage", "TestRail Link"):
+            assert col in out.columns, col
+
+    def test_summary_groups_and_ranks(self):
+        detail = pd.DataFrame([{"Case ID": f"C{i}", "Reason": r}
+                               for i, r in enumerate(["A"] * 7 + ["B"] * 3)])
+        g = dq._unknown_reason_summary(detail)
+        assert g.iloc[0]["Reason"] == "A" and g.iloc[0]["Rows"] == 7
+        assert g.iloc[0]["Share of rows"] == "70.0%"
+
+    def test_workbook_is_deferred_and_has_both_sheets(self, monkeypatch):
+        import io
+
+        import openpyxl
+        calls = []
+        monkeypatch.setattr(dq, "_unknown_detail",
+                            lambda bu, sc: calls.append(1) or pd.DataFrame(
+                                [{"Case ID": "C1", "Reason": "A"}]))
+        build = dq._unknown_workbook("Kruidvat", "website")
+        assert calls == []                      # nothing built until clicked
+        wb = openpyxl.load_workbook(io.BytesIO(build()))
+        assert wb.sheetnames == ["Reasons", "Rows"]
