@@ -1145,3 +1145,46 @@ class TestToUpdateBeatsAutomated:
         df = pd.DataFrame([{"case_id": 1, "country_label": "NL",
                             "device": "Desktop", "category": "to_be_updated"}])
         assert bl._stats(df, pd.DataFrame(columns=bl._AUTO_SLIM_COLS))["tbu_automated"] == 0
+
+
+class TestCoverageExPartialInSummary:
+    """The All-BU table carries the ex-partial coverage as a quiet second line
+    under the bar.  It must appear only where it says something new — a repeated
+    number reads as a broken one — and must never be mistaken for the headline."""
+
+    @staticmethod
+    def _df(rows):
+        out = []
+        for bu, total, auto, partial in rows:
+            out.append({"BU": bu, "Scope": "Website", "Total": total,
+                        "Automated": auto, "Backlog": total - auto - partial,
+                        "Partially Automated": partial,
+                        "Coverage %": round(auto / total * 100, 1),
+                        "Coverage excl. Partially %":
+                            round(auto / (total - partial) * 100, 1)})
+        return pd.DataFrame(out)
+
+    _NUM = ["Total", "Automated", "Backlog", "Partially Automated"]
+
+    def test_shown_when_the_bu_has_partial_gaps(self):
+        html_ = bl._summary_table_html(self._df([("ICI", 5713, 4472, 318)]), self._NUM)
+        assert "cov-ex" in html_
+        assert "78.3%" in html_ and "82.9%" in html_
+
+    def test_hidden_when_it_would_repeat_coverage(self):
+        html_ = bl._summary_table_html(self._df([("Watsons", 1535, 1336, 0)]), self._NUM)
+        assert "cov-ex" not in html_
+
+    def test_the_headline_is_still_the_real_coverage(self):
+        """The bar and the big number must stay on Coverage — the quiet line is
+        the extra, never the other way round."""
+        html_ = bl._summary_table_html(self._df([("ICI", 5713, 4472, 318)]), self._NUM)
+        bar = html_[html_.index("cov-fill"):html_.index("cov-ex")]
+        assert "78.3%" in bar and "82.9%" not in bar
+
+    def test_missing_column_does_not_break_the_table(self):
+        """Older cached payloads and the Mobile App summary have no such column."""
+        df = self._df([("ICI", 5713, 4472, 318)]).drop(
+            columns=["Coverage excl. Partially %"])
+        html_ = bl._summary_table_html(df, self._NUM)
+        assert "cov-ex" not in html_ and "78.3%" in html_

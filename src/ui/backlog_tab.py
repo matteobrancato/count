@@ -575,6 +575,7 @@ def _build_summary(
             "Not Applicable": s["not_applicable"],
             "Unknown":   s["unknown"],
             "Coverage %":    round(s["cov_total"], 1),
+            "Coverage excl. Partially %": round(s["cov_ex_partial"], 1),
         })
     return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
 
@@ -1071,12 +1072,25 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             + '</td>'
             for col in num_cols
         )
+        # Coverage with the partial gaps out of the baseline, quiet enough not to
+        # compete with the bar.  Only when it says something the bar does not:
+        # with no partial rows it repeats Coverage to the decimal, and a
+        # duplicated number reads as a broken one.
+        ex = float(r.get("Coverage excl. Partially %", cov) or cov)
+        ex_html = ""
+        if abs(ex - cov) >= 0.05:
+            ex_html = (
+                f"<span class='cov-ex' title='Coverage with the Partially "
+                f"Automated rows taken out of the baseline — the country/device "
+                f"gaps of tests that ARE automated. The Backlog still counts in "
+                f"full.'>{ex:.1f}%</span>"
+            )
         cov_cell = (
             f'<td class="l"><div class="cov-wrap">'
             f'<div class="cov-track"><div class="cov-fill" '
             f'style="width:{min(cov, 100):.0f}%;background:{color}"></div></div>'
             f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
-            f'</div></td>'
+            f'</div>{ex_html}</td>'
         )
         sel_cls  = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
         scope_td = (f'<td class="l"><span class="scope-pill">'
@@ -1162,11 +1176,22 @@ def render() -> None:
         # <span> (inline) rather than <div>: see the note in app.py's utility
         # bar — a block element collapses against Streamlit's -1rem markdown
         # margin and sits 8px below the row's centre.
+        # The grey second figure only needs a key when the table actually shows
+        # one — on a scope where no BU has partial gaps it would explain a
+        # number that is not there.
+        shows_ex = (
+            "Coverage excl. Partially %" in display.columns
+            and bool((display["Coverage excl. Partially %"].round(1)
+                      != display["Coverage %"].round(1)).any())
+        )
         st.markdown(
             f'<span style="font-size:12px;color:{COLORS["muted"]};'
             f'white-space:nowrap">'
             f'🟢 ≥ {COVERAGE_TARGET:.0f}% &nbsp;·&nbsp; 🟡 ≥ 60% &nbsp;·&nbsp; '
-            f'🔴 below</span>',
+            f'🔴 below'
+            + ('&nbsp;·&nbsp; grey = excluding Partially Automated'
+               if shows_ex else '')
+            + '</span>',
             unsafe_allow_html=True,
         )
         st.download_button(

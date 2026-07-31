@@ -807,6 +807,19 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     overflow: hidden;
 }}
 .bl-summary .cov-fill {{ height: 100%; border-radius: 4px; }}
+/* Coverage with the partial gaps out of the baseline — a second, quieter line
+   under the bar, right-aligned with the percentage above it.  Same treatment as
+   `.bl-pct` in the Backlog cell: present for whoever looks for it, never loud
+   enough to be mistaken for the headline number. */
+.bl-summary .cov-ex {{
+    display: block;
+    margin-top: 1px;
+    font-size: 10.5px;
+    line-height: 1.2;
+    color: {c['muted']};
+    text-align: right;
+    cursor: help;
+}}
 .bl-summary .cov-val {{ font-weight: 700; font-size: 12.5px; min-width: 46px; text-align: right; }}
 
 /* ── Coverage chart panels — a fixed-height head so both charts start on the
