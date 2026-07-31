@@ -19,9 +19,15 @@ Country expansion
 
 Classification (per expanded row)
 ──────────────────────────────────
+  Precedence, first match wins:
+  to_be_updated  → any status field = "To be updated".  Beats `automated`: the
+                   tool fields say whether a script EXISTS, the manual QAs write
+                   this one when the test itself has changed, so a script that
+                   no longer matches its test is work to do, not coverage.  The
+                   row keeps `_automated_row` so To Update can report how much
+                   of it is maintenance rather than new automation.
   automated      → (case_id, country_label, device) is in evaluate_rules().automated
   not_applicable → any status field = "Automation not applicable"
-  to_be_updated  → any status field = "To be updated" (split out of backlog)
   backlog        → any other non-empty, non-automated status, and the case is
                    automated NOWHERE
   partially_auto → same, or no status at all, but the case IS automated on some
@@ -368,7 +374,21 @@ def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFra
     )
     expanded["case_id"] = expanded["case_id"].astype(int)
     merged = expanded.merge(auto_keys, on=["case_id", "country_label", "device"], how="left")
-    expanded.loc[merged["_auto"].fillna(False).to_numpy(), "category"] = "automated"
+    is_auto = merged["_auto"].fillna(False).to_numpy()
+
+    # ── "To be updated" beats "Automated" ────────────────────────────────────
+    # The two answer different questions and are written by different people:
+    # the tool fields (Testim, KV SPR, MRN SPR, Playwright…) say whether a script
+    # exists, and the manual QAs write "To be updated" when the test itself has
+    # changed.  A script that no longer matches its test is work to do, not
+    # coverage — so the flag wins, whichever field carries it.
+    #
+    # The row is still REMEMBERED as automated (`_automated_row`) so To Update
+    # can say how much of it is maintenance of an existing script rather than
+    # automation to write from scratch.
+    expanded["_automated_row"] = is_auto
+    expanded.loc[is_auto & (expanded["_cat_base"] != "to_be_updated"),
+                 "category"] = "automated"
 
     # ── Rows of a case that IS automated somewhere ───────────────────────────
     # A test automated for NL but not BE used to land in the backlog with the
@@ -404,6 +424,11 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     n_back = int(cats.get("backlog",         0))
     n_part = int(cats.get("partially_automated", 0))
     n_tbu  = int(cats.get("to_be_updated",   0))
+    # Of those, the ones a script already covers: maintenance, not new work.
+    tbu_auto = 0
+    if "_automated_row" in expanded.columns:
+        tbu_auto = int((expanded["category"].eq("to_be_updated")
+                        & expanded["_automated_row"].fillna(False)).sum())
     n_na   = int(cats.get("not_applicable",  0))
     n_unk  = int(cats.get("unknown",         0))
     total  = len(expanded)
@@ -471,6 +496,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         "backlog":         n_back,   "u_back":    u_back,
         "partially_automated": n_part, "u_part":  _u("partially_automated"),
         "to_be_updated":   n_tbu,    "u_tbu":     u_tbu,
+        "tbu_automated":   tbu_auto,
         "not_applicable":  n_na,     "u_na":      u_na,
         "unknown":         n_unk,
         "cov_total":       n_auto / total        * 100 if total        else 0.0,
@@ -910,9 +936,12 @@ def _detail_view(
          "coverage per country. Counts as automatable, so Coverage is "
          "unchanged."),
         ("to_be_updated", "To Update", s["to_be_updated"], s["u_tbu"], "",
-         "Status 'To be updated' — was automated but needs maintenance. Split "
-         "out of Backlog (still counts as automatable, so coverage % is "
-         "unchanged)."),
+         "Flagged 'To be updated': the test changed, so its automation no "
+         "longer matches it. Beats Automated — a script that does not match "
+         "its test is work to do, not coverage."
+         + (f" {s['tbu_automated']:,} of these rows DO have a script today: "
+            f"maintenance, not automation to write from scratch."
+            if s["tbu_automated"] else "")),
         ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"], "",
          f"{s['na_pct']:.1f}% of scoped rows"),
     ]

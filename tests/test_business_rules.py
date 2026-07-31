@@ -1070,3 +1070,78 @@ class TestPlaywrightLabelGate:
                         and s.framework != "playwright" and s.scope != "mobile_app"
                         for t in s.countries_filter}
             assert set(r.countries_filter) == siblings, r.name
+
+
+class TestToUpdateBeatsAutomated:
+    """The tool fields say whether a script EXISTS; "To be updated" is written
+    when the test itself changed.  A script that no longer matches its test is
+    work to do, not coverage — so the flag wins, whichever field carries it.
+
+    Modelled on the ICI reconciliation: 57 cases whose `Automation Status` says
+    "To be updated" while Testim has them automated.  The QA lead's TestRail
+    filter counted them, the dashboard did not.
+    """
+
+    @staticmethod
+    def _exp(rows):
+        return pd.DataFrame([
+            {"case_id": i, "country_label": "NL", "device": "Desktop",
+             "_cat_base": b} for i, b in enumerate(rows, start=1)
+        ])
+
+    @staticmethod
+    def _auto(ids):
+        return pd.DataFrame([{"case_id": i, "country_label": "NL",
+                              "device": "Desktop"} for i in ids])
+
+    def test_flagged_row_stays_to_update_even_when_automated(self):
+        out = bl._classify_expanded(self._exp(["to_be_updated"]), self._auto([1]))
+        assert out["category"].tolist() == ["to_be_updated"]
+
+    def test_automated_still_wins_over_everything_else(self):
+        out = bl._classify_expanded(
+            self._exp(["unknown", "backlog", "not_applicable"]),
+            self._auto([1, 2, 3]))
+        assert set(out["category"]) == {"automated"}
+
+    def test_unautomated_flagged_row_is_unchanged(self):
+        out = bl._classify_expanded(self._exp(["to_be_updated"]), self._auto([]))
+        assert out["category"].tolist() == ["to_be_updated"]
+
+    def test_maintenance_is_still_visible(self):
+        """Moving the row out of Automated must not lose the fact that a script
+        exists — otherwise To Update cannot tell maintenance from new work."""
+        out = bl._classify_expanded(
+            self._exp(["to_be_updated", "to_be_updated"]), self._auto([1]))
+        s = bl._stats(out, pd.DataFrame(columns=bl._AUTO_SLIM_COLS))
+        assert s["to_be_updated"] == 2
+        assert s["tbu_automated"] == 1
+
+    def test_total_still_equals_the_sum_of_categories(self):
+        out = bl._classify_expanded(
+            self._exp(["to_be_updated", "unknown", "backlog", "not_applicable"]),
+            self._auto([1, 2]))
+        s = bl._stats(out, pd.DataFrame(columns=bl._AUTO_SLIM_COLS))
+        assert s["total"] == 4
+        assert (s["automated"] + s["backlog"] + s["partially_automated"]
+                + s["to_be_updated"] + s["not_applicable"] + s["unknown"]) == 4
+
+    def test_coverage_falls_and_automatable_denominator_does_not(self):
+        """The row moves between two categories that were BOTH automatable, so
+        only the numerator changes — Coverage drops, the denominator holds."""
+        before = bl._classify_expanded(self._exp(["unknown"] * 4), self._auto([1, 2, 3, 4]))
+        after  = bl._classify_expanded(
+            self._exp(["to_be_updated"] + ["unknown"] * 3), self._auto([1, 2, 3, 4]))
+        empty  = pd.DataFrame(columns=bl._AUTO_SLIM_COLS)
+        b, a = bl._stats(before, empty), bl._stats(after, empty)
+        assert b["cov_total"] == 100.0 and a["cov_total"] == 75.0
+        assert b["total"] == a["total"] == 4
+        # automatable = auto + backlog + partial + to-update — unchanged
+        assert a["automated"] + a["to_be_updated"] == b["automated"]
+
+    def test_stats_survives_a_frame_without_the_flag(self):
+        """`_stats` is also called on frames built without `_classify_expanded`
+        (Coverage tab, tests) — it must not require the column."""
+        df = pd.DataFrame([{"case_id": 1, "country_label": "NL",
+                            "device": "Desktop", "category": "to_be_updated"}])
+        assert bl._stats(df, pd.DataFrame(columns=bl._AUTO_SLIM_COLS))["tbu_automated"] == 0

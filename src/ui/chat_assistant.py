@@ -771,7 +771,9 @@ def _build_coverage_brief() -> str:
             f"- Regression baseline, all BUs combined: {bk_auto:,} automated of "
             f"{bk_tot:,} rows — Backlog {bk_back:,} (never automated anywhere), "
             f"Partially Automated {bk_part:,} (the case is automated in another "
-            f"country/device), To-update {bk_tbu:,}, N/A {bk_na:,}"
+            f"country/device), To-update {bk_tbu:,} (the test changed, so its "
+            f"automation no longer matches it — these are NOT counted as "
+            f"automated even where a script exists), N/A {bk_na:,}"
         )
 
     header = (
