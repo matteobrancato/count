@@ -751,7 +751,11 @@ def _render_coverage_section(
                 help="Sum of expanded rows per device.  Matches the Excel \"Total\" column."),
             "section_url":  st.column_config.LinkColumn(
                 "TestRail", width="small", display_text="open ↗",
-                help="Open this section in TestRail."),
+                help="Opens the section in TestRail.  Only rows that ARE one "
+                     "section get a link: at a coarse granularity a row folds "
+                     "several sections together, and the link would land on an "
+                     "arbitrary one of them.  Raise the granularity for more "
+                     "links."),
             "coverage_pct": st.column_config.ProgressColumn(
                 "Coverage %", format="%.1f%%", min_value=0, max_value=100,
                 help=("Automated rows ÷ baseline rows per area — the Backlog "
