@@ -974,3 +974,99 @@ class TestDeferredTileDownloads:
         monkeypatch.setattr(bl, "_backlog_data", _boom)
         monkeypatch.setattr(bl, "_load_scope", _boom)
         assert writer()                          # must still produce the file
+
+
+class TestPlaywrightLabelGate:
+    """Four BUs (Kruidvat, Trekpleister, Marionnaud, Watsons) do NOT read the
+    generic "Automation Status" — their automation lives in BU-specific fields.
+    A Playwright case, which is marked with that generic field plus the
+    `playwright` label, therefore needs a rule of its own on those BUs, and that
+    rule MUST be gated on the label: without the gate it would also admit legacy
+    cases whose generic field is filled but whose automation the BU never ran.
+    """
+
+    @staticmethod
+    def _reg():
+        return SimpleNamespace(
+            field=lambda lbl: (SimpleNamespace(system_name="custom_auto",
+                                               values_by_id={1: "Automated"})
+                               if lbl == "Automation Status" else None),
+            status_value_ids=lambda lbl, vals: {1},
+            type_id=lambda t: None,
+            priority_id_to_label={},
+        )
+
+    @pytest.fixture(autouse=True)
+    def _no_network(self, monkeypatch):
+        monkeypatch.setattr(eng, "_is_deprecated", lambda case, reg: bool(case.get("dep")))
+        monkeypatch.setattr(eng, "_get_country_tokens",
+                            lambda case, reg, fld, pid=None: case.get("mc", []))
+
+    def _match(self, monkeypatch, labels, case=None, project_id=1):
+        monkeypatch.setattr(eng, "_get_labels", lambda c, pid: labels)
+        rule = next(r for r in br.ALL_RULES if r.name == "Kruidvat PLAYWRIGHT")
+        return eng._rule_matches(case or {"custom_auto": 1, "mc": ["KVBE"]},
+                                 rule, self._reg(), project_id=project_id)
+
+    def test_labelled_case_is_automated(self, monkeypatch):
+        ok, tokens = self._match(monkeypatch, ["big_regr_desktop", "playwright"])
+        assert ok and tokens == ["KVBE"]
+
+    def test_legacy_case_without_the_label_is_rejected(self, monkeypatch):
+        """The Kruidvat case that started all of this: "Automation Status" =
+        Automated, but that field is not what automates a KV case."""
+        ok, _ = self._match(monkeypatch, ["big_regr_desktop"])
+        assert not ok
+
+    def test_label_is_matched_case_insensitively(self, monkeypatch):
+        ok, _ = self._match(monkeypatch, ["Playwright"])
+        assert ok
+
+    def test_gate_fails_closed_without_a_project(self, monkeypatch):
+        """If labels cannot be resolved we reject: admitting a case whose
+        membership we could not verify is the harmful direction."""
+        ok, _ = self._match(monkeypatch, ["playwright"], project_id=None)
+        assert not ok
+
+    def test_rules_without_the_gate_never_resolve_labels(self, monkeypatch):
+        """Regression guard: every other rule goes through the same matcher and
+        must behave exactly as before — no label lookup, no new rejection."""
+        def _boom(*a, **k):
+            raise AssertionError("a rule with no labels_filter resolved labels")
+
+        monkeypatch.setattr(eng, "_get_labels", _boom)
+        rule = next(r for r in br.ALL_RULES if r.name == "KV JAVA")
+        reg  = SimpleNamespace(
+            field=lambda lbl: (SimpleNamespace(system_name="custom_auto",
+                                               values_by_id={1: "Automated"})
+                               if lbl == "Automation Status KV SPR" else None),
+            status_value_ids=lambda lbl, vals: {1},
+            type_id=lambda t: None, priority_id_to_label={},
+        )
+        ok, _ = eng._rule_matches({"custom_auto": 1, "mc": ["KVBE"]}, rule,
+                                  reg, project_id=1)
+        assert ok
+
+    def test_every_gapped_bu_has_a_playwright_rule(self):
+        """The four BUs whose rules never read "Automation Status" are exactly
+        the ones that need a Playwright rule — and no other BU gets a duplicate.
+        """
+        website = [r for r in br.ALL_RULES if r.scope != "mobile_app"]
+        reads_generic = {r.bu for r in website
+                         if r.status_field_label == "Automation Status"
+                         and not r.labels_filter}
+        gapped = {r.bu for r in website} - reads_generic
+        assert {r.bu for r in website if r.framework == "playwright"} == gapped
+
+    def test_playwright_rules_use_the_baseline_country_field(self):
+        """Automated rows must line up with baseline rows, and the baseline for
+        all four is expanded from multi_countries."""
+        for r in br.ALL_RULES:
+            if r.framework != "playwright":
+                continue
+            assert r.country_field_label == "multi_countries", r.name
+            assert r.labels_filter == [br.PLAYWRIGHT_LABEL], r.name
+            siblings = {t for s in br.ALL_RULES if s.bu == r.bu
+                        and s.framework != "playwright" and s.scope != "mobile_app"
+                        for t in s.countries_filter}
+            assert set(r.countries_filter) == siblings, r.name

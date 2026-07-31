@@ -16,6 +16,11 @@ AUTOMATED_TESTIM     = ["Automated", "Automated DEV", "Automated UAT", "Automate
 AUTOMATED_FULL       = ["Automated", "Automated DEV", "Automated UAT", "Automated Prod"]
 
 # Canonical field labels (copy-paste from TestRail Customizations screenshot)
+# The TestRail label that marks a Playwright test.  Defined here, next to the
+# rules that gate on it, and imported by rules_engine so the matcher and the
+# framework precedence can never disagree on its spelling.
+PLAYWRIGHT_LABEL = "playwright"
+
 _TESTIM_DESKTOP_LABEL = "Automation Status Testim Desktop"
 _TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" suffix!
 
@@ -117,6 +122,12 @@ class Rule:
     # Optional fallback field: if the primary country field is empty for a case,
     # try this field instead (e.g. MRN/NextGen TestIM: CC empty → use Country Validation).
     country_fallback_field_label: str | None = None
+    # Optional label gate: the case must carry ALL of these TestRail labels.
+    # Used by the Playwright rules, whose status field ("Automation Status") is
+    # shared with older automation on some BUs — the label is what tells the two
+    # apart, so without this gate the rule would sweep in every legacy case that
+    # happens to have the generic field filled.
+    labels_filter:       list[str]    = field(default_factory=list)
 
 
 # --------------------------------------------------------------------- helpers
@@ -408,6 +419,41 @@ def build_rules() -> list[Rule]:
             status_field_label="Automation Status",
             automated_values=list(AUTOMATED_FULL),
             countries_filter=[],
+        ))
+
+    # ================================================================ Playwright
+    # A Playwright case is marked with "Automation Status" = automated plus the
+    # `playwright` label.  Six BUs already have a rule reading that field, so
+    # their Playwright cases land in the automated set on their own and
+    # `rules_engine._apply_framework_precedence` relabels them from the label.
+    #
+    # These four do NOT read it — their automation lives in BU-specific fields
+    # (KV SPR / TP / MRN SPR / the Testim pair) — so without a rule of their own
+    # a clean Playwright case would be classified UNKNOWN: not automated, and
+    # not backlog either, because the status looks automated.  Today those BUs
+    # only show Playwright rows where the OLD Testim status was left behind,
+    # which means the numbers would collapse the moment anyone cleaned it up.
+    #
+    # The label gate is what makes this safe: without it the rule would also
+    # sweep in legacy cases whose generic field is filled but whose automation
+    # this BU never ran.  Country comes from `multi_countries`, the same field
+    # their baseline is expanded from, so an automated row can never miss its
+    # baseline row.
+    for bu, suite_id, tokens, labels_map in (
+        ("Kruidvat",     KV_SUITE,  KV_TOKENS,  KV_LABELS),
+        ("Trekpleister", KV_SUITE,  TKP_TOKENS, TKP_LABELS),
+        ("Watsons",      WTR_SUITE, WTR_TOKENS, WTR_LABELS),
+        ("Marionnaud",   MRN_SUITE, MFR_TOKENS + MRN_TOKENS, MRN_ALL_LABELS),
+    ):
+        rules.append(Rule(
+            name=f"{bu} PLAYWRIGHT", bu=bu, scope="website", framework="playwright",
+            suite_id=suite_id,
+            status_field_label="Automation Status",
+            automated_values=list(AUTOMATED_FULL),
+            countries_filter=list(tokens),
+            country_labels=dict(labels_map),
+            labels_filter=[PLAYWRIGHT_LABEL],
+            type_filter=[],
         ))
 
     return rules

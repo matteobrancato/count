@@ -70,9 +70,13 @@ The Backlog is considered healthy while it stays under **3%** of the baseline.
 **Frameworks** — the three generations of tooling, oldest to newest: Java,
 Testim, then Playwright. A test can carry more than one, so each row is
 attributed to the **newest** framework that covers it — the percentages add up
-to 100% and no row is counted twice. Playwright is identified by the
-`playwright` label, Testim and Java by their Automation Status fields. Mobile
-App uses its own tooling (the "Automation MAPP Tool" field).
+to 100% and no row is counted twice. A Playwright test carries "Automation
+Status" = automated **plus** the `playwright` label; Testim and Java have their
+own status fields per BU. On the four BUs whose rules do not read the generic
+field (Kruidvat, Trekpleister, Marionnaud, Watsons) the label is what tells a
+Playwright case from an older one with the same field filled, so a case missing
+it is not counted. Mobile App uses its own tooling (the "Automation MAPP Tool"
+field).
 
 **Freshness** — numbers refresh automatically every few hours; the "Updated …"
 label next to the tabs shows their real age, and the ↻ next to it forces an
@@ -129,4 +133,6 @@ METHODOLOGY_FOR_LLM = """
   exactly, never more.  Playwright comes from the `playwright` case label;
   Java and Testim from their Automation Status fields.  Mobile App uses its
   own tooling.
+- A Playwright case needs BOTH "Automation Status" = automated AND the
+  `playwright` label.  The label alone never makes a case automated.
 """.strip()

@@ -28,7 +28,12 @@ import pandas as pd
 import streamlit as st
 
 from . import testrail_client as tr
-from .bu_rules import Rule, ALL_RULES, filter_conditional_tokens
+from .bu_rules import (
+    ALL_RULES,
+    PLAYWRIGHT_LABEL,
+    Rule,
+    filter_conditional_tokens,
+)
 from .field_resolver import FieldRegistry, get_registry
 
 logger = logging.getLogger(__name__)
@@ -251,7 +256,7 @@ def _devices_for(case: dict, reg: FieldRegistry) -> list[str]:
 # Playwright has no TestRail status field of its own: its cases set the generic
 # "Automation Status", which is exactly what the Java rules read.  Without this
 # step every Playwright test would be counted as Java, silently.
-_PLAYWRIGHT_LABEL = "playwright"
+_PLAYWRIGHT_LABEL = PLAYWRIGHT_LABEL   # one spelling, defined with the rules
 _FRAMEWORK_PRIORITY: dict[str, int] = {
     "java": 0, "mobile_app": 0,
     "testim_desktop": 1, "testim_mobile": 1,
@@ -331,6 +336,7 @@ def _rule_matches(
       1. type_filter
       2. NOT deprecated
       3. automation status value in allowed set
+      3b. labels_filter — every listed label present on the case
       4. multi_countries intersects countries_filter (if set)
     """
     # 1. Type — skip gracefully if type names can't be resolved (e.g. custom type fields
@@ -368,6 +374,21 @@ def _rule_matches(
             return False, []
     else:
         return False, []
+
+    # 3b. Label gate — AFTER the status check on purpose: resolving labels goes
+    #     through a cached fetch, while the status is a dict lookup, so this way
+    #     only the handful of cases that already look automated pay for it.
+    #     Playwright shares "Automation Status" with older automation on some
+    #     BUs, so the label is the only thing telling a Playwright case from a
+    #     legacy one with the same field filled — which is why it fails CLOSED:
+    #     if labels cannot be resolved we reject rather than admit a case whose
+    #     membership we could not verify.
+    if rule.labels_filter:
+        if project_id is None:
+            return False, []
+        have = {lbl.strip().lower() for lbl in _get_labels(case, project_id)}
+        if not {w.strip().lower() for w in rule.labels_filter} <= have:
+            return False, []
 
     # 4. Country filter — read from the field specified by rule.country_field_label.
     #    If the primary field returns nothing AND a fallback is configured, try that.
