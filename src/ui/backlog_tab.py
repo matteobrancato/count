@@ -968,17 +968,17 @@ def _detail_view(
             _stat_card(col, name, n, u)
 
         if show_shares:
-            shares = "".join(
+            # `<br>` as a SEPARATOR, not a suffix: the caption that used to sit
+            # under the last percentage is gone, so a trailing break would leave
+            # a blank line hanging off the panel.
+            shares = "<br>".join(
                 f"{name} &nbsp;<b>"
-                f"{(n / s['automated'] * 100 if s['automated'] else 0.0):.1f}%</b><br>"
+                f"{(n / s['automated'] * 100 if s['automated'] else 0.0):.1f}%</b>"
                 for name, n, _ in frameworks
             )
             cols[len(frameworks)].markdown(
                 f"<div style='padding-top:8px;font-size:13px;color:{COLORS['text']}'>"
-                f"{shares}"
-                f"<span style='font-size:11px;color:{COLORS['muted']}'>"
-                f"(share of automated rows — each row counts for its newest framework)"
-                f"</span></div>",
+                f"{shares}</div>",
                 unsafe_allow_html=True,
             )
         st.divider()
