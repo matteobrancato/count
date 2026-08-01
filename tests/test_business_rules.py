@@ -1387,3 +1387,25 @@ class TestProdSanityComesFromTheLabel:
 
     def test_one_spelling_shared_with_the_baseline(self):
         assert bl._LABEL_PROD_SANITY == br.PROD_SANITY_LABEL
+
+
+class TestCoverageHeaderNamesItsFigure:
+    """The column header must name the figure it leads with.  Production Sanity
+    has no Partially category, so "excl. Partially" there would describe a
+    distinction that is not on screen."""
+
+    @staticmethod
+    def _df(partial):
+        return pd.DataFrame([{
+            "BU": "ICI", "Scope": "Website", "Total": 100, "Automated": 80,
+            "Backlog": 20 - partial, "Partially Automated": partial,
+            "Coverage %": 80.0,
+            "Coverage excl. Partially %": round(80 / (100 - partial) * 100, 1)}])
+
+    def test_qualified_when_a_row_has_partial_gaps(self):
+        assert "Coverage excl. Partially" in bl._summary_table_html(
+            self._df(10), ["Total", "Automated"])
+
+    def test_plain_when_none_has(self):
+        html_ = bl._summary_table_html(self._df(0), ["Total", "Automated"])
+        assert ">Coverage<" in html_ and "excl. Partially" not in html_

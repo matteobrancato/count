@@ -1164,12 +1164,22 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
     # information, and the reason the table needed a horizontal scrollbar.  It
     # comes back if a view ever does mix scopes (the safety-net fallback).
     show_scope = df["Scope"].nunique() > 1 if "Scope" in df.columns else False
+    # The column is named after the figure it actually leads with.  Where no row
+    # has partial gaps — Production Sanity has no such category at all — the two
+    # are the same number and the qualifier would describe a distinction that is
+    # not on screen.
+    leads_ex = (
+        "Coverage excl. Partially %" in df.columns
+        and bool((df["Coverage excl. Partially %"].round(1)
+                  != df["Coverage %"].round(1)).any())
+    )
+    cov_head = "Coverage excl. Partially" if leads_ex else "Coverage"
     head = (
         '<thead><tr>'
         '<th class="l">Business Unit</th>'
         + ('<th class="l">Scope</th>' if show_scope else '')
         + "".join(f'<th>{col}</th>' for col in num_cols)
-        + '<th class="l">Coverage excl. Partially</th></tr></thead>'
+        + f'<th class="l">{cov_head}</th></tr></thead>'
     )
     body_rows = []
     for _, r in df.iterrows():
