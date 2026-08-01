@@ -812,18 +812,17 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
    numbers in a row readable instead of a pile. */
 .bl-summary .stack {{
     display: inline-grid;
-    grid-template-columns: auto auto auto;
-    gap: 0 9px;
+    grid-template-columns: auto auto;
+    gap: 0 12px;
     line-height: 1.15;
 }}
-/* The health verdict rides in a third cell so it cannot push the figures out
-   of alignment; `.bl-pct` is a block elsewhere, inline here. */
-.bl-summary .stack u {{
-    text-decoration: none;
-    text-align: left;
-    align-self: center;
+/* `.bl-pct` is a block in the Backlog cell; inline here, so it sits beside the
+   word it qualifies instead of opening a line of its own. */
+.bl-summary .stack .bl-pct {{
+    display: inline;
+    font-size: 9.5px;
+    margin-left: 5px;
 }}
-.bl-summary .stack u .bl-pct {{ display: inline; font-size: 9.5px; }}
 .bl-summary .stack i {{
     font-style: normal;
     font-size: 9.5px;
@@ -832,7 +831,9 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     text-transform: uppercase;
     color: {c['muted']};
     text-align: left;
+    justify-self: start;   /* the cell is right-aligned; the labels are not */
     align-self: center;
+    white-space: nowrap;
 }}
 .bl-summary .stack b {{
     font-weight: 600;

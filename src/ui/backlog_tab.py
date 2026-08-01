@@ -1266,16 +1266,19 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
                     + '</td>')
 
         def _stacked(cols: list[str]) -> str:
-            # Three grid columns, not two: the backlog health verdict keeps its
-            # place beside the Backlog figure instead of being dropped when the
-            # column was folded into the stack.
+            # The health verdict rides with the LABEL, not after the figure: it
+            # qualifies the backlog, and putting it right of the number pushed
+            # the value column off the cell's right edge, so the figures no
+            # longer sat under their own header.
             lines = ""
             for c in cols:
                 health = (_backlog_pct_html(int(r[c]), int(r["Total"]))
                           if c == "Backlog" and backlog_health else "")
-                lines += (f"<i>{_STACK_LABELS.get(c, c)}</i>"
-                          f"<b>{int(r[c]):,}</b><u>{health}</u>")
-            return f'<td class="l"><span class="stack">{lines}</span></td>'
+                lines += (f"<i>{_STACK_LABELS.get(c, c)}{health}</i>"
+                          f"<b>{int(r[c]):,}</b>")
+            # No "l" class: the cell keeps the table's right alignment, so the
+            # figures line up under the header and with every other column.
+            return f'<td><span class="stack">{lines}</span></td>'
 
         nums = "".join(_plain(v) if k == "col" else _stacked(v)  # type: ignore[arg-type]
                        for k, v in items)
@@ -1430,22 +1433,11 @@ def render() -> None:
         # <span> (inline) rather than <div>: see the note in app.py's utility
         # bar — a block element collapses against Streamlit's -1rem markdown
         # margin and sits 8px below the row's centre.
-        # The grey second figure only needs a key when the table actually shows
-        # one — on a scope where no BU has partial gaps it would explain a
-        # number that is not there.
-        shows_ex = (
-            "Coverage excl. Partially %" in display.columns
-            and bool((display["Coverage excl. Partially %"].round(1)
-                      != display["Coverage %"].round(1)).any())
-        )
         st.markdown(
             f'<span style="font-size:12px;color:{COLORS["muted"]};'
             f'white-space:nowrap">'
             f'🟢 ≥ {COVERAGE_TARGET:.0f}% &nbsp;·&nbsp; 🟡 ≥ 60% &nbsp;·&nbsp; '
-            f'🔴 below'
-            + ('&nbsp;·&nbsp; grey = whole baseline'
-               if shows_ex else '')
-            + '</span>',
+            f'🔴 below</span>',
             unsafe_allow_html=True,
         )
         st.download_button(
