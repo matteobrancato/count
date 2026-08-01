@@ -59,6 +59,7 @@ import streamlit as st
 from ..bu_rules import (
     ALL_RULES,
     MOBILE_APP_BUS,
+    PROD_SANITY_LABEL,
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
@@ -83,12 +84,10 @@ _LABEL_MOBILE  = "big_regr_mobile"
 # A case carrying both labels is counted in both — "100 automated, 5 of them
 # prod sanity" means 100 and 5, not 95 and 5.
 #
-# NOTE: this is the LABEL, and it shares its name with an older and unrelated
-# thing — the "Test Automation PRD Run" checkbox field, carried as the
-# `prod_sanity` column and still what the Coverage tab's Production Sanity view
-# filters on.  Two sources, one name: until they are reconciled, the baseline
-# here and that view can disagree.
-_LABEL_PROD_SANITY = "prod_sanity"
+# One definition, shared with the engine: the same label also drives
+# `is_prod_sanity`, so the Coverage tab's Production Sanity view and the
+# baseline here can never disagree.
+_LABEL_PROD_SANITY = PROD_SANITY_LABEL
 
 _STATUS_AUTO: set[str] = {
     "Automated", "Automated DEV", "Automated UAT", "Automated Prod",

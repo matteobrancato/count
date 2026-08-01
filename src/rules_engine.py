@@ -31,6 +31,7 @@ from . import testrail_client as tr
 from .bu_rules import (
     ALL_RULES,
     PLAYWRIGHT_LABEL,
+    PROD_SANITY_LABEL,
     Rule,
     filter_conditional_tokens,
 )
@@ -43,7 +44,6 @@ logger = logging.getLogger(__name__)
 # Use the EXACT label from the TestRail Customizations page.
 _DEVICE_LABEL        = "Device"
 _DEPRECATED_LABEL    = "Deprecated"
-_PROD_SANITY_LABEL   = "Test Automation PRD Run"
 _MULTI_COUNTRIES_LABEL = "multi_countries"
 _AUTOMATION_TOOL_LABEL = "Automation MAPP Tool"  # screenshot: "Automation MAPP Tool"
 
@@ -130,28 +130,20 @@ def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
     return False
 
 
-def _get_prod_sanity(case: dict, reg: FieldRegistry) -> bool:
-    """Test Automation PRD Run is a Checkbox field → bool value in the API.
+def _get_prod_sanity(case: dict, reg: FieldRegistry,
+                     project_id: int | None = None) -> bool:
+    """True when the case carries the `prod_sanity` LABEL.
 
-    Try the human label first; fall back to known system name candidates so a
-    label mismatch in TestRail doesn't silently zero-out all prod-sanity counts.
+    It used to read the "Test Automation PRD Run" checkbox.  That field no
+    longer counts: the label is the definition now, and changing it here rather
+    than at each call site is what keeps every surface — the Coverage tab's
+    Production Sanity view, the Overview, the Report — on one definition
+    instead of drifting into two.
     """
-    meta = (
-        reg.field(_PROD_SANITY_LABEL)
-        or reg.field("custom_test_automation_prd_run")   # confirmed system name
-    )
-    if not meta:
+    if project_id is None:
         return False
-    raw = case.get(meta.system_name)
-    if raw is None:
-        return False
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, int):
-        return raw == 1
-    if isinstance(raw, str):
-        return raw.strip().lower() in ("yes", "true", "1")
-    return False
+    return any(str(lbl).strip().lower() == PROD_SANITY_LABEL
+               for lbl in _get_labels(case, project_id))
 
 
 def _get_labels(case: dict, project_id: int) -> list[str]:
@@ -442,7 +434,7 @@ def _expand_rows(
         devices         = _devices_for(case, reg)
         # Track the original Device field value before expansion
         device_original = "Both" if len(devices) == 2 else devices[0]
-    prod_sanity_yes  = _get_prod_sanity(case, reg)
+    prod_sanity_yes  = _get_prod_sanity(case, reg, project_id)
     automation_tool  = _get_automation_tool(case, reg)
     priority_label   = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
 
@@ -556,7 +548,7 @@ def _raw_case_row(
             case, reg, "Country Validation", project_id),
         "labels":           _get_labels(case, project_id),
         "automation_tool":  _get_automation_tool(case, reg),
-        "prod_sanity":    _get_prod_sanity(case, reg),
+        "prod_sanity":    _get_prod_sanity(case, reg, project_id),
         **{f"status_{k}": v for k, v in auto_status_resolved.items()},
     }
 

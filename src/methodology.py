@@ -74,7 +74,11 @@ categories were already automatable.
 **Health colours** — 🟢 at or above the 80% target · 🟡 60-79% · 🔴 below 60%.
 The Backlog is considered healthy while it stays under **3%** of the baseline.
 
-**Production Sanity** — the subset of tests executed only in production.
+**Production Sanity** — tests carrying the `prod_sanity` label, executed only
+in production. It is a baseline of its own, counted separately from the
+regression one: a case carrying both labels is counted in both, so the two
+totals are not meant to add up. (It used to be defined by the "Test
+Automation PRD Run" checkbox; that field no longer counts.)
 
 **Frameworks** — the three generations of tooling, oldest to newest: Java,
 Testim, then Playwright. A test can carry more than one, so each row is
@@ -138,7 +142,9 @@ METHODOLOGY_FOR_LLM = """
   "Coverage" = Automated ÷ all rows; "Coverage vs Automatable" excludes
   N/A.  A BU's Backlog is considered healthy while it stays under 3% of the total.
 - Health colours: 🟢 ≥80% (target) · 🟡 60-79% · 🔴 <60%.
-- Production Sanity = tests executed only in production.
+- Production Sanity = cases with the `prod_sanity` label, a SEPARATE baseline
+  that may overlap the regression one — a case in both is counted in both,
+  so never add the two totals together.
 - Frameworks, oldest to newest: Java, Testim (Desktop/Mobile), Playwright.
   A test can carry more than one, so each row counts for the NEWEST framework
   covering it (Playwright > Testim > Java) — the three add up to Automated

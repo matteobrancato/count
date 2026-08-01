@@ -18,7 +18,8 @@ Three stacked views per BU
      `big_regr_desktop` / `big_regr_mobile` (the regression baseline used by the
      Backlog tab), with device-specific label matching.
   3. **Production Sanity Only** — restricted to cases flagged for production
-     sanity (`prod_sanity` / `is_prod_sanity`), same convention as Overview.
+     sanity — the `prod_sanity` LABEL, the same one the Backlog tab's
+     Production Sanity baseline uses.  Same convention as Overview.
 
 All three views share the same renderer (`_render_coverage_section`) so the
 layout is identical — only the input subset changes.
@@ -572,7 +573,7 @@ def _filter_to_prod_sanity(
     non_dep: pd.DataFrame, auto_bu: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
     """Filter both DataFrames to Production Sanity cases — tests executed only in
-    production (the `prod_sanity` checkbox → `is_prod_sanity` flag).  Same
+    production (the `prod_sanity` label → `is_prod_sanity` flag).  Same
     convention as the Overview tab's "Production Sanity" card.
 
     Returns (non_dep_prod_sanity, auto_bu_prod_sanity, prod_sanity_auto_case_ids).

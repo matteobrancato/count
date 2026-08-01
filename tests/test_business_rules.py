@@ -1360,3 +1360,30 @@ class TestProdSanityBaseline:
         monkeypatch.setattr(bl, "_prod_sanity_data",
                             lambda: (pd.DataFrame(), {}, {}))
         assert bl._prod_sanity_stats("Drogas", "website") is None
+
+
+class TestProdSanityComesFromTheLabel:
+    """"Test Automation PRD Run" no longer counts.  Changing the definition at
+    the source rather than at each call site is what keeps the Coverage tab's
+    Production Sanity view and the Backlog baseline on ONE definition."""
+
+    @staticmethod
+    def _reg():
+        return SimpleNamespace(field=lambda lbl: None)
+
+    def test_label_makes_it_prod_sanity(self, monkeypatch):
+        monkeypatch.setattr(eng, "_get_labels", lambda c, pid: ["prod_sanity"])
+        assert eng._get_prod_sanity({}, self._reg(), 1) is True
+
+    def test_matched_case_insensitively(self, monkeypatch):
+        monkeypatch.setattr(eng, "_get_labels", lambda c, pid: ["Prod_Sanity"])
+        assert eng._get_prod_sanity({}, self._reg(), 1) is True
+
+    def test_the_old_checkbox_no_longer_counts(self, monkeypatch):
+        """A case with the field set but no label must NOT be prod sanity."""
+        monkeypatch.setattr(eng, "_get_labels", lambda c, pid: ["big_regr_desktop"])
+        assert eng._get_prod_sanity(
+            {"custom_test_automation_prd_run": True}, self._reg(), 1) is False
+
+    def test_one_spelling_shared_with_the_baseline(self):
+        assert bl._LABEL_PROD_SANITY == br.PROD_SANITY_LABEL

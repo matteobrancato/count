@@ -21,6 +21,10 @@ AUTOMATED_FULL       = ["Automated", "Automated DEV", "Automated UAT", "Automate
 # framework precedence can never disagree on its spelling.
 PLAYWRIGHT_LABEL = "playwright"
 
+# The TestRail label that puts a case in the Production Sanity baseline.
+# It replaced the "Test Automation PRD Run" checkbox, which no longer counts.
+PROD_SANITY_LABEL = "prod_sanity"
+
 _TESTIM_DESKTOP_LABEL = "Automation Status Testim Desktop"
 _TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" suffix!
 
