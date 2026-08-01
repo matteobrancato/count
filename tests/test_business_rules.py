@@ -1597,3 +1597,43 @@ class TestProdSanityAgreesAcrossTabs:
         raw, auto, rules = self._fixture(monkeypatch)
         _nd, _ab, _ids, regr = cov._baseline_like_backlog(raw, auto, rules)
         assert set(regr["case_id"].astype(int)) == {1, 2}
+
+
+class TestOutstandingTracksAreFixed:
+    """The verdict used to share the label's grid cell, so it widened that
+    column on the Backlog line only — and with the block anchored right, any row
+    with a wider figure or verdict slid sideways.  Three separate cells, so the
+    markup a browser lays out is identical in shape on every row."""
+
+    @staticmethod
+    def _row(backlog, partial, tbu, total):
+        return pd.DataFrame([{
+            "BU": "X", "Scope": "Website", "Total": total, "Automated": 1,
+            "Backlog": backlog, "Partially Automated": partial,
+            "To be Updated": tbu, "Coverage %": 50.0}])
+
+    _NUM = ["Total", "Backlog", "Partially Automated", "To be Updated"]
+
+    def test_every_line_has_the_same_three_cells(self):
+        html_ = bl._summary_table_html(self._row(19, 0, 21, 1260), self._NUM)
+        cell = html_[html_.index('<span class="stack">'):html_.index("</span></td>")]
+        assert cell.count("<u>") == 3 and cell.count("<i>") == 3
+        assert cell.count("<b>") == 3
+
+    def test_the_verdict_never_shares_the_label_cell(self):
+        html_ = bl._summary_table_html(self._row(19, 0, 21, 1260), self._NUM)
+        assert "bl-pct" in html_
+        # the verdict closes before the label opens
+        assert "</u><i>" in html_
+
+    def test_shape_is_identical_with_a_four_figure_number(self):
+        """Marionnaud's 1,419 must not reshape the block.  Compares the TAG
+        sequence only: the verdict's colour and tooltip legitimately differ
+        between a healthy backlog and an unhealthy one."""
+        def _tags(df):
+            h = bl._summary_table_html(df, self._NUM)
+            cell = h[h.index('class="stack"'):h.index("</span></td>")]
+            return re.findall(r"</?([a-z]+)", cell)
+
+        assert (_tags(self._row(19, 0, 21, 1260))
+                == _tags(self._row(240, 1419, 130, 5778)))

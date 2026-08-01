@@ -812,16 +812,23 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
    numbers in a row readable instead of a pile. */
 .bl-summary .stack {{
     display: inline-grid;
-    grid-template-columns: auto auto;
-    gap: 0 12px;
+    /* Fixed tracks: verdict · label · figure.  Sized to the widest each will
+       ever hold ("47.3%", "TO BE UPDATED", "1,419") so no row can resize a
+       column and pull the block sideways. */
+    grid-template-columns: 32px 78px 42px;
+    gap: 0 6px;
     line-height: 1.15;
+}}
+.bl-summary .stack u {{
+    text-decoration: none;
+    text-align: right;
+    align-self: center;
 }}
 /* `.bl-pct` is a block in the Backlog cell; inline here, so it sits beside the
    word it qualifies instead of opening a line of its own. */
 .bl-summary .stack .bl-pct {{
     display: inline;
     font-size: 9.5px;
-    margin-left: 5px;
 }}
 .bl-summary .stack i {{
     font-style: normal;
@@ -831,7 +838,6 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     text-transform: uppercase;
     color: {c['muted']};
     text-align: left;
-    justify-self: start;   /* the cell is right-aligned; the labels are not */
     align-self: center;
     white-space: nowrap;
 }}

@@ -1281,11 +1281,18 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             # qualifies the backlog, and putting it right of the number pushed
             # the value column off the cell's right edge, so the figures no
             # longer sat under their own header.
+            # Three fixed-width grid cells per line: health · label · figure.
+            # Sharing a cell with the label let the health verdict widen that
+            # column on the Backlog line only, and since the block is anchored
+            # right, every row with a wider figure or a wider verdict shifted
+            # sideways.  Fixed columns make the three lines — and all nine rows —
+            # line up with each other.
             lines = ""
             for c in cols:
                 health = (_backlog_pct_html(int(r[c]), int(r["Total"]))
                           if c == "Backlog" and backlog_health else "")
-                lines += (f"<i>{_STACK_LABELS.get(c, c)}{health}</i>"
+                lines += (f"<u>{health}</u>"
+                          f"<i>{_STACK_LABELS.get(c, c)}</i>"
                           f"<b>{int(r[c]):,}</b>")
             # No "l" class: the cell keeps the table's right alignment, so the
             # figures line up under the header and with every other column.
