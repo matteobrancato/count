@@ -278,7 +278,7 @@ class TestCoverageAgreesWithBacklog:
         # empty framework frame: the Java/TestIM split is not what's under test
         s = bl._stats(expanded_bl, pd.DataFrame())
         # Coverage's baseline view, from the same inputs
-        _nd, _ab, _ids, expanded_cov = cov._regression_baseline_like_backlog(
+        _nd, _ab, _ids, expanded_cov = cov._baseline_like_backlog(
             raw, auto, rules)
 
         assert len(expanded_cov) == s["total"] == 5          # 2+2+1 rows
@@ -288,7 +288,7 @@ class TestCoverageAgreesWithBacklog:
 
     def test_per_area_denominator_is_rows_not_cases(self, website_rule):
         raw, auto, rules = self._fixture(website_rule)
-        _nd, ab, ids, expanded_cov = cov._regression_baseline_like_backlog(
+        _nd, ab, ids, expanded_cov = cov._baseline_like_backlog(
             raw, auto, rules)
         table, _chain = cov._coverage_table(raw, ab, ids, expanded=expanded_cov)
         checkout = table[table["section"] == "Checkout"].iloc[0]
@@ -301,7 +301,7 @@ class TestCoverageAgreesWithBacklog:
         """Total / Production Sanity have no row expansion — they must stay on
         the case basis rather than silently borrow the baseline's."""
         raw, auto, rules = self._fixture(website_rule)
-        _nd, ab, ids, _exp = cov._regression_baseline_like_backlog(raw, auto, rules)
+        _nd, ab, ids, _exp = cov._baseline_like_backlog(raw, auto, rules)
         table, _chain = cov._coverage_table(raw, ab, ids)
         checkout = table[table["section"] == "Checkout"].iloc[0]
         assert int(checkout["total"]) == 2                   # unique cases
@@ -1549,3 +1549,51 @@ class TestOutstandingStack:
         n_th = len(re.findall(r"<th[ >]", head))
         for row in body.split("<tr")[1:]:
             assert row.count("<td") == n_th
+
+
+class TestProdSanityAgreesAcrossTabs:
+    """Production Sanity used to be case-based on the Coverage tab and row-based
+    on the Backlog tab: one word, two numbers, two tabs.  Both now go through
+    the same expansion and the same classification."""
+
+    @staticmethod
+    def _fixture(monkeypatch):
+        rule = SimpleNamespace(
+            bu="Drogas", scope="website", suite_id=1,
+            countries_filter=["DRG LV", "DRG LT"],
+            country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            country_field_label="multi_countries")
+        raw = pd.DataFrame([
+            _case(case_id=1, labels=["big_regr_desktop", "prod_sanity"],
+                  section_path="SD > Checkout", url="u1"),
+            _case(case_id=2, labels=["big_regr_desktop"],
+                  section_path="SD > Checkout", url="u2"),
+            _case(case_id=3, labels=["prod_sanity"], device="Both",
+                  section_path="SD > Content", url="u3"),
+        ])
+        auto = pd.DataFrame([{"case_id": 1, "country_label": "LV",
+                              "device": "Desktop"}])
+        monkeypatch.setattr(bl, "_load_scope", lambda scope: (raw, auto, [rule]))
+        return raw, auto, [rule]
+
+    def test_the_two_tabs_expand_the_same_rows(self, monkeypatch):
+        raw, auto, rules = self._fixture(monkeypatch)
+        backlog = bl._classify_expanded(
+            bl._expand_baseline(raw, rules, member_label="prod_sanity"), auto)
+        _nd, _ab, _ids, coverage = cov._baseline_like_backlog(
+            raw, auto, rules, member_label="prod_sanity")
+        assert len(backlog) == len(coverage)
+        assert (sorted(backlog["case_id"].astype(int))
+                == sorted(coverage["case_id"].astype(int)))
+
+    def test_it_is_rows_not_cases(self, monkeypatch):
+        """Case 3 carries only the prod_sanity label with Device=Both, so it
+        contributes more rows than cases — which is the whole difference."""
+        raw, auto, rules = self._fixture(monkeypatch)
+        exp = bl._expand_baseline(raw, rules, member_label="prod_sanity")
+        assert len(exp) > exp["case_id"].nunique()
+
+    def test_the_regression_view_is_untouched(self, monkeypatch):
+        raw, auto, rules = self._fixture(monkeypatch)
+        _nd, _ab, _ids, regr = cov._baseline_like_backlog(raw, auto, rules)
+        assert set(regr["case_id"].astype(int)) == {1, 2}

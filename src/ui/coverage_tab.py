@@ -8,8 +8,9 @@ Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
   * Coverage % on the baseline view divides EXPANDED ROWS, reusing the Backlog
     tab's own classified frame — so both tabs report one number for a BU, by
     construction rather than by coincidence (locked by tests/test_business_rules
-    ::TestCoverageAgreesWithBacklog).  The Total / Production Sanity views have
-    no row expansion and stay case-based, labelled "Coverage by Case".
+    ::TestCoverageAgreesWithBacklog).  Production Sanity is on the same row
+    basis; only the Total view, which has no baseline to expand, stays
+    case-based and is labelled "Coverage by Case".
 
 Three stacked views per BU
 ──────────────────────────
@@ -17,9 +18,10 @@ Three stacked views per BU
   2. **No-Regression Baseline Only** — restricted to cases tagged with
      `big_regr_desktop` / `big_regr_mobile` (the regression baseline used by the
      Backlog tab), with device-specific label matching.
-  3. **Production Sanity Only** — restricted to cases flagged for production
-     sanity — the `prod_sanity` LABEL, the same one the Backlog tab's
-     Production Sanity baseline uses.  Same convention as Overview.
+  3. **Production Sanity Only** — cases carrying the `prod_sanity` LABEL,
+     expanded and classified through the SAME pipeline as the regression
+     baseline, so its numbers match the Backlog tab's Production Sanity block
+     row for row.
 
 All three views share the same renderer (`_render_coverage_section`) so the
 layout is identical — only the input subset changes.
@@ -522,10 +524,16 @@ def _filter_to_bu_countries(
     return non_dep[has_tok], int((~has_tok).sum())
 
 
-def _regression_baseline_like_backlog(
+def _baseline_like_backlog(
     non_dep: pd.DataFrame, auto_bu: pd.DataFrame, rules_bu: list,
+    member_label: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[int], pd.DataFrame]:
-    """Regression baseline computed EXACTLY like the Backlog tab.
+    """A baseline computed EXACTLY like the Backlog tab.
+
+    *member_label* picks which one: None for the regression baseline, the
+    `prod_sanity` label for Production Sanity.  Both go through the same
+    expansion and the same classification, which is what stops one word from
+    carrying two numbers across two tabs.
 
     Reuses the Backlog's own expansion (`_expand_baseline` + `_classify_expanded`):
     each big_regr case is expanded over its `multi_countries` countries × the
@@ -548,10 +556,11 @@ def _regression_baseline_like_backlog(
     # Mobile App has no big_regr baseline — it uses the priority-based MAPP
     # baseline (High/Highest × iOS/Android).  Dispatch to the right expansion so
     # the Coverage "baseline" view matches the Backlog tab for every scope.
-    _expand = (bl._expand_mapp_baseline
-               if rules_bu and rules_bu[0].scope == "mobile_app"
-               else bl._expand_baseline)
-    expanded = bl._classify_expanded(_expand(non_dep, rules_bu), auto_bu)
+    is_mapp = bool(rules_bu) and rules_bu[0].scope == "mobile_app"
+    rows = (bl._expand_mapp_baseline(non_dep, rules_bu) if is_mapp
+            else bl._expand_baseline(non_dep, rules_bu,
+                                     member_label=member_label))
+    expanded = bl._classify_expanded(rows, auto_bu)
     if expanded.empty:
         return empty
 
@@ -567,26 +576,6 @@ def _regression_baseline_like_backlog(
     auto_rows = expanded[expanded["category"] == "automated"].copy()
 
     return nd_base, auto_rows, set(auto_rows["case_id"].unique()), expanded
-
-
-def _filter_to_prod_sanity(
-    non_dep: pd.DataFrame, auto_bu: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, set[int]]:
-    """Filter both DataFrames to Production Sanity cases — tests executed only in
-    production (the `prod_sanity` label → `is_prod_sanity` flag).  Same
-    convention as the Overview tab's "Production Sanity" card.
-
-    Returns (non_dep_prod_sanity, auto_bu_prod_sanity, prod_sanity_auto_case_ids).
-    """
-    if non_dep.empty or "prod_sanity" not in non_dep.columns:
-        return non_dep.iloc[0:0], auto_bu.iloc[0:0], set()
-
-    nd_ps = non_dep[non_dep["prod_sanity"] == True]  # noqa: E712
-    if nd_ps.empty or auto_bu.empty or "is_prod_sanity" not in auto_bu.columns:
-        return nd_ps, auto_bu.iloc[0:0], set()
-
-    ab_ps = auto_bu[auto_bu["is_prod_sanity"] == True]  # noqa: E712
-    return nd_ps, ab_ps, set(ab_ps["case_id"].astype(int).unique())
 
 
 # ── per-BU view ──────────────────────────────────────────────────────────────
@@ -881,7 +870,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
             scope=scope, depth_offset=depth_offset, show_tool_facet=True,
         )
     elif is_baseline_view:
-        nd_base, ab_base, ids_base, exp_base = _regression_baseline_like_backlog(
+        nd_base, ab_base, ids_base, exp_base = _baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
         if nd_base.empty:
             st.info(
@@ -897,17 +886,20 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
                 expanded=exp_base,       # → same rows (and %) as the Backlog tab
             )
     else:  # _VIEW_PS
-        nd_ps, ab_ps, ids_ps = _filter_to_prod_sanity(non_dep, auto_bu)
+        from .backlog_tab import _LABEL_PROD_SANITY
+        nd_ps, ab_ps, ids_ps, exp_ps = _baseline_like_backlog(
+            non_dep, auto_bu, rules_bu, member_label=_LABEL_PROD_SANITY)
         if nd_ps.empty:
             st.info(
-                "No Production Sanity cases found for this BU. Mark cases with "
-                "the `Test Automation PRD Run` checkbox in TestRail — new flags "
-                "appear at the next data refresh (↻ next to the tabs)."
+                "No Production Sanity cases found for this BU. Add the "
+                "`prod_sanity` label in TestRail — new labels appear at the "
+                "next data refresh (↻ next to the tabs)."
             )
         else:
             _render_coverage_section(
                 nd_ps, ab_ps, ids_ps,
                 scope=scope, depth_offset=depth_offset, show_tool_facet=True,
+                expanded=exp_ps,         # → same rows (and %) as the Backlog tab
             )
 
 

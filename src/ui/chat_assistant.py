@@ -376,12 +376,14 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
     except Exception:                                                   # noqa: BLE001
         logger.exception("get_bu_coverage: backlog lookup failed for %s", canonical)
     if not regression:
-        _nd, _ab, _ids, exp_base = coverage_tab._regression_baseline_like_backlog(
+        _nd, _ab, _ids, exp_base = coverage_tab._baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
         if not exp_base.empty:
             regression = _regression_stats(exp_base)
 
-    nd_ps, ab_ps, ids_ps = coverage_tab._filter_to_prod_sanity(non_dep, auto_bu)
+    from .backlog_tab import _LABEL_PROD_SANITY
+    nd_ps, ab_ps, ids_ps, _exp_ps = coverage_tab._baseline_like_backlog(
+        non_dep, auto_bu, rules_bu, member_label=_LABEL_PROD_SANITY)
     prod_sanity: dict[str, Any] = {}
     if not nd_ps.empty:
         ps_total = int(nd_ps["case_id"].nunique())

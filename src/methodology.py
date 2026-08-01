@@ -50,10 +50,10 @@ The Backlog tab, the Coverage tab and the KPI strip all show the same figure for
 the same Business Unit.
 
 * **Coverage vs Automatable** excludes the Not Applicable rows.
-* The Coverage tab's **Total** and **Production Sanity** views have no baseline
-  row expansion (that is defined on the regression baseline only), so they count
-  cases instead — those two say **"Coverage by Case"** on the card so the basis is
-  never in doubt.
+* The Coverage tab's **Total** view has no baseline to expand — it spans every
+  case — so it counts cases and says **"Coverage by Case"** on the card, so the
+  basis is never in doubt. Production Sanity is a baseline of its own and is
+  counted in rows, exactly like the regression one.
 
 **Coverage excluding Partially Automated** — the same Coverage with the partial
 gaps taken out of the baseline: a test automated for NL but not BE is not held
@@ -119,8 +119,10 @@ METHODOLOGY_FOR_LLM = """
 - A "row" is case × country × device: a case automated on Desktop AND Mobile in
   3 countries is 6 rows.  So row counts are larger than unique-case counts, and
   the two must never be mixed in one ratio.
-- The only case-based figure is the Coverage tab's Total / Production Sanity
-  views, labelled "Coverage by Case" — those subsets have no row expansion.
+- The only case-based figure is the Coverage tab's Total view, labelled
+  "Coverage by Case": it spans every case and has no baseline to expand.
+  Production Sanity is counted in ROWS, the same basis as the regression
+  baseline, so the Coverage tab and the Backlog tab report one number for it.
 - Countries: each BU runs in several countries; a case is attributed to a BU by
   the country tokens in its `multi_countries` field.  Suites shared between BUs
   (e.g. Eastern Europe) are split per country.
