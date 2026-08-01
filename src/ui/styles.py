@@ -807,6 +807,40 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     overflow: hidden;
 }}
 .bl-summary .cov-fill {{ height: 100%; border-radius: 4px; }}
+/* Backlog · To be Updated · Partially, stacked in one cell.  A two-column grid
+   so the labels align left and the figures right, which is what keeps three
+   numbers in a row readable instead of a pile. */
+.bl-summary .stack {{
+    display: inline-grid;
+    grid-template-columns: auto auto auto;
+    gap: 0 9px;
+    line-height: 1.15;
+}}
+/* The health verdict rides in a third cell so it cannot push the figures out
+   of alignment; `.bl-pct` is a block elsewhere, inline here. */
+.bl-summary .stack u {{
+    text-decoration: none;
+    text-align: left;
+    align-self: center;
+}}
+.bl-summary .stack u .bl-pct {{ display: inline; font-size: 9.5px; }}
+.bl-summary .stack i {{
+    font-style: normal;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: {c['muted']};
+    text-align: left;
+    align-self: center;
+}}
+.bl-summary .stack b {{
+    font-weight: 600;
+    font-size: 12px;
+    color: {c['text']};
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}}
 /* Coverage with the partial gaps out of the baseline — a second, quieter line
    under the bar, right-aligned with the percentage above it.  Same treatment as
    `.bl-pct` in the Backlog cell: present for whoever looks for it, never loud

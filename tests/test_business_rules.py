@@ -1422,6 +1422,7 @@ class TestBacklogHealthIsRegressionOnly:
                               "Coverage %": 40.0}])
 
     def test_shown_by_default(self):
+        """Still there after Backlog was folded into the stacked cell."""
         assert "bl-pct" in bl._summary_table_html(self._df(), ["Total", "Backlog"])
 
     def test_off_for_prod_sanity(self):
@@ -1502,3 +1503,49 @@ class TestProdSanityColumn:
     def test_the_regression_coverage_is_untouched(self):
         html_ = bl._summary_table_html(self._df(360, 284), ["Total", "Automated"])
         assert "80.0%" in html_
+
+
+class TestOutstandingStack:
+    """Backlog · To be Updated · Partially answer one question — what is not
+    covered by a working script — so they share one column.  Three headers wide
+    enough to hold "PARTIALLY AUTOMATED" cost more width than the figures ever
+    needed."""
+
+    @staticmethod
+    def _df():
+        return pd.DataFrame([{
+            "BU": "ICI", "Scope": "Website", "Total": 5713, "Automated": 4472,
+            "Backlog": 237, "To be Updated": 376, "Partially Automated": 318,
+            "Coverage %": 78.3}])
+
+    _NUM = ["Total", "Automated", "Backlog", "Partially Automated",
+            "To be Updated"]
+
+    def test_one_header_replaces_three(self):
+        html_ = bl._summary_table_html(self._df(), self._NUM)
+        assert ">Outstanding<" in html_
+        for gone in (">Backlog<", ">Partially Automated<", ">To be Updated<"):
+            assert gone not in html_.split("<tbody>")[0], gone
+
+    def test_all_three_figures_survive(self):
+        html_ = bl._summary_table_html(self._df(), self._NUM)
+        for n in ("237", "376", "318"):
+            assert f"<b>{n}</b>" in html_, n
+
+    def test_order_is_least_to_most_covered(self):
+        html_ = bl._summary_table_html(self._df(), self._NUM)
+        body = html_.split("<tbody>")[1]
+        assert (body.index("BACKLOG".title()) < body.index("To be Updated")
+                < body.index("Partially"))
+
+    def test_the_health_verdict_keeps_its_place(self):
+        """It used to hang off the Backlog column; folding that column in must
+        not drop it."""
+        assert "bl-pct" in bl._summary_table_html(self._df(), self._NUM)
+
+    def test_header_and_body_cell_counts_agree(self):
+        out = bl._summary_table_html(self._df(), self._NUM)
+        head, body = out.split("<tbody>")
+        n_th = len(re.findall(r"<th[ >]", head))
+        for row in body.split("<tr")[1:]:
+            assert row.count("<td") == n_th

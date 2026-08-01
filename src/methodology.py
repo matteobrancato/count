@@ -62,10 +62,10 @@ ever automated is real missing coverage. Shown only where such gaps exist, and
 never in place of Coverage — it answers "how are we doing on what we started",
 not "how much of the regression is covered".
 
-**To Update beats Automated** — the tool fields (Testim, Playwright, the
+**To be Updated beats Automated** — the tool fields (Testim, Playwright, the
 BU-specific ones) say whether an automated script exists; "To be updated" is
 written when the test itself has changed. A script that no longer matches its
-test is work to do, not coverage, so a flagged row counts as To Update even
+test is work to do, not coverage, so a flagged row counts as To be Updated even
 where automation exists. The tile reports how many of those rows already have a
 script, so maintenance stays distinguishable from automation to write from
 scratch. Coverage vs Automatable is unaffected in its denominator: both
@@ -110,7 +110,7 @@ METHODOLOGY_FOR_LLM = """
 - "Coverage excluding Partially Automated" = automated ÷ (total − partially),
   shown per BU only where partial gaps exist.  It is NOT the headline Coverage
   and must never be quoted as "the coverage"; always name it in full.
-- "To be updated" in ANY status field wins over Automated: the row is To Update
+- "To be updated" in ANY status field wins over Automated: the row is To be Updated
   even if a script exists, because the test changed under it.  Never describe
   those rows as "not automated" — they are automated but out of date.
 - Coverage % = automated ROWS ÷ baseline ROWS.  ONE definition: the Backlog tab,

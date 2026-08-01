@@ -24,7 +24,7 @@ Classification (per expanded row)
                    tool fields say whether a script EXISTS, the manual QAs write
                    this one when the test itself has changed, so a script that
                    no longer matches its test is work to do, not coverage.  The
-                   row keeps `_automated_row` so To Update can report how much
+                   row keeps `_automated_row` so To be Updated can report how much
                    of it is maintenance rather than new automation.
   automated      → (case_id, country_label, device) is in evaluate_rules().automated
   not_applicable → any status field = "Automation not applicable"
@@ -572,18 +572,8 @@ def _prod_sanity_section(bu: str, scope: str) -> None:
     s = _prod_sanity_stats(bu, scope)
     if not s:
         return
-    # One divider, opening the section — the block above closes without one now
-    # that this sits last.  Two in a row opened a band of dead space that read
-    # as a mistake rather than as breathing room.
     st.divider()
     section_title("Production Sanity")
-    # The note belongs to the title, not to a paragraph of its own — one line,
-    # the same muted size the rest of the tab uses for asides.
-    st.markdown(
-        f"<span style='font-size:12px;color:{COLORS['muted']}'>"
-        f"A separate baseline: a case in both is counted in both.</span>",
-        unsafe_allow_html=True,
-    )
     tiles = [
         ("total", "Total", s["total"], s["u_total"],
          "Every Production Sanity row for this BU: case × country × device."),
@@ -629,6 +619,12 @@ def _prod_sanity_section(bu: str, scope: str) -> None:
 
 
 # ── summary table ─────────────────────────────────────────────────────────────
+# The three flavours of outstanding work, stacked into one column.  Order is
+# deliberate: never automated, then automated-but-stale, then automated
+# elsewhere — increasing proximity to being covered.
+_STACK_COLS = ["Backlog", "To be Updated", "Partially Automated"]
+_STACK_LABELS = {"Partially Automated": "Partially"}
+
 _AUTO_SLIM_COLS = ["case_id", "country_label", "device", "framework"]
 
 
@@ -690,7 +686,7 @@ def _build_summary(
             **breakdown,
             "Backlog":   s["backlog"],
             "Partially Automated": s["partially_automated"],
-            "To Update": s["to_be_updated"],
+            "To be Updated": s["to_be_updated"],
             "Not Applicable": s["not_applicable"],
             "Unknown":   s["unknown"],
             "Coverage %":    round(s["cov_total"], 1),
@@ -823,7 +819,7 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
         "automated":      "Automated",
         "backlog":              "Backlog",
         "partially_automated":  "Partially Automated",
-        "to_be_updated":  "To Update",
+        "to_be_updated":  "To be Updated",
         "not_applicable": "Not Applicable",
     }).fillna("Other")
 
@@ -870,14 +866,14 @@ _EXPORT_CATEGORIES = [
     ("automated",           "Automated"),
     ("backlog",             "Backlog"),
     ("partially_automated", "Partially Automated"),
-    ("to_be_updated",       "To Update"),
+    ("to_be_updated",       "To be Updated"),
     ("not_applicable",      "Not Applicable"),
 ]
 
 
 _CATEGORY_LABELS = {
     "total": "Total", "automated": "Automated", "backlog": "Backlog",
-    "partially_automated": "Partially Automated", "to_be_updated": "To Update",
+    "partially_automated": "Partially Automated", "to_be_updated": "To be Updated",
     "not_applicable": "Not Applicable", "unknown": "Unknown",
 }
 
@@ -1088,7 +1084,7 @@ def _detail_view(
          "no status field can describe, since the status is per case and the "
          "coverage per country. Counts as automatable, so Coverage is "
          "unchanged."),
-        ("to_be_updated", "To Update", s["to_be_updated"], s["u_tbu"], "",
+        ("to_be_updated", "To be Updated", s["to_be_updated"], s["u_tbu"], "",
          "Flagged 'To be updated': the test changed, so its automation no "
          "longer matches it. Beats Automated — a script that does not match "
          "its test is work to do, not coverage."
@@ -1134,6 +1130,14 @@ def _detail_view(
     cov_parts.append(f"**Not Applicable:** `{s['na_pct']:.1f}%`")
     st.markdown(" &nbsp;·&nbsp; ".join(cov_parts), unsafe_allow_html=True)
 
+    # ── Production Sanity ─────────────────────────────────────────────────────
+    # Straight after the regression headline numbers: the two baselines' totals
+    # read together, and the breakdowns that follow (frameworks, pivot) are
+    # regression-only.  These rows are counted here AND, where the case also
+    # carries a big_regr label, above — "100 automated, 5 of them prod sanity"
+    # reads 100 and 5.
+    _prod_sanity_section(bu, scope)
+
     st.divider()
 
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
@@ -1168,15 +1172,6 @@ def _detail_view(
     # ── Pivot ─────────────────────────────────────────────────────────────────
     bu_key = bu.lower().replace(" ", "_")
     _baseline_pivot(expanded, key_prefix=f"bl_{bu_key}_{scope}")
-
-    # ── Production Sanity ─────────────────────────────────────────────────────
-    # Last, and deliberately so: everything above — tiles, coverage, frameworks,
-    # pivot — is one population.  Slotting a second one into the middle of that
-    # made the reader start a new story before finishing the first.  These rows
-    # are counted here AND, where the case also carries a big_regr label, in the
-    # regression numbers above: "100 automated, 5 of them prod sanity" reads
-    # 100 and 5.
-    _prod_sanity_section(bu, scope)
 
 
 
@@ -1215,6 +1210,17 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
     has not been agreed at all.
     """
     strong_cols = {"Total", "Automated", "Backlog"}   # numbers a manager reads first
+    # Three columns of outstanding work, stacked into one labelled cell.  They
+    # answer the same question — what is not covered by a working script — and
+    # three headers wide enough to hold "PARTIALLY AUTOMATED" cost more width
+    # than the numbers inside them ever needed.
+    stack_cols = [c for c in _STACK_COLS if c in num_cols]
+    items: list[tuple[str, object]] = []
+    for c in num_cols:
+        if c not in stack_cols:
+            items.append(("col", c))
+        elif not any(k == "stack" for k, _ in items):
+            items.append(("stack", stack_cols))
     # The scope radio above the tabs already filters the table to one scope, so
     # the column repeats the same pill on every row — a whole column of no
     # information, and the reason the table needed a horizontal scrollbar.  It
@@ -1235,7 +1241,8 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         '<thead><tr>'
         '<th class="l">Business Unit</th>'
         + ('<th class="l">Scope</th>' if show_scope else '')
-        + "".join(f'<th>{col}</th>' for col in num_cols)
+        + "".join(f'<th>{v}</th>' if k == "col" else '<th>Outstanding</th>'
+                   for k, v in items)
         + f'<th class="l">{cov_head}</th>'
         + ('<th class="l">Prod Sanity</th>' if show_ps else '')
         + '</tr></thead>'
@@ -1251,14 +1258,27 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         real = float(r["Coverage %"])
         cov  = float(r.get("Coverage excl. Partially %", real) or real)
         _dot, color = coverage_health(cov)
-        nums = "".join(
-            f'<td class="{"strong" if col in strong_cols else "mut"}">'
-            f'{int(r[col]):,}'
-            + (_backlog_pct_html(int(r[col]), int(r["Total"]))
-               if col == "Backlog" and backlog_health else "")
-            + '</td>'
-            for col in num_cols
-        )
+        def _plain(col: str) -> str:
+            return (f'<td class="{"strong" if col in strong_cols else "mut"}">'
+                    f'{int(r[col]):,}'
+                    + (_backlog_pct_html(int(r[col]), int(r["Total"]))
+                       if col == "Backlog" and backlog_health else "")
+                    + '</td>')
+
+        def _stacked(cols: list[str]) -> str:
+            # Three grid columns, not two: the backlog health verdict keeps its
+            # place beside the Backlog figure instead of being dropped when the
+            # column was folded into the stack.
+            lines = ""
+            for c in cols:
+                health = (_backlog_pct_html(int(r[c]), int(r["Total"]))
+                          if c == "Backlog" and backlog_health else "")
+                lines += (f"<i>{_STACK_LABELS.get(c, c)}</i>"
+                          f"<b>{int(r[c]):,}</b><u>{health}</u>")
+            return f'<td class="l"><span class="stack">{lines}</span></td>'
+
+        nums = "".join(_plain(v) if k == "col" else _stacked(v)  # type: ignore[arg-type]
+                       for k, v in items)
         # Only where the two differ: with no partial rows the second line would
         # repeat the first to the decimal, and a duplicated number reads as a
         # broken one.
@@ -1386,7 +1406,7 @@ def render() -> None:
     # iOS/Android for Mobile App (see `_build_summary`).
     num_cols = [col for col in ["Total", "Automated", "Java", "TestIM",
                                 "Playwright", "iOS", "Android", "Backlog",
-                                "Partially Automated", "To Update",
+                                "Partially Automated", "To be Updated",
                                 "Not Applicable", "Unknown"]
                 if col in display.columns]
 

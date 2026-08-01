@@ -168,7 +168,7 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
     baseline: never name them best/worst for coverage; bring them up only for
     Mobile App questions.
   • Coverage, totals, automated counts, comparisons, rankings, gaps, the
-    No-Regression baseline, the backlog breakdown (Backlog / To-update / N/A),
+    No-Regression baseline, the backlog breakdown (Backlog / To be Updated / N/A),
     frameworks (Java / Testim / Playwright) → answer DIRECTLY from the snapshot.
     Do NOT call
     a tool — the data is already in front of you.  This is fast and reliable.
@@ -634,7 +634,7 @@ def _build_coverage_brief() -> str:
     blocks: list[str] = []
 
     # Regression-baseline / backlog breakdown — the SAME numbers as the Backlog
-    # tab (Total rows, Automated, Backlog, To-update, N/A, and the framework
+    # tab (Total rows, Automated, Backlog, To be Updated, N/A, and the framework
     # split Java / Testim / Playwright), so Dexter's regression answers line up
     # 1:1 with the dashboard.  Best-effort:
     # if it fails, the brief still carries the coverage numbers.
@@ -665,7 +665,7 @@ def _build_coverage_brief() -> str:
                 f"- No-Regression baseline (regression suite): "
                 f"{int(bk['Automated']):,} automated of {int(bk['Total']):,} rows "
                 f"({float(bk['Coverage %']):.1f}%) — Backlog {int(bk['Backlog']):,}, "
-                f"To-update {int(bk['To Update']):,}, N/A {int(bk['Not Applicable']):,} "
+                f"To be Updated {int(bk['To be Updated']):,}, N/A {int(bk['Not Applicable']):,} "
                 f"· Java {int(bk['Java']):,} / Testim {int(bk['TestIM']):,}"
                 + (f" / Playwright {int(bk['Playwright']):,}"
                    if int(bk.get('Playwright') or 0) else "")
@@ -764,14 +764,14 @@ def _build_coverage_brief() -> str:
         bk_back = sum(int(v.get("Backlog") or 0)   for v in backlog_by_bu.values())
         bk_part = sum(int(v.get("Partially Automated") or 0)
                       for v in backlog_by_bu.values())
-        bk_tbu  = sum(int(v.get("To Update") or 0) for v in backlog_by_bu.values())
+        bk_tbu  = sum(int(v.get("To be Updated") or 0) for v in backlog_by_bu.values())
         bk_na   = sum(int(v.get("Not Applicable") or 0)
                       for v in backlog_by_bu.values())
         agg_lines.append(
             f"- Regression baseline, all BUs combined: {bk_auto:,} automated of "
             f"{bk_tot:,} rows — Backlog {bk_back:,} (never automated anywhere), "
             f"Partially Automated {bk_part:,} (the case is automated in another "
-            f"country/device), To-update {bk_tbu:,} (the test changed, so its "
+            f"country/device), To be Updated {bk_tbu:,} (the test changed, so its "
             f"automation no longer matches it — these are NOT counted as "
             f"automated even where a script exists), N/A {bk_na:,}"
         )

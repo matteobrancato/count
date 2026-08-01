@@ -383,7 +383,7 @@ def render() -> None:
         _back = int(summary["Backlog"].sum())
         _part = int(summary["Partially Automated"].sum()) \
             if "Partially Automated" in summary else 0
-        _tbu  = int(summary["To Update"].sum())
+        _tbu  = int(summary["To be Updated"].sum())
         _na   = int(summary["Not Applicable"].sum())
         _unk  = int(summary["Unknown"].sum()) if "Unknown" in summary else 0
         # "Automatable" excludes Not Applicable AND Unknown — the same
@@ -397,7 +397,7 @@ def render() -> None:
                  ("Backlog", _back, _backlog_badge_html(_back, _tot))]
         if _part:
             cards.append(("Partially Automated", _part, ""))
-        cards += [("To Update", _tbu, ""), ("Not Applicable", _na, "")]
+        cards += [("To be Updated", _tbu, ""), ("Not Applicable", _na, "")]
         if _unk:
             cards.append(("Unknown", _unk, ""))
         cols = st.columns(len(cards))
