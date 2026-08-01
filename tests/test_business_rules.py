@@ -1300,3 +1300,63 @@ class TestUnknownReasons:
         assert calls == []                      # nothing built until clicked
         wb = openpyxl.load_workbook(io.BytesIO(build()))
         assert wb.sheetnames == ["Reasons", "Rows"]
+
+
+class TestProdSanityBaseline:
+    """An independent baseline that may overlap the regression one: a case with
+    both labels is counted in BOTH.  "100 automated, 5 of them prod sanity"
+    reads 100 and 5 — the 5 are not taken out of the 100."""
+
+    @staticmethod
+    def _rule():
+        return SimpleNamespace(
+            bu="Drogas", scope="website", suite_id=1,
+            countries_filter=["DRG LV"], country_labels={"DRG LV": "LV"},
+            country_field_label="multi_countries")
+
+    def test_regression_expansion_is_untouched(self):
+        """The parameter defaults to the regression baseline — same rows, same
+        order, byte for byte."""
+        raw = pd.DataFrame([_case(case_id=1), _case(case_id=2)])
+        a = bl._expand_baseline(raw, [self._rule()])
+        b = bl._expand_baseline(raw, [self._rule()], member_label=None)
+        assert a.equals(b)
+
+    def test_membership_comes_from_the_new_label(self):
+        raw = pd.DataFrame([
+            _case(case_id=1, labels=["big_regr_desktop"]),
+            _case(case_id=2, labels=["big_regr_desktop", "prod_sanity"]),
+        ])
+        out = bl._expand_baseline(raw, [self._rule()],
+                                  member_label="prod_sanity")
+        assert set(out["case_id"]) == {2}
+
+    def test_a_case_in_both_expands_the_same_way_in_both(self):
+        """What makes "5 of those 100" literally true rather than approximately."""
+        raw = pd.DataFrame([_case(case_id=1,
+                                  labels=["big_regr_desktop", "big_regr_mobile",
+                                          "prod_sanity"])])
+        regr = bl._expand_baseline(raw, [self._rule()])
+        ps   = bl._expand_baseline(raw, [self._rule()], member_label="prod_sanity")
+        assert regr[["country_label", "device"]].equals(
+            ps[["country_label", "device"]])
+
+    def test_a_prod_sanity_only_case_falls_back_to_the_device_field(self):
+        """No big_regr label to read, so the TestRail Device field decides."""
+        raw = pd.DataFrame([_case(case_id=1, labels=["prod_sanity"],
+                                  device="Both")])
+        out = bl._expand_baseline(raw, [self._rule()],
+                                  member_label="prod_sanity")
+        assert sorted(out["device"]) == ["Desktop", "Mobile"]
+
+    def test_regression_ignores_a_prod_sanity_only_case(self):
+        """The guarantee that nothing above can move: a case carrying only the
+        new label must not appear in the regression baseline."""
+        raw = pd.DataFrame([_case(case_id=1, labels=["prod_sanity"],
+                                  device="Both")])
+        assert bl._expand_baseline(raw, [self._rule()]).empty
+
+    def test_nothing_renders_until_the_label_exists(self, monkeypatch):
+        monkeypatch.setattr(bl, "_prod_sanity_data",
+                            lambda: (pd.DataFrame(), {}, {}))
+        assert bl._prod_sanity_stats("Drogas", "website") is None

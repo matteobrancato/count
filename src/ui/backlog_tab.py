@@ -79,6 +79,17 @@ from .styles import (
 _LABEL_DESKTOP = "big_regr_desktop"
 _LABEL_MOBILE  = "big_regr_mobile"
 
+# Production Sanity: an INDEPENDENT baseline that may overlap the regression one.
+# A case carrying both labels is counted in both — "100 automated, 5 of them
+# prod sanity" means 100 and 5, not 95 and 5.
+#
+# NOTE: this is the LABEL, and it shares its name with an older and unrelated
+# thing — the "Test Automation PRD Run" checkbox field, carried as the
+# `prod_sanity` column and still what the Coverage tab's Production Sanity view
+# filters on.  Two sources, one name: until they are reconciled, the baseline
+# here and that view can disagree.
+_LABEL_PROD_SANITY = "prod_sanity"
+
 _STATUS_AUTO: set[str] = {
     "Automated", "Automated DEV", "Automated UAT", "Automated Prod",
 }
@@ -169,8 +180,18 @@ def _pick_country_col(rules: list) -> str:
     return "multi_countries"
 
 
-def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
-    """Expand big_regr cases into (case_id × country_label × device) rows."""
+def _expand_baseline(raw: pd.DataFrame, rules: list,
+                     *, member_label: str | None = None) -> pd.DataFrame:
+    """Expand baseline cases into (case_id × country_label × device) rows.
+
+    *member_label* selects the baseline.  None keeps the regression one exactly
+    as it was: membership and devices both come from the big_regr labels.  Given
+    a label (Production Sanity), membership comes from THAT label, while devices
+    still come from the big_regr ones when the case has them — so a case in both
+    baselines expands to the same rows in each, and "5 of those 100" is literally
+    true.  A case carrying only the new label has no big_regr labels to read, so
+    its devices come from the TestRail Device field instead.
+    """
     _empty = pd.DataFrame(columns=["case_id", "country_label", "device", "_cat_base"])
 
     if raw.empty:
@@ -217,17 +238,32 @@ def _expand_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     _types = (raw["type_label"] if "type_label" in raw.columns
               else pd.Series([None] * len(raw), index=raw.index))
 
-    def _dev_for(labels, type_label) -> list[str]:
+    _devs = (raw["device"] if "device" in raw.columns
+             else pd.Series([None] * len(raw), index=raw.index))
+
+    def _dev_for(labels, type_label, device_field) -> list[str]:
         if not isinstance(labels, list):
             return []
-        if not (_LABEL_DESKTOP in labels or _LABEL_MOBILE in labels):
-            return []                                  # not in the baseline
+        if member_label is None:
+            if not (_LABEL_DESKTOP in labels or _LABEL_MOBILE in labels):
+                return []                              # not in the baseline
+        elif member_label not in labels:
+            return []
         if str(type_label).strip().upper() == "API":
             return ["API"]
-        return ((["Desktop"] if _LABEL_DESKTOP in labels else []) +
-                (["Mobile"]  if _LABEL_MOBILE  in labels else []))
+        from_labels = ((["Desktop"] if _LABEL_DESKTOP in labels else []) +
+                       (["Mobile"]  if _LABEL_MOBILE  in labels else []))
+        if from_labels:
+            return from_labels
+        # Only reachable for a case that carries `member_label` and no big_regr
+        # label: the TestRail Device field is the only thing left that knows.
+        dev = str(device_field or "").strip()
+        if dev == "Both":
+            return ["Desktop", "Mobile"]
+        return [dev] if dev in ("Desktop", "Mobile") else ["Unspecified"]
 
-    raw["_label_devs"] = [_dev_for(ls, t) for ls, t in zip(raw["labels"], _types)]
+    raw["_label_devs"] = [_dev_for(ls, t, d)
+                          for ls, t, d in zip(raw["labels"], _types, _devs)]
     raw = raw[raw["_label_devs"].map(len) > 0]
     if raw.empty:
         return _empty
@@ -510,6 +546,56 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     }
 
 
+def _prod_sanity_stats(bu: str, scope: str) -> dict | None:
+    """Stats for this BU's Production Sanity baseline, or None when it has none.
+
+    None is the normal state until the TestRail label exists, and every caller
+    treats it as "render nothing" — a section of zeros would claim the BU has no
+    production sanity, which is a different statement from "not measured yet".
+    """
+    if scope == "mobile_app":
+        return None
+    try:
+        _summary, expanded_by_bu, auto_by_bu = _prod_sanity_data()
+    except Exception:                                                   # noqa: BLE001
+        return None
+    exp = expanded_by_bu.get((bu, scope))
+    if exp is None or exp.empty:
+        return None
+    auto = auto_by_bu.get((bu, scope))
+    return _stats(exp, auto if auto is not None
+                  else pd.DataFrame(columns=_AUTO_SLIM_COLS))
+
+
+def _prod_sanity_section(bu: str, scope: str) -> None:
+    """Four tiles and a coverage line, the same shapes the regression block uses
+    — a reader should not have to learn a second layout for the same question."""
+    s = _prod_sanity_stats(bu, scope)
+    if not s:
+        return
+    st.divider()
+    section_title("Production Sanity")
+    st.markdown(
+        f"<span style='font-size:12px;color:{COLORS['muted']}'>"
+        f"Counted separately from the regression baseline above — a case in both "
+        f"is counted in both.</span>",
+        unsafe_allow_html=True,
+    )
+    tiles = [
+        ("Total",          s["total"],          s["u_total"]),
+        ("Automated",      s["automated"],      s["u_auto"]),
+        ("Backlog",        s["backlog"],        s["u_back"]),
+        ("Not Applicable", s["not_applicable"], s["u_na"]),
+    ]
+    for col, (label, n, u) in zip(st.columns(4), tiles):
+        _stat_card(col, label, n, u)
+    st.markdown(
+        f"**Coverage:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
+        f"**Coverage vs Automatable:** `{s['cov_automatable']:.1f}%`",
+        unsafe_allow_html=True,
+    )
+
+
 # ── summary table ─────────────────────────────────────────────────────────────
 _AUTO_SLIM_COLS = ["case_id", "country_label", "device", "framework"]
 
@@ -520,6 +606,7 @@ _SCOPE_DISPLAY = {"next_gen": "Microservices", "mobile_app": "Mobile App"}
 def _build_summary(
     scope_data: dict[str, tuple],
     pairs: list[tuple[str, str]],
+    member_label: str | None = None,
 ) -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
            dict[tuple[str, str], pd.DataFrame]]:
     """Build the summary table plus the per-(BU, scope) frames the detail view needs.
@@ -546,7 +633,7 @@ def _build_summary(
         if raw.empty:
             continue
         expanded = (_expand_mapp_baseline(raw, rules) if scope == "mobile_app"
-                    else _expand_baseline(raw, rules))
+                    else _expand_baseline(raw, rules, member_label=member_label))
         if expanded.empty:
             continue
         expanded = _classify_expanded(expanded, auto)
@@ -596,6 +683,25 @@ def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
         if not raw.empty:
             scope_data[scope] = (raw, auto, rules)
     return _build_summary(scope_data, _scoped_bus())
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
+                                 dict[tuple[str, str], pd.DataFrame]]:
+    """The Production Sanity baseline, kept SEPARATE from `_backlog_data`.
+
+    An independent population that may overlap the regression one: a case with
+    both labels is counted in both, so nothing here can move a regression
+    number.  Returns empty frames until a case actually carries the label,
+    which is what lets every Production Sanity surface hide itself.
+    """
+    scope_data: dict[str, tuple] = {}
+    for scope in ("website", "next_gen"):
+        raw, auto, rules = _load_scope(scope)
+        if not raw.empty:
+            scope_data[scope] = (raw, auto, rules)
+    return _build_summary(scope_data, _scoped_bus(),
+                          member_label=_LABEL_PROD_SANITY)
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -1013,6 +1119,12 @@ def _detail_view(
             )
         st.divider()
 
+    # ── Production Sanity ─────────────────────────────────────────────────────
+    # An independent baseline: these rows are counted here AND, where the case
+    # also carries a big_regr label, in the regression numbers above.  "100
+    # automated, 5 of them prod sanity" reads 100 and 5.
+    _prod_sanity_section(bu, scope)
+
     # ── Pivot ─────────────────────────────────────────────────────────────────
     bu_key = bu.lower().replace(" ", "_")
     _baseline_pivot(expanded, key_prefix=f"bl_{bu_key}_{scope}")
@@ -1106,6 +1218,30 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         )
     return (f'<div class="bl-summary"><table>{head}'
             f'<tbody>{"".join(body_rows)}</tbody></table></div>')
+
+
+def _prod_sanity_summary(scope_display: str, selected_bu: str) -> None:
+    """The Production Sanity block of the legacy spreadsheet, as its own compact
+    table under the regression one.
+
+    A second table rather than four more columns: the wide one is already at the
+    width where it starts scrolling, and these are a different population — side
+    by side they can be compared, merged they would invite adding up numbers
+    that share no denominator.
+    """
+    try:
+        summary, _exp, _auto = _prod_sanity_data()
+    except Exception:                                                   # noqa: BLE001
+        return
+    if summary.empty:
+        return
+    display = summary[summary["Scope"] == scope_display]
+    if display.empty or int(display["Total"].sum()) == 0:
+        return
+    section_title("Production Sanity by Business Unit")
+    st.markdown(_summary_table_html(
+        display, ["Total", "Automated", "Backlog", "Not Applicable"],
+        selected_bu=selected_bu), unsafe_allow_html=True)
 
 
 @st.fragment
@@ -1207,6 +1343,8 @@ def render() -> None:
         )
     st.markdown(_summary_table_html(display, num_cols, selected_bu=bu),
                 unsafe_allow_html=True)
+
+    _prod_sanity_summary(scope_display, bu)
 
     st.divider()
 
