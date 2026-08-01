@@ -1466,3 +1466,39 @@ class TestLabelResolutionCost:
         assert bl._carries_label(raw, "prod_sanity") is False
         assert bl._carries_label(
             pd.DataFrame([{"labels": ["prod_sanity"]}]), "prod_sanity") is True
+
+
+class TestProdSanityColumn:
+    """Production Sanity rides in the summary as ONE cell with its own name.
+    Four columns would have pushed the table back to scrolling, and merging a
+    second population into the regression columns would invite adding up numbers
+    that share no denominator."""
+
+    @staticmethod
+    def _df(ps_total, ps_auto):
+        return pd.DataFrame([{
+            "BU": "ICI", "Scope": "Website", "Total": 100, "Automated": 80,
+            "Backlog": 20, "Coverage %": 80.0,
+            "PS Total": ps_total, "PS Automated": ps_auto}])
+
+    def test_rendered_with_its_own_header_and_ratio(self):
+        html_ = bl._summary_table_html(self._df(360, 284), ["Total", "Automated"])
+        assert "Prod Sanity" in html_
+        assert "78.9%" in html_ and "284 / 360" in html_
+
+    def test_absent_when_no_bu_has_any(self):
+        html_ = bl._summary_table_html(self._df(0, 0), ["Total", "Automated"])
+        assert "Prod Sanity" not in html_
+
+    def test_header_and_body_cell_counts_still_agree(self):
+        """A header without its cell shifts every number one column sideways."""
+        for df in (self._df(360, 284), self._df(0, 0)):
+            out = bl._summary_table_html(df, ["Total", "Automated"])
+            head, body = out.split("<tbody>")
+            n_th = len(re.findall(r"<th[ >]", head))
+            for row in body.split("<tr")[1:]:
+                assert row.count("<td") == n_th
+
+    def test_the_regression_coverage_is_untouched(self):
+        html_ = bl._summary_table_html(self._df(360, 284), ["Total", "Automated"])
+        assert "80.0%" in html_

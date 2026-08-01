@@ -572,27 +572,60 @@ def _prod_sanity_section(bu: str, scope: str) -> None:
     s = _prod_sanity_stats(bu, scope)
     if not s:
         return
+    # One divider, opening the section — the block above closes without one now
+    # that this sits last.  Two in a row opened a band of dead space that read
+    # as a mistake rather than as breathing room.
     st.divider()
     section_title("Production Sanity")
+    # The note belongs to the title, not to a paragraph of its own — one line,
+    # the same muted size the rest of the tab uses for asides.
     st.markdown(
         f"<span style='font-size:12px;color:{COLORS['muted']}'>"
-        f"Counted separately from the regression baseline above — a case in both "
-        f"is counted in both.</span>",
+        f"A separate baseline: a case in both is counted in both.</span>",
         unsafe_allow_html=True,
     )
     tiles = [
-        ("Total",          s["total"],          s["u_total"]),
-        ("Automated",      s["automated"],      s["u_auto"]),
-        ("Backlog",        s["backlog"],        s["u_back"]),
-        ("Not Applicable", s["not_applicable"], s["u_na"]),
+        ("total", "Total", s["total"], s["u_total"],
+         "Every Production Sanity row for this BU: case × country × device."),
+        ("automated", "Automated", s["automated"], s["u_auto"],
+         f"Coverage {s['cov_total']:.1f}% · vs Automatable "
+         f"{s['cov_automatable']:.1f}%"),
+        ("backlog", "Backlog", s["backlog"], s["u_back"],
+         "Not automated in ANY country or device."),
+        ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"],
+         "Deliberately out of scope for automation."),
     ]
-    for col, (label, n, u) in zip(st.columns(4), tiles):
-        _stat_card(col, label, n, u)
+    # SIX columns, not four: the same grid the regression tiles above use, so
+    # these line up with them instead of inflating to fill the row.  The two
+    # empty cells are the point — they show at a glance that this is a smaller
+    # population, not the same one measured again.
+    #
+    # Clickable for the same reason the regression tiles are: the number is the
+    # question, the rows behind it are the answer.
+    key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"ps_{scope}_{bu}")
+    evidence = _tile_evidence(bu, scope, baseline="prod_sanity")
+    for col, (cat, label, n, u, tip) in zip(st.columns(6), tiles):
+        with col.container(key=f"tile_{key_base}_{cat}"):
+            stat_card(st, label, n, u, help_text=tip)
+            if evidence.empty or not n:
+                continue
+            st.download_button(
+                f"Download the {n:,} rows behind {label}",
+                _csv_writer(evidence, cat),
+                file_name=f"{bu.replace(' ', '_')}_ProdSanity_"
+                          f"{label.replace(' ', '_')}.csv",
+                mime="text/csv",
+                key=f"dl_{key_base}_{cat}",
+                help=f"Download the {n:,} Production Sanity rows behind "
+                     f"{label} — every TestRail field the classification was "
+                     f"based on, plus a direct link per case.",
+            )
     st.markdown(
         f"**Coverage:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
         f"**Coverage vs Automatable:** `{s['cov_automatable']:.1f}%`",
         unsafe_allow_html=True,
     )
+
 
 
 # ── summary table ─────────────────────────────────────────────────────────────
@@ -973,7 +1006,8 @@ def _category_rows(expanded: pd.DataFrame, category: str,
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def _tile_evidence(bu: str, scope: str) -> pd.DataFrame:
+def _tile_evidence(bu: str, scope: str,
+                   baseline: str = "regression") -> pd.DataFrame:
     """The evidence behind a BU's tiles, built once per BU and refresh.
 
     Only the FRAME is cached.  Turning it into CSV bytes is left to the download
@@ -1131,15 +1165,18 @@ def _detail_view(
             )
         st.divider()
 
-    # ── Production Sanity ─────────────────────────────────────────────────────
-    # An independent baseline: these rows are counted here AND, where the case
-    # also carries a big_regr label, in the regression numbers above.  "100
-    # automated, 5 of them prod sanity" reads 100 and 5.
-    _prod_sanity_section(bu, scope)
-
     # ── Pivot ─────────────────────────────────────────────────────────────────
     bu_key = bu.lower().replace(" ", "_")
     _baseline_pivot(expanded, key_prefix=f"bl_{bu_key}_{scope}")
+
+    # ── Production Sanity ─────────────────────────────────────────────────────
+    # Last, and deliberately so: everything above — tiles, coverage, frameworks,
+    # pivot — is one population.  Slotting a second one into the middle of that
+    # made the reader start a new story before finishing the first.  These rows
+    # are counted here AND, where the case also carries a big_regr label, in the
+    # regression numbers above: "100 automated, 5 of them prod sanity" reads
+    # 100 and 5.
+    _prod_sanity_section(bu, scope)
 
 
 
@@ -1193,12 +1230,15 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
                   != df["Coverage %"].round(1)).any())
     )
     cov_head = "Coverage excl. Partially" if leads_ex else "Coverage"
+    show_ps = "PS Total" in df.columns and int(df["PS Total"].sum()) > 0
     head = (
         '<thead><tr>'
         '<th class="l">Business Unit</th>'
         + ('<th class="l">Scope</th>' if show_scope else '')
         + "".join(f'<th>{col}</th>' for col in num_cols)
-        + f'<th class="l">{cov_head}</th></tr></thead>'
+        + f'<th class="l">{cov_head}</th>'
+        + ('<th class="l">Prod Sanity</th>' if show_ps else '')
+        + '</tr></thead>'
     )
     body_rows = []
     for _, r in df.iterrows():
@@ -1236,40 +1276,66 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
             f'</div>{ex_html}</td>'
         )
+        # Production Sanity as ONE cell, not four columns: a different
+        # population belongs in its own column with its own name, and four more
+        # columns would push the table back to scrolling.  Same two-line idiom
+        # the Backlog and Coverage cells already use.
+        ps_cell = ""
+        if show_ps:
+            ps_tot = int(r.get("PS Total") or 0)
+            if ps_tot:
+                ps_auto = int(r.get("PS Automated") or 0)
+                ps_pct  = ps_auto / ps_tot * 100
+                _d, ps_color = coverage_health(ps_pct)
+                ps_cell = (
+                    f'<td class="l"><div class="cov-wrap">'
+                    f'<div class="cov-track"><div class="cov-fill" '
+                    f'style="width:{min(ps_pct, 100):.0f}%;'
+                    f'background:{ps_color}"></div></div>'
+                    f'<span class="cov-val" style="color:{ps_color}">'
+                    f'{ps_pct:.1f}%</span></div>'
+                    f"<span class='cov-ex' title='Production Sanity: "
+                    f"{ps_auto:,} automated of {ps_tot:,} rows.  A separate "
+                    f"baseline — a case in both is counted in both, so this "
+                    f"does not add up with the regression columns.'>"
+                    f"{ps_auto:,} / {ps_tot:,}</span></td>"
+                )
+            else:
+                ps_cell = '<td class="l"></td>'
         sel_cls  = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
         scope_td = (f'<td class="l"><span class="scope-pill">'
                     f'{html.escape(str(r["Scope"]))}</span></td>') if show_scope else ''
         body_rows.append(
             f'<tr{sel_cls}>'
             f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
-            f'{scope_td}{nums}{cov_cell}</tr>'
+            f'{scope_td}{nums}{cov_cell}{ps_cell}</tr>'
         )
     return (f'<div class="bl-summary"><table>{head}'
             f'<tbody>{"".join(body_rows)}</tbody></table></div>')
 
 
-def _prod_sanity_summary(scope_display: str, selected_bu: str) -> None:
-    """The Production Sanity block of the legacy spreadsheet, as its own compact
-    table under the regression one.
+def _with_prod_sanity(display: pd.DataFrame, scope_display: str) -> pd.DataFrame:
+    """Attach the Production Sanity totals so the summary can carry them in one
+    cell.
 
-    A second table rather than four more columns: the wide one is already at the
-    width where it starts scrolling, and these are a different population — side
-    by side they can be compared, merged they would invite adding up numbers
-    that share no denominator.
+    They used to live in a second table under this one, which read as an
+    afterthought: two tables of equal weight, the reader unsure which was the
+    headline.  One column, named for itself, says the same thing without
+    competing — and the detail block below still breaks it down per category.
     """
     try:
-        summary, _exp, _auto = _prod_sanity_data()
+        ps_summary, _exp, _auto = _prod_sanity_data()
     except Exception:                                                   # noqa: BLE001
-        return
-    if summary.empty:
-        return
-    display = summary[summary["Scope"] == scope_display]
-    if display.empty or int(display["Total"].sum()) == 0:
-        return
-    section_title("Production Sanity by Business Unit")
-    st.markdown(_summary_table_html(
-        display, ["Total", "Automated", "Backlog", "Not Applicable"],
-        selected_bu=selected_bu, backlog_health=False), unsafe_allow_html=True)
+        return display
+    if ps_summary.empty or "BU" not in ps_summary.columns:
+        return display
+    ps = ps_summary[ps_summary["Scope"] == scope_display][
+        ["BU", "Total", "Automated"]].rename(
+        columns={"Total": "PS Total", "Automated": "PS Automated"})
+    if ps.empty:
+        return display
+    return display.merge(ps, on="BU", how="left").fillna(
+        {"PS Total": 0, "PS Automated": 0})
 
 
 @st.fragment
@@ -1369,10 +1435,9 @@ def render() -> None:
             mime="text/csv",
             help="Download the table above, exactly as shown, as a CSV.",
         )
-    st.markdown(_summary_table_html(display, num_cols, selected_bu=bu),
+    st.markdown(_summary_table_html(_with_prod_sanity(display, scope_display),
+                                    num_cols, selected_bu=bu),
                 unsafe_allow_html=True)
-
-    _prod_sanity_summary(scope_display, bu)
 
     st.divider()
 
