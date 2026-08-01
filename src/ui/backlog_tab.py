@@ -684,6 +684,15 @@ def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
     return _build_summary(scope_data, _scoped_bus())
 
 
+def _carries_label(raw: pd.DataFrame, label: str) -> bool:
+    """Does any case in *raw* carry *label*?  One vectorised pass over a frame
+    that is already in memory — cheap enough to gate a whole pipeline on."""
+    if raw.empty or "labels" not in raw.columns:
+        return False
+    return bool(raw["labels"].map(
+        lambda ls: isinstance(ls, list) and label in ls).any())
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                  dict[tuple[str, str], pd.DataFrame]]:
@@ -697,8 +706,12 @@ def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFram
     scope_data: dict[str, tuple] = {}
     for scope in ("website", "next_gen"):
         raw, auto, rules = _load_scope(scope)
-        if not raw.empty:
+        if not raw.empty and _carries_label(raw, _LABEL_PROD_SANITY):
             scope_data[scope] = (raw, auto, rules)
+    if not scope_data:
+        # No case carries the label yet: skip the whole pipeline rather than run
+        # an 11-BU expansion that can only produce empty frames.
+        return pd.DataFrame(), {}, {}
     return _build_summary(scope_data, _scoped_bus(),
                           member_label=_LABEL_PROD_SANITY)
 

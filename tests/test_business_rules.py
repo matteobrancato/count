@@ -1428,3 +1428,41 @@ class TestBacklogHealthIsRegressionOnly:
         html_ = bl._summary_table_html(self._df(), ["Total", "Backlog"],
                                        backlog_health=False)
         assert "bl-pct" not in html_ and ">60<" in html_
+
+
+class TestLabelResolutionCost:
+    """`_get_labels` runs once per CASE and used to reach through
+    `@st.cache_data` every time — at ~24k cases the cache machinery, not the
+    fetch, was the cost.  It showed up as a cold start that never painted."""
+
+    def test_label_map_is_fetched_once_per_project(self, monkeypatch):
+        calls = []
+        eng._LABEL_MAP_MEMO.clear()
+        monkeypatch.setattr(eng.tr, "fetch_labels",
+                            lambda pid: calls.append(pid) or {1: "playwright"})
+        for _ in range(500):
+            eng._get_labels({"labels": [{"id": 1}]}, 7)
+        assert calls == [7]
+
+    def test_a_fresh_evaluation_re_reads_the_map(self, monkeypatch):
+        """The memo must not outlive the cache entry it was built alongside."""
+        eng._LABEL_MAP_MEMO[7] = {1: "stale"}
+        monkeypatch.setattr(eng.tr, "fetch_labels", lambda pid: {1: "fresh"})
+        eng._LABEL_MAP_MEMO.clear()          # what evaluate_rules() now does
+        assert eng._get_labels({"labels": [{"id": 1}]}, 7) == ["fresh"]
+
+    def test_prod_sanity_reuses_already_resolved_labels(self, monkeypatch):
+        """Passing the list must not trigger a second resolution."""
+        def _boom(*a, **k):
+            raise AssertionError("resolved labels twice for one case")
+
+        monkeypatch.setattr(eng, "_get_labels", _boom)
+        assert eng._get_prod_sanity({}, None, labels=["prod_sanity"]) is True
+
+    def test_no_label_means_no_pipeline(self):
+        """An 11-BU expansion that can only produce empty frames is not worth
+        running on every cold start."""
+        raw = pd.DataFrame([{"labels": ["big_regr_desktop"]}])
+        assert bl._carries_label(raw, "prod_sanity") is False
+        assert bl._carries_label(
+            pd.DataFrame([{"labels": ["prod_sanity"]}]), "prod_sanity") is True

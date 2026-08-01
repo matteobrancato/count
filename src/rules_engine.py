@@ -131,7 +131,8 @@ def _is_deprecated(case: dict, reg: FieldRegistry) -> bool:
 
 
 def _get_prod_sanity(case: dict, reg: FieldRegistry,
-                     project_id: int | None = None) -> bool:
+                     project_id: int | None = None,
+                     labels: list[str] | None = None) -> bool:
     """True when the case carries the `prod_sanity` LABEL.
 
     It used to read the "Test Automation PRD Run" checkbox.  That field no
@@ -140,10 +141,14 @@ def _get_prod_sanity(case: dict, reg: FieldRegistry,
     Production Sanity view, the Overview, the Report — on one definition
     instead of drifting into two.
     """
-    if project_id is None:
-        return False
-    return any(str(lbl).strip().lower() == PROD_SANITY_LABEL
-               for lbl in _get_labels(case, project_id))
+    if labels is None:
+        if project_id is None:
+            return False
+        labels = _get_labels(case, project_id)
+    return any(str(lbl).strip().lower() == PROD_SANITY_LABEL for lbl in labels)
+
+
+_LABEL_MAP_MEMO: dict[int, dict[int, str]] = {}
 
 
 def _get_labels(case: dict, project_id: int) -> list[str]:
@@ -152,7 +157,14 @@ def _get_labels(case: dict, project_id: int) -> list[str]:
     TestRail stores labels as a list of dicts under case["labels"], each with
     an "id" key.  The human names come from get_labels/{project_id}.
     """
-    label_map = tr.fetch_labels(project_id)   # {int id → str name}, cached
+    # `tr.fetch_labels` is an @st.cache_data function, and this runs once per
+    # CASE — at ~24k cases the Streamlit cache machinery (hashing + lock) was
+    # the cost, not the fetch.  A plain dict collapses it to one lookup per
+    # project per run; `evaluate_rules` clears it, so a refresh still re-reads.
+    label_map = _LABEL_MAP_MEMO.get(project_id)
+    if label_map is None:
+        label_map = tr.fetch_labels(project_id)   # {int id → str name}, cached
+        _LABEL_MAP_MEMO[project_id] = label_map
     raw = case.get("labels") or []
     # "labels" may be a list of dicts [{"id": 3, ...}] or a list of ints
     ids: list[int] = []
@@ -434,7 +446,9 @@ def _expand_rows(
         devices         = _devices_for(case, reg)
         # Track the original Device field value before expansion
         device_original = "Both" if len(devices) == 2 else devices[0]
-    prod_sanity_yes  = _get_prod_sanity(case, reg, project_id)
+    prod_sanity_yes  = _get_prod_sanity(
+        case, reg, labels=(_get_labels(case, project_id)
+                           if project_id is not None else []))
     automation_tool  = _get_automation_tool(case, reg)
     priority_label   = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
 
@@ -510,6 +524,8 @@ def _raw_case_row(
 ) -> dict:
     devices        = _devices_for(case, reg)
     dev_label      = "Both" if len(devices) == 2 else devices[0]
+    # Resolved ONCE: both the `labels` column and the prod-sanity flag read it.
+    case_labels    = _get_labels(case, project_id) if project_id is not None else []
     priority_label = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
     type_id        = case.get("type_id")
     type_label     = (type_id_to_label or {}).get(type_id)
@@ -546,9 +562,9 @@ def _raw_case_row(
             case, reg, "Java Country Coverage", project_id),
         "country_validation": _get_country_tokens(
             case, reg, "Country Validation", project_id),
-        "labels":           _get_labels(case, project_id),
+        "labels":           case_labels,
         "automation_tool":  _get_automation_tool(case, reg),
-        "prod_sanity":    _get_prod_sanity(case, reg, project_id),
+        "prod_sanity":    _get_prod_sanity(case, reg, labels=case_labels),
         **{f"status_{k}": v for k, v in auto_status_resolved.items()},
     }
 
@@ -689,6 +705,9 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
     wait for the first computation instead of re-downloading + re-expanding
     (st.cache_data does not deduplicate concurrent misses — a refresh during
     the first load used to multiply the whole cold start)."""
+    # A fresh evaluation re-reads the label map: the per-run memo must not
+    # outlive the cache entry it was built alongside.
+    _LABEL_MAP_MEMO.clear()
     with _EVAL_SF_GUARD:
         lock = _EVAL_SF_LOCKS.setdefault(rule_names, threading.Lock())
     with lock:
