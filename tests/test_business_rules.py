@@ -1409,3 +1409,22 @@ class TestCoverageHeaderNamesItsFigure:
     def test_plain_when_none_has(self):
         html_ = bl._summary_table_html(self._df(0), ["Total", "Automated"])
         assert ">Coverage<" in html_ and "excl. Partially" not in html_
+
+
+class TestBacklogHealthIsRegressionOnly:
+    """The 3% health threshold was agreed for the regression baseline.  Borrowing
+    it for Production Sanity would show a verdict nobody has agreed to."""
+
+    @staticmethod
+    def _df():
+        return pd.DataFrame([{"BU": "ICI", "Scope": "Website", "Total": 100,
+                              "Automated": 40, "Backlog": 60,
+                              "Coverage %": 40.0}])
+
+    def test_shown_by_default(self):
+        assert "bl-pct" in bl._summary_table_html(self._df(), ["Total", "Backlog"])
+
+    def test_off_for_prod_sanity(self):
+        html_ = bl._summary_table_html(self._df(), ["Total", "Backlog"],
+                                       backlog_health=False)
+        assert "bl-pct" not in html_ and ">60<" in html_

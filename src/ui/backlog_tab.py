@@ -1150,13 +1150,19 @@ def _backlog_pct_html(backlog: int, total: int) -> str:
 
 
 def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
-                        selected_bu: str = "") -> str:
+                        selected_bu: str = "",
+                        backlog_health: bool = True) -> str:
     """Presentation-grade HTML for the All-BU summary — same data as the native
     dataframe, with an RAG coverage bar and tidy typography.  Styling lives in
     the `.bl-summary` CSS block in styles.py.
 
     *selected_bu* marks the row the global filter is on, so the reader can find
     "their" BU in an eight-row table without counting down the rows.
+
+    *backlog_health* draws the health percentage under the Backlog number.  Off
+    for Production Sanity: the 3% threshold was agreed for the regression
+    baseline, and a verdict borrowed from another population is a verdict that
+    has not been agreed at all.
     """
     strong_cols = {"Total", "Automated", "Backlog"}   # numbers a manager reads first
     # The scope radio above the tabs already filters the table to one scope, so
@@ -1196,7 +1202,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             f'<td class="{"strong" if col in strong_cols else "mut"}">'
             f'{int(r[col]):,}'
             + (_backlog_pct_html(int(r[col]), int(r["Total"]))
-               if col == "Backlog" else "")
+               if col == "Backlog" and backlog_health else "")
             + '</td>'
             for col in num_cols
         )
@@ -1250,7 +1256,7 @@ def _prod_sanity_summary(scope_display: str, selected_bu: str) -> None:
     section_title("Production Sanity by Business Unit")
     st.markdown(_summary_table_html(
         display, ["Total", "Automated", "Backlog", "Not Applicable"],
-        selected_bu=selected_bu), unsafe_allow_html=True)
+        selected_bu=selected_bu, backlog_health=False), unsafe_allow_html=True)
 
 
 @st.fragment
