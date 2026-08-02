@@ -587,15 +587,10 @@ def _prod_sanity_section(bu: str, scope: str) -> None:
     st.divider()
     section_title("Production Sanity")
     tiles = [
-        ("total", "Total", s["total"], s["u_total"],
-         "Every Production Sanity row for this BU: case × country × device."),
-        ("automated", "Automated", s["automated"], s["u_auto"],
-         f"Coverage {s['cov_total']:.1f}% · vs Automatable "
-         f"{s['cov_automatable']:.1f}%"),
-        ("backlog", "Backlog", s["backlog"], s["u_back"],
-         "Not automated in ANY country or device."),
-        ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"],
-         "Deliberately out of scope for automation."),
+        ("total", "Total", s["total"], s["u_total"]),
+        ("automated", "Automated", s["automated"], s["u_auto"]),
+        ("backlog", "Backlog", s["backlog"], s["u_back"]),
+        ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"]),
     ]
     # SIX columns, not four: the same grid the regression tiles above use, so
     # these line up with them instead of inflating to fill the row.  The two
@@ -606,9 +601,9 @@ def _prod_sanity_section(bu: str, scope: str) -> None:
     # question, the rows behind it are the answer.
     key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"ps_{scope}_{bu}")
     evidence = _tile_evidence(bu, scope, baseline="prod_sanity")
-    for col, (cat, label, n, u, tip) in zip(st.columns(6), tiles):
+    for col, (cat, label, n, u) in zip(st.columns(6), tiles):
         with col.container(key=f"tile_{key_base}_{cat}"):
-            stat_card(st, label, n, u, help_text=tip)
+            stat_card(st, label, n, u)
             if evidence.empty or not n:
                 continue
             st.download_button(
@@ -812,11 +807,11 @@ def _framework_cards(s: dict) -> list[tuple[str, int, int]]:
     ) if n]
 
 
-def _stat_card(col, label: str, n: int, u: int, *, badge_html: str = "",
-               help_text: str = "") -> None:
+def _stat_card(col, label: str, n: int, u: int, *,
+               badge_html: str = "") -> None:
     """Thin alias — the card itself lives in styles.stat_card, shared with the
     Report tab so the two never drift apart."""
-    stat_card(col, label, n, u, badge_html=badge_html, help_text=help_text)
+    stat_card(col, label, n, u, badge_html=badge_html)
 
 
 def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
@@ -1214,38 +1209,24 @@ def _detail_view(
     # Each tile is its own container so the download button can be stretched
     # over it (see `.st-key-tile_` in styles.py): clicking the number gives you
     # the rows behind it, with no second control on screen.
+    # No help text: the label and the number say it, and an ⓘ on every tile was
+    # six tooltips nobody opened.  What the categories mean lives in "How
+    # numbers are calculated", once, where it can be read in context.
     tiles = [
-        ("total", "Total", s["total"], s["u_total"], "",
-         "Every baseline row for this BU: case × country × device."),
-        ("automated", "Automated", s["automated"], s["u_auto"], "",
-         f"Coverage {s['cov_total']:.1f}% · "
-         f"vs Automatable {s['cov_automatable']:.1f}%"),
+        ("total", "Total", s["total"], s["u_total"], ""),
+        ("automated", "Automated", s["automated"], s["u_auto"], ""),
         ("backlog", "Backlog", s["backlog"], s["u_back"],
-         _backlog_badge_html(s["backlog"], s["total"]),
-         "Not automated in ANY country or device — a script that has to be "
-         "written from scratch."),
-        ("partially_automated", "Partially Automated", s["partially_automated"],
-         s["u_part"], "",
-         "The case IS automated somewhere, just not for this country / device "
-         "— extending an existing script, not writing a new one. Includes rows "
-         "no status field can describe, since the status is per case and the "
-         "coverage per country. Counts as automatable, so Coverage is "
-         "unchanged."),
-        ("to_be_updated", "To be Updated", s["to_be_updated"], s["u_tbu"], "",
-         "Flagged 'To be updated': the test changed, so its automation no "
-         "longer matches it. Beats Automated — a script that does not match "
-         "its test is work to do, not coverage."
-         + (f" {s['tbu_automated']:,} of these rows DO have a script today: "
-            f"maintenance, not automation to write from scratch."
-            if s["tbu_automated"] else "")),
-        ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"], "",
-         f"{s['na_pct']:.1f}% of scoped rows"),
+         _backlog_badge_html(s["backlog"], s["total"])),
+        ("partially_automated", "Partially Automated",
+         s["partially_automated"], s["u_part"], ""),
+        ("to_be_updated", "To be Updated", s["to_be_updated"], s["u_tbu"], ""),
+        ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"], ""),
     ]
     key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"{scope}_{bu}")
     evidence = _tile_evidence(bu, scope)     # cached: one build per refresh
-    for col, (cat, label, n, u, badge, tip) in zip(st.columns(6), tiles):
+    for col, (cat, label, n, u, badge) in zip(st.columns(6), tiles):
         with col.container(key=f"tile_{key_base}_{cat}"):
-            stat_card(st, label, n, u, badge_html=badge, help_text=tip)
+            stat_card(st, label, n, u, badge_html=badge)
             # The row count comes from the tile's own number instead of being
             # counted back out of the CSV — the file no longer exists at render
             # time, and the two were always the same figure anyway.

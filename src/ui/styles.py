@@ -1052,7 +1052,7 @@ def inject() -> None:
 
 
 def stat_card(col, label: str, n: int, u: int | None = None, *,
-              badge_html: str = "", help_text: str = "") -> None:
+              badge_html: str = "") -> None:
     """The ONE metric card of the dashboard — Backlog and Report share it.
 
     Identical markup everywhere means identical height, which is what keeps a
@@ -1061,22 +1061,13 @@ def stat_card(col, label: str, n: int, u: int | None = None, *,
     Report aggregates several BUs, and a case shared between two of them must
     not be counted twice).
     """
-    import html as _html
-
     import streamlit as _st                                          # noqa: F401
-    help_icon = ""
-    if help_text:
-        help_icon = (
-            f"<span title=\"{_html.escape(help_text)}\" style='cursor:help;"
-            f"color:{COLORS['muted']};font-size:12px;font-weight:400;margin-left:5px'>"
-            f"&#9432;</span>"
-        )
     col.markdown(
         f"<div class='stat-card' style='background:{COLORS['surface']};"
         f"border:1px solid {COLORS['border']};border-radius:14px;padding:16px 18px;"
         f"box-shadow:0 1px 2px rgba(15,23,42,0.04),0 1px 3px rgba(15,23,42,0.05)'>"
         f"<div style='color:{COLORS['muted']};font-weight:600;font-size:13.5px;"
-        f"letter-spacing:0.01em;white-space:nowrap'>{label}{help_icon}</div>"
+        f"letter-spacing:0.01em;white-space:nowrap'>{label}</div>"
         f"<div style='display:flex;align-items:center;gap:9px;margin-top:6px'>"
         f"<span style='color:{COLORS['ink']};font-weight:750;font-size:34px;"
         f"line-height:1.15'>{n:,}</span>{badge_html}</div></div>",
