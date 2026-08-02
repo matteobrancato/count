@@ -1637,3 +1637,23 @@ class TestOutstandingTracksAreFixed:
 
         assert (_tags(self._row(19, 0, 21, 1260))
                 == _tags(self._row(240, 1419, 130, 5778)))
+
+
+class TestLabelMemoSurvivesCacheHits:
+    """`evaluate_rules` is the single-flight WRAPPER — it runs on every call,
+    hits included.  Clearing the memo there wiped it on every render and sent
+    `_get_labels` back through `@st.cache_data` once per case, which is the cost
+    the memo exists to remove."""
+
+    def test_the_wrapper_does_not_clear_the_memo(self, monkeypatch):
+        eng._LABEL_MAP_MEMO.clear()
+        eng._LABEL_MAP_MEMO[7] = {1: "playwright"}
+        monkeypatch.setattr(eng, "_evaluate_rules_cached", lambda names: "ok")
+        eng.evaluate_rules(("KV JAVA",))
+        assert eng._LABEL_MAP_MEMO == {7: {1: "playwright"}}
+
+    def test_a_real_recomputation_does_clear_it(self, monkeypatch):
+        """The memo must not outlive the cache entry it was built alongside."""
+        import inspect
+        src = inspect.getsource(eng._evaluate_rules_cached)
+        assert "_LABEL_MAP_MEMO.clear()" in src

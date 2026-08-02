@@ -616,6 +616,13 @@ _PROGRESS_HOOK = None
 # only ever double up with the warm-up status.
 @st.cache_data(show_spinner=False, ttl=21600)
 def _evaluate_rules_cached(rule_names: tuple[str, ...]) -> ExpansionResult:
+    # Clear the label memo HERE, not in the single-flight wrapper above: that
+    # wrapper runs on every call, cache hits included, so clearing there wiped
+    # the memo on every render and sent `_get_labels` back through
+    # `@st.cache_data` once per case — the exact cost the memo exists to avoid.
+    # This body runs only on a real (re)computation, which is what "a fresh
+    # evaluation" means.
+    _LABEL_MAP_MEMO.clear()
     reg      = get_registry()
     rules    = [r for r in ALL_RULES if r.name in rule_names]
     base_url = tr.TestRailCredentials.from_secrets().base_url
@@ -705,9 +712,6 @@ def evaluate_rules(rule_names: tuple[str, ...]) -> ExpansionResult:
     wait for the first computation instead of re-downloading + re-expanding
     (st.cache_data does not deduplicate concurrent misses — a refresh during
     the first load used to multiply the whole cold start)."""
-    # A fresh evaluation re-reads the label map: the per-run memo must not
-    # outlive the cache entry it was built alongside.
-    _LABEL_MAP_MEMO.clear()
     with _EVAL_SF_GUARD:
         lock = _EVAL_SF_LOCKS.setdefault(rule_names, threading.Lock())
     with lock:
