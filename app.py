@@ -330,7 +330,7 @@ def main() -> None:
                                                state="complete", expanded=False)
                     _warm_slot.empty()                       # gone for good
                     _elapsed = time.time() - _t0
-                    st.toast(f"Dashboard Loaded in {_elapsed:.0f} Sec.",
+                    st.toast(f"Dashboard loaded in {_elapsed:.0f} sec.",
                              icon="✅")
                     st.session_state["_warmed_ui"] = True
             except ImportError:

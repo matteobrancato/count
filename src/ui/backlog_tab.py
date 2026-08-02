@@ -615,9 +615,6 @@ def _prod_sanity_section(bu: str, scope: str) -> None:
                 mime="application/vnd.openxmlformats-officedocument."
                      "spreadsheetml.sheet",
                 key=f"dl_{key_base}_{cat}",
-                help=f"Download the {n:,} Production Sanity rows behind "
-                     f"{label} — every TestRail field the classification was "
-                     f"based on, plus a direct link per case.",
             )
     st.markdown(
         f"**Coverage:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
@@ -1238,10 +1235,9 @@ def _detail_view(
                 file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument."
                      "spreadsheetml.sheet",
+                # No `help`: the button is stretched invisibly over the whole
+                # tile, so its tooltip followed the cursor across the card.
                 key=f"dl_{key_base}_{cat}",
-                help=f"Download the {n:,} rows behind {label} — every "
-                     f"TestRail field the classification was based on, plus a "
-                     f"direct link per case.",
             )
 
 
