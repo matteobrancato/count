@@ -1657,3 +1657,49 @@ class TestLabelMemoSurvivesCacheHits:
         import inspect
         src = inspect.getsource(eng._evaluate_rules_cached)
         assert "_LABEL_MAP_MEMO.clear()" in src
+
+
+class TestFilterRecipe:
+    """The download carries a second sheet saying how to pull the same subset
+    out of TestRail.  It is generated from the rules, so it cannot drift from
+    the numbers it explains — and it names what TestRail cannot express, which
+    is what a mismatch actually needs explaining."""
+
+    def test_names_the_field_this_bu_is_decided_by(self):
+        r = bl._filter_recipe("Kruidvat", "website", "backlog", 90, 54)
+        fields = " ".join(r["Field"])
+        assert "Automation Status KV SPR" in fields
+        assert "Automation Status Testim Desktop" in fields
+
+    def test_the_playwright_rule_carries_its_label_gate(self):
+        """Filtering on the status alone would pull in every legacy case that
+        shares the generic field."""
+        r = bl._filter_recipe("Kruidvat", "website", "automated", 10, 5)
+        row = r[r["Field"].str.contains("playwright")].iloc[0]
+        assert "AND label: playwright" in row["Filter"]
+
+    def test_the_predicate_matches_the_category(self):
+        auto = bl._filter_recipe("Drogas", "website", "automated", 1, 1)
+        na   = bl._filter_recipe("Drogas", "website", "not_applicable", 1, 1)
+        assert "one of: Automated" in " ".join(auto["Filter"])
+        assert "Automation not applicable" in " ".join(na["Filter"])
+
+    def test_it_states_what_testrail_cannot_do(self):
+        for cat, needle in (("backlog", "automated NOWHERE"),
+                            ("partially_automated", "No TestRail filter"),
+                            ("automated", "wins over Automated")):
+            r = bl._filter_recipe("ICI Paris XL", "website", cat, 1, 1)
+            assert needle in " ".join(r["Filter"]), cat
+
+    def test_it_states_both_counts(self):
+        r = bl._filter_recipe("Drogas", "website", "backlog", 90, 54)
+        assert "90 rows over 54 cases" in " ".join(r["Filter"])
+
+    def test_the_conditional_country_is_called_out(self):
+        r = bl._filter_recipe("ICI Paris XL", "website", "total", 1, 1)
+        assert "Highest" in " ".join(r["Filter"])
+
+    def test_prod_sanity_names_its_own_label(self):
+        r = bl._filter_recipe("Drogas", "website", "total", 1, 1,
+                              member_label="prod_sanity")
+        assert "prod_sanity" in " ".join(r["Filter"])

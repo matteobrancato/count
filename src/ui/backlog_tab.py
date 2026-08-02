@@ -63,6 +63,7 @@ from ..bu_rules import (
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
+from .. import testrail_client as tr
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import (
@@ -612,10 +613,12 @@ def _prod_sanity_section(bu: str, scope: str) -> None:
                 continue
             st.download_button(
                 f"Download the {n:,} rows behind {label}",
-                _csv_writer(evidence, cat),
+                _csv_writer(evidence, cat, bu, scope,
+                            member_label=_LABEL_PROD_SANITY),
                 file_name=f"{bu.replace(' ', '_')}_ProdSanity_"
-                          f"{label.replace(' ', '_')}.csv",
-                mime="text/csv",
+                          f"{label.replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument."
+                     "spreadsheetml.sheet",
                 key=f"dl_{key_base}_{cat}",
                 help=f"Download the {n:,} Production Sanity rows behind "
                      f"{label} — every TestRail field the classification was "
@@ -1036,9 +1039,125 @@ def _tile_evidence(bu: str, scope: str,
     return _evidence_frame(expanded_by_bu.get((bu, scope)), scope)
 
 
-def _csv_writer(evidence: pd.DataFrame, category: str):
+# What each category means in TestRail terms.  Written from the same constants
+# the classifier uses, so the recipe cannot drift from the numbers it explains.
+_STATUS_PREDICATE = {
+    "total":               "any value, including empty",
+    "automated":           "one of: {auto}",
+    "backlog":             "set, and NOT one of: {auto} / {na} / To be updated",
+    "partially_automated": "set, and NOT one of: {auto} / {na} / To be updated",
+    "to_be_updated":       "To be updated",
+    "not_applicable":      "{na}",
+}
+
+# The parts of a category TestRail's filters cannot express.  Naming them is the
+# point: a lead who filters and gets a different count needs to know which of
+# these explains the gap, not to be told the dashboard is right.
+_NOT_EXPRESSIBLE = {
+    "total": [],
+    "automated": [
+        "A row is automated per (case × country × device).  TestRail returns "
+        "CASES, so a case automated for NL but not BE is returned whole here "
+        "and counted once there.",
+        "\"To be updated\" wins over Automated on this dashboard: a case whose "
+        "test has changed is NOT counted as automated even where a script "
+        "exists.  A TestRail filter on the automated values still returns it.",
+    ],
+    "backlog": [
+        "Backlog here means the case is automated NOWHERE.  A case automated "
+        "on another country or device is Partially Automated instead — "
+        "TestRail cannot tell the two apart, so its filter returns both.",
+    ],
+    "partially_automated": [
+        "This category exists only against the computed automated set: the "
+        "case IS automated on some other country/device.  No TestRail filter "
+        "can express it — use the Rows sheet to identify the cases.",
+    ],
+    "to_be_updated": [
+        "The flag is read from ANY status field, and it beats Automated, so "
+        "some of these rows also carry an automated value elsewhere.",
+    ],
+    "not_applicable": [],
+}
+
+
+def _filter_recipe(bu: str, scope: str, category: str,
+                   n_rows: int, n_cases: int,
+                   member_label: str | None = None) -> pd.DataFrame:
+    """How to pull the same subset out of TestRail, generated from the rules.
+
+    Reproducing a number by hand is how a QA lead checks it, and every time
+    somebody has tried this week the two counts differed for a reason nobody
+    could see.  The recipe states the filters AND what TestRail cannot express,
+    so a mismatch points at its cause instead of at the dashboard.
+    """
+    rules = [r for r in ALL_RULES if r.bu == bu and r.scope == scope]
+    if not rules:
+        return pd.DataFrame()
+    auto_vals = ", ".join(sorted({v for r in rules for v in r.automated_values}))
+    na_vals   = ", ".join(sorted(_STATUS_NA))
+    labels = (member_label if member_label
+              else f"{_LABEL_DESKTOP} and/or {_LABEL_MOBILE}")
+
+    rows: list[dict] = [
+        {"Field": "Business Unit",  "Filter": bu},
+        {"Field": "Suite ID",       "Filter": ", ".join(
+            str(x) for x in sorted({r.suite_id for r in rules}))},
+        {"Field": "Deprecated",     "Filter": "No"},
+        {"Field": "Labels",         "Filter": f"contains {labels}"},
+    ]
+    types = sorted({t for r in rules for t in r.type_filter})
+    rows.append({"Field": "Type",
+                 "Filter": ", ".join(types) if types else "any"})
+
+    pred = _STATUS_PREDICATE.get(category, "")
+    for r in rules:
+        gate = getattr(r, "labels_filter", [])
+        rows.append({
+            "Field": f"{r.status_field_label}  ({r.framework})",
+            "Filter": pred.format(auto=auto_vals, na=na_vals)
+                      # Without this the reader would filter on the status alone
+                      # and pull in every legacy case sharing that field.
+                      + (f"   AND label: {', '.join(gate)}" if gate else ""),
+        })
+        rows.append({
+            "Field": f"{r.country_field_label}  (for {r.framework})",
+            "Filter": "one of: " + ", ".join(r.countries_filter)
+                      if r.countries_filter else "any",
+        })
+    if any("IPXL LU" in r.countries_filter for r in rules):
+        rows.append({"Field": "Conditional country",
+                     "Filter": "IPXL LU counts only on Priority = Highest"})
+
+    try:
+        base = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")
+        for sid in sorted({r.suite_id for r in rules}):
+            rows.append({"Field": f"Open suite {sid}",
+                         "Filter": f"{base}/index.php?/suites/view/{sid}"})
+    except Exception:                                                   # noqa: BLE001
+        pass
+
+    rows += [
+        {"Field": "", "Filter": ""},
+        {"Field": "EXPECTED", "Filter": f"{n_rows:,} rows over {n_cases:,} cases"},
+        {"Field": "Why they differ",
+         "Filter": "the dashboard counts case × country × device; TestRail "
+                   "counts cases"},
+    ]
+    for note in _NOT_EXPRESSIBLE.get(category, []):
+        rows.append({"Field": "Not expressible in TestRail", "Filter": note})
+    return pd.DataFrame(rows)
+
+
+def _csv_writer(evidence: pd.DataFrame, category: str,
+                bu: str = "", scope: str = "", member_label: str | None = None):
     """A deferred payload for `st.download_button`: Streamlit runs it only when
     the button is actually clicked (`data` accepts a callable since 1.36).
+
+    Two sheets.  "Rows" is the data behind the number; "TestRail filters" is how
+    to pull the same subset by hand, plus what TestRail cannot express — because
+    the way anyone checks a number is by trying to reproduce it, and a bare list
+    of rows does not survive that conversation.
 
     The frame is CAPTURED in the closure rather than looked up when the click
     arrives.  The callable runs outside the script run, where a `st.cache_data`
@@ -1048,7 +1167,24 @@ def _csv_writer(evidence: pd.DataFrame, category: str):
     def _build() -> bytes:
         sub = (evidence if category == "total"
                else evidence[evidence["_cat"] == category])
-        return sub.drop(columns=["_cat"]).to_csv(index=False).encode("utf-8")
+        sub = sub.drop(columns=["_cat"])
+        n_cases = (sub["Case ID"].nunique() if "Case ID" in sub.columns
+                   else len(sub))
+        recipe = _filter_recipe(bu, scope, category, len(sub), n_cases,
+                                member_label)
+        if recipe.empty:
+            return sub.to_csv(index=False).encode("utf-8")
+        try:
+            import io
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as xl:
+                sub.to_excel(xl, sheet_name="Rows", index=False)
+                recipe.to_excel(xl, sheet_name="TestRail filters", index=False)
+            return buf.getvalue()
+        except Exception:                                               # noqa: BLE001
+            # No Excel engine on the host: the rows are the point, the format
+            # is not worth an exception in front of someone who just clicked.
+            return sub.to_csv(index=False).encode("utf-8")
     return _build
 
 
@@ -1117,9 +1253,10 @@ def _detail_view(
                 continue
             st.download_button(
                 f"Download the {n:,} rows behind {label}",
-                _csv_writer(evidence, cat),
-                file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.csv",
-                mime="text/csv",
+                _csv_writer(evidence, cat, bu, scope),
+                file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument."
+                     "spreadsheetml.sheet",
                 key=f"dl_{key_base}_{cat}",
                 help=f"Download the {n:,} rows behind {label} — every "
                      f"TestRail field the classification was based on, plus a "
