@@ -28,7 +28,8 @@ def website_rule():
     return SimpleNamespace(
         bu="Drogas", scope="website", suite_id=1,
         countries_filter=["DRG LV"], country_labels={"DRG LV": "LV"},
-        country_field_label="multi_countries",
+        status_field_label="Automation Status",
+            country_field_label="multi_countries",
     )
 
 
@@ -37,7 +38,8 @@ def microservices_rule():
     return SimpleNamespace(
         bu="Microservices", scope="next_gen", suite_id=9570,
         countries_filter=["MCH"], country_labels={"MCH": "CH"},
-        country_field_label="custom_country_coverage",
+        status_field_label="Automation Status",
+            country_field_label="custom_country_coverage",
     )
 
 
@@ -253,6 +255,7 @@ class TestCoverageAgreesWithBacklog:
             bu="Drogas", scope="website", suite_id=1,
             countries_filter=["DRG LV", "DRG LT"],
             country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            status_field_label="Automation Status",
             country_field_label="multi_countries",
         )
         raw = pd.DataFrame([
@@ -350,6 +353,7 @@ class TestBacklogSplit:
             bu="Drogas", scope="website", suite_id=1,
             countries_filter=["DRG LV", "DRG LT"],
             country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            status_field_label="Automation Status",
             country_field_label="multi_countries",
         )
 
@@ -406,6 +410,7 @@ class TestTileExports:
             bu="Drogas", scope="website", suite_id=1,
             countries_filter=["DRG LV", "DRG LT"],
             country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            status_field_label="Automation Status",
             country_field_label="multi_countries",
         )
         raw = pd.DataFrame([
@@ -452,6 +457,7 @@ class TestExportEvidence:
             bu="ICI Paris XL", scope="website", suite_id=1,
             countries_filter=["IPXL NL", "IPXL BE"],
             country_labels={"IPXL NL": "NL", "IPXL BE": "BE"},
+            status_field_label="Automation Status",
             country_field_label="multi_countries",
         )
         raw = pd.DataFrame([
@@ -914,6 +920,7 @@ class TestDeferredTileDownloads:
             bu="Drogas", scope="website", suite_id=1,
             countries_filter=["DRG LV", "DRG LT"],
             country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            status_field_label="Automation Status",
             country_field_label="multi_countries",
         )
         raw = pd.DataFrame([
@@ -1312,6 +1319,7 @@ class TestProdSanityBaseline:
         return SimpleNamespace(
             bu="Drogas", scope="website", suite_id=1,
             countries_filter=["DRG LV"], country_labels={"DRG LV": "LV"},
+            status_field_label="Automation Status",
             country_field_label="multi_countries")
 
     def test_regression_expansion_is_untouched(self):
@@ -1562,6 +1570,7 @@ class TestProdSanityAgreesAcrossTabs:
             bu="Drogas", scope="website", suite_id=1,
             countries_filter=["DRG LV", "DRG LT"],
             country_labels={"DRG LV": "LV", "DRG LT": "LT"},
+            status_field_label="Automation Status",
             country_field_label="multi_countries")
         raw = pd.DataFrame([
             _case(case_id=1, labels=["big_regr_desktop", "prod_sanity"],
@@ -1703,3 +1712,57 @@ class TestFilterRecipe:
         r = bl._filter_recipe("Drogas", "website", "total", 1, 1,
                               member_label="prod_sanity")
         assert "prod_sanity" in " ".join(r["Filter"])
+
+
+class TestOneBuCannotDecideAnother:
+    """TestRail custom fields are global, so a Perfume Shop case can carry a
+    value in `Automation Status SD`.  Scanning every `status_*` column let
+    Superdrug's field classify a TPS row — and the export honestly named it,
+    which is how the QA lead found it."""
+
+    @staticmethod
+    def _rule(bu="The Perfume Shop", field="Automation Status"):
+        return SimpleNamespace(
+            bu=bu, scope="website", suite_id=1,
+            status_field_label=field,
+            countries_filter=["TPS GB"], country_labels={"TPS GB": "GB"},
+            country_field_label="multi_countries")
+
+    @staticmethod
+    def _raw(**status):
+        return pd.DataFrame([{
+            "case_id": 1, "labels": ["big_regr_desktop"],
+            "multi_countries": ["TPS GB"], "device": "Desktop",
+            "type_label": "Regression", "priority_label": "High",
+            "title": "t", "url": "u", "section_path": "TPS > X", **status}])
+
+    def test_another_bus_field_no_longer_classifies(self):
+        exp = bl._expand_baseline(
+            self._raw(**{"status_Automation Status": None,
+                         "status_Automation Status SD": "Automation not applicable"}),
+            [self._rule()])
+        assert exp.iloc[0]["_cat_base"] == "unknown"
+
+    def test_the_bus_own_field_still_does(self):
+        exp = bl._expand_baseline(
+            self._raw(**{"status_Automation Status": "Automation not applicable"}),
+            [self._rule()])
+        assert exp.iloc[0]["_cat_base"] == "not_applicable"
+
+    def test_the_device_path_cannot_smuggle_one_back(self):
+        """The per-device TestIM re-classification must respect the same list."""
+        exp = bl._expand_baseline(
+            self._raw(**{"status_Automation Status": "Not automated",
+                         "status_Automation Status Testim Desktop":
+                             "Automation not applicable"}),
+            [self._rule()])          # this rule does NOT read the Testim field
+        assert exp.iloc[0]["_cat_base"] == "backlog"
+
+    def test_the_export_cannot_name_a_field_that_did_not_decide(self):
+        case = {"status_Automation Status": None,
+                "status_Automation Status SD": "Automation not applicable"}
+        allowed = ["status_Automation Status"]
+        assert bl._deciding_field(case, "Desktop", "not_applicable", allowed)[0] == "—"
+        # unrestricted, it still reports whatever it finds — the old behaviour
+        assert bl._deciding_field(case, "Desktop", "not_applicable")[0] \
+            == "Automation Status SD"

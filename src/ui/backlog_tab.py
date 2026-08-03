@@ -118,6 +118,20 @@ _DEVICE_STATUS_COL = {
 }
 
 
+def _read_status_cols(raw: pd.DataFrame, rules: list) -> list[str]:
+    """The status columns THIS BU is decided by, and no others.
+
+    TestRail custom fields are global, so a case in the TPS suite can carry a
+    value in `Automation Status SD`.  Scanning every `status_*` column let one
+    BU's field classify another BU's rows — a Perfume Shop case whose own field
+    was empty came out Not Applicable because Superdrug's said so, and the
+    export honestly reported that field as the one that decided it.
+    """
+    wanted = {f"status_{lbl}" for r in rules
+              if (lbl := getattr(r, "status_field_label", None))}
+    return [c for c in raw.columns if c in wanted]
+
+
 def _is_to_update(series: pd.Series) -> pd.Series:
     """Boolean mask: status value equals a 'To be updated' label (normalised)."""
     return series.notna() & series.astype(str).str.strip().str.lower().isin(_STATUS_TO_UPDATE)
@@ -262,7 +276,7 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     # A combined mask first, so non-TestIM rules (Java, etc.) reading a single
     # status field still classify correctly; TestIM cases are re-classified per
     # device after expansion (see below).
-    status_cols = [c for c in raw.columns if c.startswith("status_")]
+    status_cols = _read_status_cols(raw, rules)
     na_mask      = pd.Series(False, index=raw.index)
     tbu_mask     = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
@@ -317,7 +331,9 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     # that field is actually populated.  If empty (default / never set), keep the
     # initial classification based on combined status fields (which captures Java).
     for dev, scol in _DEVICE_STATUS_COL.items():
-        if scol not in raw.columns:
+        # `status_cols` is already restricted to this BU's fields; going around
+        # it here would let the device path reintroduce another BU's verdict.
+        if scol not in status_cols:
             continue
         dev_mask = raw["device_exp"] == dev
         if not dev_mask.any():
@@ -369,7 +385,7 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
 
     # Status classification — same masks as the website baseline; for MAPP only
     # "Automation Status" is populated, so they reduce to that single field.
-    status_cols = [c for c in raw.columns if c.startswith("status_")]
+    status_cols = _read_status_cols(raw, rules)
     na_mask      = pd.Series(False, index=raw.index)
     tbu_mask     = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
@@ -884,7 +900,8 @@ _CATEGORY_LABELS = {
 }
 
 
-def _deciding_field(case: dict, device: str, category: str) -> tuple[str, str]:
+def _deciding_field(case: dict, device: str, category: str,
+                    allowed: list[str] | None = None) -> tuple[str, str]:
     """Which TestRail field decided this row, and with what value.
 
     Mirrors `_expand_baseline`: a device row is judged by its own TestIM field
@@ -915,10 +932,14 @@ def _deciding_field(case: dict, device: str, category: str) -> tuple[str, str]:
                     and v.strip().lower() not in _STATUS_TO_UPDATE)
         return True                        # "total" export: any verdict will do
 
+    # Only the fields this BU is decided by.  Naming any other one would
+    # report a verdict that took no part in the classification — which is how a
+    # Perfume Shop row came out "decided by Automation Status SD".
+    pool = (allowed if allowed is not None
+            else [c for c in case if c.startswith("status_")])
     dev_col = _DEVICE_STATUS_COL.get(device)
-    ordered = ([dev_col] if dev_col else []) + [
-        c for c in case if c.startswith("status_") and c != dev_col
-    ]
+    dev_col = dev_col if dev_col in pool else None
+    ordered = ([dev_col] if dev_col else []) + [c for c in pool if c != dev_col]
     # The device's own field first, then the rest — the classifier's order.
     for col in ordered:
         if col and (v := _val(col)) and _fits(v):
@@ -929,7 +950,8 @@ def _deciding_field(case: dict, device: str, category: str) -> tuple[str, str]:
     return ("—", "not set")
 
 
-def _evidence_frame(expanded: pd.DataFrame, scope: str) -> pd.DataFrame:
+def _evidence_frame(expanded: pd.DataFrame, scope: str,
+                    bu: str = "") -> pd.DataFrame:
     """Every baseline row with the TestRail evidence behind its classification.
 
     Built ONCE per BU (see `_tile_evidence`): the per-case metadata join, the
@@ -963,7 +985,10 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str) -> pd.DataFrame:
         out = out.merge(meta, on="case_id", how="left")
 
     out.insert(0, "Case ID", "C" + out["case_id"].astype(str))
-    decided = [_deciding_field(meta_by_case.get(cid, {}), dev, cat)
+    allowed = ([f"status_{r.status_field_label}"
+                for r in ALL_RULES if r.bu == bu and r.scope == scope]
+               if bu else None)
+    decided = [_deciding_field(meta_by_case.get(cid, {}), dev, cat, allowed)
                for cid, dev, cat in zip(out["case_id"], out["device"],
                                         out["_cat"])]
     out["category"]       = out["category"].map(_CATEGORY_LABELS).fillna(out["category"])
@@ -1028,7 +1053,7 @@ def _tile_evidence(bu: str, scope: str,
         _summary, expanded_by_bu, _auto_by_bu = loader()
     except Exception:                                                   # noqa: BLE001
         return pd.DataFrame()
-    return _evidence_frame(expanded_by_bu.get((bu, scope)), scope)
+    return _evidence_frame(expanded_by_bu.get((bu, scope)), scope, bu)
 
 
 # What each category means in TestRail terms.  Written from the same constants
