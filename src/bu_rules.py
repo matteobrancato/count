@@ -28,7 +28,13 @@ PROD_SANITY_LABEL = "prod_sanity"
 # TestRail checkbox marking the SUBSET of the big_regr baseline that also runs
 # in the Small / Release No-Regression run.  A subset, not a baseline of its
 # own: every Small NR case is a big_regr case too.
-SMALL_NR_FIELD = "small_nr"
+#
+# Several spellings, first hit wins: the field is known by its LABEL in the UI
+# ("Smaller NR") and by a system name in the API, and narrowing this to one of
+# them is what silently emptied the run.  `FieldRegistry.field` tries labels
+# then system names, so listing both costs nothing and cannot go quiet again.
+SMALL_NR_FIELDS = ("Smaller NR", "small_nr",
+                   "custom_small_nr", "custom_smaller_nr")
 
 _TESTIM_DESKTOP_LABEL = "Automation Status Testim Desktop"
 _TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" suffix!

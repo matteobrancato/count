@@ -1798,3 +1798,26 @@ class TestRunsShareNoWidgetState:
         import inspect
         src = inspect.getsource(bl._detail_view)
         assert 'baseline=("prod_sanity" if run == RUN_PS' in src
+
+
+class TestSmallNrFieldResolution:
+    """The checkbox is known by its LABEL in the TestRail UI and by a system
+    name in the API.  Narrowing the lookup to one of them emptied the whole run
+    without an error — the column simply never appeared."""
+
+    @staticmethod
+    def _reg(known):
+        return SimpleNamespace(field=lambda n: (
+            SimpleNamespace(system_name="custom_x") if n == known else None))
+
+    @pytest.mark.parametrize("known", ["Smaller NR", "small_nr",
+                                       "custom_small_nr", "custom_smaller_nr"])
+    def test_resolves_under_any_of_its_names(self, known):
+        assert eng._get_small_nr({"custom_x": True}, self._reg(known)) is True
+
+    def test_unticked_is_false_not_missing(self):
+        assert eng._get_small_nr({"custom_x": False},
+                                 self._reg("small_nr")) is False
+
+    def test_an_unknown_field_does_not_raise(self):
+        assert eng._get_small_nr({}, self._reg("something else")) is False

@@ -32,7 +32,7 @@ from .bu_rules import (
     ALL_RULES,
     PLAYWRIGHT_LABEL,
     PROD_SANITY_LABEL,
-    SMALL_NR_FIELD,
+    SMALL_NR_FIELDS,
     Rule,
     filter_conditional_tokens,
 )
@@ -189,10 +189,10 @@ def _get_small_nr(case: dict, reg: FieldRegistry) -> bool:
     A checkbox, and a SUBSET marker: every case carrying it is already in the
     big_regr baseline, so it never adds rows — it only narrows them.
     """
-    meta = reg.field(SMALL_NR_FIELD) or reg.field("custom_small_nr")
-    if not meta:
-        return False
-    return bool(case.get(meta.system_name))
+    for name in SMALL_NR_FIELDS:
+        if meta := reg.field(name):
+            return bool(case.get(meta.system_name))
+    return False
 
 
 def _get_automation_tool(case: dict, reg: FieldRegistry) -> str | None:
