@@ -32,6 +32,7 @@ from .bu_rules import (
     ALL_RULES,
     PLAYWRIGHT_LABEL,
     PROD_SANITY_LABEL,
+    SMALL_NR_FIELD,
     Rule,
     filter_conditional_tokens,
 )
@@ -180,6 +181,20 @@ def _get_labels(case: dict, project_id: int) -> list[str]:
             except (TypeError, ValueError):
                 pass
     return [label_map[i] for i in ids if i in label_map]
+
+
+def _get_small_nr(case: dict, reg: FieldRegistry) -> bool:
+    """True when the case is also in the Small / Release No-Regression run.
+
+    A checkbox, and a SUBSET marker: every case carrying it is already in the
+    big_regr baseline, so it never adds rows — it only narrows them.
+    """
+    meta = (reg.field(SMALL_NR_FIELD)
+            or reg.field("custom_smaller_nr")
+            or reg.field("custom_small_nr"))
+    if not meta:
+        return False
+    return bool(case.get(meta.system_name))
 
 
 def _get_automation_tool(case: dict, reg: FieldRegistry) -> str | None:
@@ -565,6 +580,7 @@ def _raw_case_row(
         "labels":           case_labels,
         "automation_tool":  _get_automation_tool(case, reg),
         "prod_sanity":    _get_prod_sanity(case, reg, labels=case_labels),
+        "small_nr":       _get_small_nr(case, reg),
         **{f"status_{k}": v for k, v in auto_status_resolved.items()},
     }
 

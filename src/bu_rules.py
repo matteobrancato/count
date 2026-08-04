@@ -25,6 +25,11 @@ PLAYWRIGHT_LABEL = "playwright"
 # It replaced the "Test Automation PRD Run" checkbox, which no longer counts.
 PROD_SANITY_LABEL = "prod_sanity"
 
+# TestRail checkbox marking the SUBSET of the big_regr baseline that also runs
+# in the Small / Release No-Regression run.  A subset, not a baseline of its
+# own: every Small NR case is a big_regr case too.
+SMALL_NR_FIELD = "Smaller NR"
+
 _TESTIM_DESKTOP_LABEL = "Automation Status Testim Desktop"
 _TESTIM_MOBILE_LABEL  = "Automation Status Testim Mobile View"  # NOTE: "View" suffix!
 

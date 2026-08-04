@@ -1766,3 +1766,51 @@ class TestOneBuCannotDecideAnother:
         # unrestricted, it still reports whatever it finds — the old behaviour
         assert bl._deciding_field(case, "Desktop", "not_applicable")[0] \
             == "Automation Status SD"
+
+
+class TestSmallNrIsASubset:
+    """Small NR marks a SUBSET of the big_regr baseline, not a baseline of its
+    own: every case carrying it is already counted, so the filter can only
+    narrow the rows — never add one."""
+
+    @staticmethod
+    def _expanded():
+        return pd.DataFrame([
+            {"case_id": 1, "country_label": "NL", "device": "Desktop",
+             "category": "automated"},
+            {"case_id": 2, "country_label": "NL", "device": "Desktop",
+             "category": "backlog"},
+            {"case_id": 3, "country_label": "NL", "device": "Desktop",
+             "category": "automated"},
+        ])
+
+    def test_the_subset_never_grows_the_baseline(self, monkeypatch):
+        from src.ui import debug_tab as dbg
+        exp = self._expanded()
+        raw = pd.DataFrame([{"case_id": i, "small_nr": i in (1, 2)}
+                            for i in (1, 2, 3)])
+        monkeypatch.setattr(bl, "_load_scope",
+                            lambda scope: (raw, pd.DataFrame(), []))
+        monkeypatch.setattr(bl, "_backlog_data",
+                            lambda: (pd.DataFrame([{"BU": "Drogas",
+                                                    "Scope": "Website"}]),
+                                     {("Drogas", "website"): exp}, {}))
+        _summary, small, _auto = dbg._run_data(dbg._RUN_SMALL, "website")
+        rows = small[("Drogas", "website")]
+        assert len(rows) == 2 and set(rows["case_id"]) == {1, 2}
+        assert len(rows) <= len(exp)
+
+    def test_no_checkbox_means_an_empty_run(self, monkeypatch):
+        from src.ui import debug_tab as dbg
+        monkeypatch.setattr(bl, "_load_scope",
+                            lambda scope: (pd.DataFrame(), pd.DataFrame(), []))
+        monkeypatch.setattr(bl, "_backlog_data",
+                            lambda: (pd.DataFrame(), {}, {}))
+        summary, _e, _a = dbg._run_data(dbg._RUN_SMALL, "website")
+        assert summary.empty
+
+    def test_the_big_run_is_the_untouched_payload(self, monkeypatch):
+        from src.ui import debug_tab as dbg
+        payload = (pd.DataFrame([{"BU": "X"}]), {"k": "v"}, {"k": "w"})
+        monkeypatch.setattr(bl, "_backlog_data", lambda: payload)
+        assert dbg._run_data(dbg._RUN_BIG, "website") == payload
