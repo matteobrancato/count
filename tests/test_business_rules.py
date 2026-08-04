@@ -1821,3 +1821,26 @@ class TestSmallNrFieldResolution:
 
     def test_an_unknown_field_does_not_raise(self):
         assert eng._get_small_nr({}, self._reg("something else")) is False
+
+
+class TestRunMeanings:
+    """Switching run changes every number on the page, so each one carries the
+    sentence that says what it is — the explanation that had nowhere to live
+    once the tile tooltips went."""
+
+    def test_every_run_has_one(self):
+        assert set(bl._RUN_MEANING) == set(bl.RUNS)
+        assert all(v.strip() for v in bl._RUN_MEANING.values())
+
+    def test_each_names_the_field_it_is_defined_by(self):
+        assert "big_regr" in bl._RUN_MEANING[bl.RUN_BIG]
+        assert "small_nr" in bl._RUN_MEANING[bl.RUN_SMALL]
+        assert "prod_sanity" in bl._RUN_MEANING[bl.RUN_PS]
+
+    def test_the_subset_is_described_as_one(self):
+        """Small NR narrows the baseline; calling it anything else would invite
+        adding its total to the big one."""
+        assert "subset" in bl._RUN_MEANING[bl.RUN_SMALL].lower()
+
+    def test_prod_sanity_says_it_is_separate(self):
+        assert "separately" in bl._RUN_MEANING[bl.RUN_PS]

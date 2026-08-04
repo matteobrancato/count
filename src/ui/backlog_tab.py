@@ -689,6 +689,16 @@ RUN_SMALL = "Small No-Regression"
 RUN_PS    = "Production Sanity"
 RUNS = [RUN_BIG, RUN_SMALL, RUN_PS]
 
+# One sentence per run, shown beside the picker.  It fills the space the control
+# leaves and earns it: switching run changes every number on the page, and what
+# each one MEANS had nowhere else to live once the tile tooltips went.
+_RUN_MEANING = {
+    RUN_BIG:   "Every case labelled `big_regr_desktop` or `big_regr_mobile`.",
+    RUN_SMALL: "The subset also ticked `small_nr` — the Release run.",
+    RUN_PS:    "Cases labelled `prod_sanity`, counted separately from the "
+               "regression baseline.",
+}
+
 
 def _small_nr_cases(scope: str) -> set[int]:
     """Case IDs carrying the `small_nr` checkbox.
@@ -1473,10 +1483,22 @@ def render() -> None:
 
     # One run at a time.  Everything below — table, tiles, coverage, frameworks,
     # pivot — reports on the run picked here, so no two populations share a page.
-    run = st.segmented_control(
-        "Run", RUNS, default=RUN_BIG, required=True,
-        key=f"bl_run_{scope}", label_visibility="collapsed",
-    ) or RUN_BIG
+    # The picker takes the width it needs; the rest of the row carries what the
+    # chosen run actually is, rather than being left over.
+    c_pick, c_what = st.columns([5, 6], vertical_alignment="center")
+    with c_pick:
+        run = st.segmented_control(
+            "Run", RUNS, default=RUN_BIG, required=True,
+            key=f"bl_run_{scope}", label_visibility="collapsed",
+        ) or RUN_BIG
+    with c_what:
+        # Inline <span>, not a block: a block element collapses against
+        # Streamlit's -1rem markdown margin and lands below the control's centre.
+        st.markdown(
+            f"<span style='font-size:12.5px;color:{COLORS['muted']};"
+            f"display:block;text-align:right'>{_RUN_MEANING.get(run, '')}</span>",
+            unsafe_allow_html=True,
+        )
 
     spinner = ("📱 Computing Mobile App backlog — first load can take ~30-60s, "
                "then it's cached…" if scope == "mobile_app"
