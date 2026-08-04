@@ -489,7 +489,7 @@ class TestExportEvidence:
     def test_carries_the_testrail_decision_fields(self, monkeypatch):
         rows = bl._category_rows(self._setup(monkeypatch), "total", "website")
         for col in ("Automation Status", "Automation Status Testim Desktop",
-                    "Country Coverage", "Countries (multi_countries)",
+                    "Country Coverage", "Countries counted for this BU",
                     "Labels", "Priority", "Type", "Decided By", "Deciding Value"):
             assert col in rows.columns, col
 
@@ -1844,3 +1844,56 @@ class TestRunMeanings:
 
     def test_prod_sanity_says_it_is_separate(self):
         assert "separately" in bl._RUN_MEANING[bl.RUN_PS]
+
+
+class TestCountryColumnBelongsToItsBu:
+    """Country fields carry the tokens of every BU sharing the suite, so an ICI
+    row listed "IPXL NL, MRN, MFR" and read as if it counted for Marionnaud.
+    The counts never did — a case with no token of this BU is dropped before
+    expansion — but a column saying otherwise is worse than no column."""
+
+    @staticmethod
+    def _rule():
+        return SimpleNamespace(
+            bu="ICI Paris XL", scope="website", suite_id=1, framework="java",
+            status_field_label="Automation Status", automated_values=["Automated"],
+            countries_filter=["IPXL NL", "IPXL BE"],
+            country_labels={"IPXL NL": "NL", "IPXL BE": "BE"},
+            country_field_label="multi_countries", labels_filter=[],
+            type_filter=[])
+
+    @staticmethod
+    def _raw(countries):
+        return pd.DataFrame([{
+            "case_id": 1, "title": "t", "url": "u", "section_path": "ICI > X",
+            "labels": ["big_regr_desktop"], "multi_countries": countries,
+            "device": "Desktop", "type_label": "Regression",
+            "priority_label": "High",
+            "status_Automation Status": "Not automated"}])
+
+    def _evidence(self, monkeypatch, countries):
+        rule = self._rule()
+        raw = self._raw(countries)
+        monkeypatch.setattr(bl, "_load_scope", lambda scope: (raw, pd.DataFrame(), [rule]))
+        monkeypatch.setattr(bl, "ALL_RULES", [rule])
+        exp = bl._classify_expanded(bl._expand_baseline(raw, [rule]), pd.DataFrame())
+        return bl._evidence_frame(exp, "website", "ICI Paris XL")
+
+    def test_only_this_bus_tokens_are_shown_as_counted(self, monkeypatch):
+        ev = self._evidence(monkeypatch, ["IPXL NL", "MRN", "MFR"])
+        assert ev.iloc[0]["Countries counted for this BU"] == "IPXL NL"
+
+    def test_the_others_are_kept_but_named_as_others(self, monkeypatch):
+        """Still visible — they explain the TestRail field — but never mistaken
+        for something this BU is counted on."""
+        ev = self._evidence(monkeypatch, ["IPXL NL", "MRN", "MFR"])
+        assert ev.iloc[0]["Other BUs on this case"] == "MRN, MFR"
+
+    def test_no_extra_column_when_the_case_is_this_bus_only(self, monkeypatch):
+        ev = self._evidence(monkeypatch, ["IPXL NL", "IPXL BE"])
+        assert "Other BUs on this case" not in ev.columns
+
+    def test_a_case_with_no_token_of_this_bu_produces_no_rows(self, monkeypatch):
+        """The counting guarantee behind all of the above."""
+        rule = self._rule()
+        assert bl._expand_baseline(self._raw(["MRN"]), [rule]).empty

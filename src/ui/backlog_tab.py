@@ -1012,12 +1012,32 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
                               "automation_tool": "Automation Tool"})
     out = out.rename(columns={c: c[len("status_"):]
                               for c in out.columns if c.startswith("status_")})
+    # Country fields carry the tokens of EVERY BU sharing the suite, so an ICI
+    # row showed "IPXL NL, MRN, MFR" and read as if it counted for Marionnaud.
+    # The counts never did — a case with no token of this BU is dropped before
+    # expansion — but a column that says otherwise is worse than no column.
+    # Split it: what counted for this BU, and what belongs to the others.
+    bu_tokens = {t for r in ALL_RULES
+                 if r.bu == bu and r.scope == scope for t in r.countries_filter}
+
+    def _split(v) -> tuple[str, str]:
+        toks = [str(t) for t in v] if isinstance(v, list) else []
+        mine = [t for t in toks if t in bu_tokens]
+        other = [t for t in toks if t not in bu_tokens]
+        return ", ".join(mine), ", ".join(other)
+
+    if "multi_countries" in out.columns and bu_tokens:
+        split = [_split(v) for v in out["multi_countries"]]
+        out["multi_countries"] = [m for m, _ in split]
+        other = [o for _, o in split]
+        if any(other):
+            out["Other BUs on this case"] = other
     for col in ("labels", "multi_countries", "country_coverage"):
         if col in out.columns:
             out[col] = out[col].map(
                 lambda v: ", ".join(v) if isinstance(v, list) else (v or ""))
     out = out.rename(columns={"labels": "Labels",
-                              "multi_countries": "Countries (multi_countries)",
+                              "multi_countries": "Countries counted for this BU",
                               "country_coverage": "Country Coverage",
                               "device_field": "Device (TestRail field)"})
 
