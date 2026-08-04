@@ -1364,10 +1364,11 @@ class TestProdSanityBaseline:
                                   device="Both")])
         assert bl._expand_baseline(raw, [self._rule()]).empty
 
-    def test_nothing_renders_until_the_label_exists(self, monkeypatch):
+    def test_the_run_reports_nothing_until_the_label_exists(self, monkeypatch):
         monkeypatch.setattr(bl, "_prod_sanity_data",
                             lambda: (pd.DataFrame(), {}, {}))
-        assert bl._prod_sanity_stats("Drogas", "website") is None
+        summary, _e, _a = bl._run_data(bl.RUN_PS, "website")
+        assert summary.empty
 
 
 class TestProdSanityComesFromTheLabel:
@@ -1475,43 +1476,6 @@ class TestLabelResolutionCost:
         assert bl._carries_label(raw, "prod_sanity") is False
         assert bl._carries_label(
             pd.DataFrame([{"labels": ["prod_sanity"]}]), "prod_sanity") is True
-
-
-class TestProdSanityColumn:
-    """Production Sanity rides in the summary as ONE cell with its own name.
-    Four columns would have pushed the table back to scrolling, and merging a
-    second population into the regression columns would invite adding up numbers
-    that share no denominator."""
-
-    @staticmethod
-    def _df(ps_total, ps_auto):
-        return pd.DataFrame([{
-            "BU": "ICI", "Scope": "Website", "Total": 100, "Automated": 80,
-            "Backlog": 20, "Coverage %": 80.0,
-            "PS Total": ps_total, "PS Automated": ps_auto}])
-
-    def test_rendered_with_its_own_header_and_ratio(self):
-        html_ = bl._summary_table_html(self._df(360, 284), ["Total", "Automated"])
-        assert "Prod Sanity" in html_
-        assert "78.9%" in html_ and "284 / 360" in html_
-
-    def test_absent_when_no_bu_has_any(self):
-        html_ = bl._summary_table_html(self._df(0, 0), ["Total", "Automated"])
-        assert "Prod Sanity" not in html_
-
-    def test_header_and_body_cell_counts_still_agree(self):
-        """A header without its cell shifts every number one column sideways."""
-        for df in (self._df(360, 284), self._df(0, 0)):
-            out = bl._summary_table_html(df, ["Total", "Automated"])
-            head, body = out.split("<tbody>")
-            n_th = len(re.findall(r"<th[ >]", head))
-            for row in body.split("<tr")[1:]:
-                assert row.count("<td") == n_th
-
-    def test_the_regression_coverage_is_untouched(self):
-        html_ = bl._summary_table_html(self._df(360, 284), ["Total", "Automated"])
-        assert "80.0%" in html_
-
 
 class TestOutstandingStack:
     """Backlog · To be Updated · Partially answer one question — what is not
@@ -1785,7 +1749,6 @@ class TestSmallNrIsASubset:
         ])
 
     def test_the_subset_never_grows_the_baseline(self, monkeypatch):
-        from src.ui import debug_tab as dbg
         exp = self._expanded()
         raw = pd.DataFrame([{"case_id": i, "small_nr": i in (1, 2)}
                             for i in (1, 2, 3)])
@@ -1795,22 +1758,43 @@ class TestSmallNrIsASubset:
                             lambda: (pd.DataFrame([{"BU": "Drogas",
                                                     "Scope": "Website"}]),
                                      {("Drogas", "website"): exp}, {}))
-        _summary, small, _auto = dbg._run_data(dbg._RUN_SMALL, "website")
+        _summary, small, _auto = bl._run_data(bl.RUN_SMALL, "website")
         rows = small[("Drogas", "website")]
         assert len(rows) == 2 and set(rows["case_id"]) == {1, 2}
         assert len(rows) <= len(exp)
 
     def test_no_checkbox_means_an_empty_run(self, monkeypatch):
-        from src.ui import debug_tab as dbg
         monkeypatch.setattr(bl, "_load_scope",
                             lambda scope: (pd.DataFrame(), pd.DataFrame(), []))
         monkeypatch.setattr(bl, "_backlog_data",
                             lambda: (pd.DataFrame(), {}, {}))
-        summary, _e, _a = dbg._run_data(dbg._RUN_SMALL, "website")
+        summary, _e, _a = bl._run_data(bl.RUN_SMALL, "website")
         assert summary.empty
 
     def test_the_big_run_is_the_untouched_payload(self, monkeypatch):
-        from src.ui import debug_tab as dbg
         payload = (pd.DataFrame([{"BU": "X"}]), {"k": "v"}, {"k": "w"})
         monkeypatch.setattr(bl, "_backlog_data", lambda: payload)
-        assert dbg._run_data(dbg._RUN_BIG, "website") == payload
+        assert bl._run_data(bl.RUN_BIG, "website") == payload
+
+
+class TestRunsShareNoWidgetState:
+    """Each run drives the same tiles and the same pivot, so their widget keys
+    must differ: sharing one would let a Country/Device choice made on the big
+    baseline reappear on Production Sanity, over different rows."""
+
+    def test_the_pivot_key_carries_the_run(self):
+        import inspect
+        src = inspect.getsource(bl._detail_view)
+        assert "run_key" in src and "_baseline_pivot" in src
+        assert "{run_key}" in src
+
+    def test_the_tile_keys_carry_the_run(self):
+        import inspect
+        src = inspect.getsource(bl._detail_view)
+        head = src[:src.index("_baseline_pivot")]
+        assert "RUNS.index(run)" in head
+
+    def test_prod_sanity_tiles_export_prod_sanity_rows(self):
+        import inspect
+        src = inspect.getsource(bl._detail_view)
+        assert 'baseline=("prod_sanity" if run == RUN_PS' in src

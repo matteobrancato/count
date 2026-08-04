@@ -573,73 +573,6 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     }
 
 
-def _prod_sanity_stats(bu: str, scope: str) -> dict | None:
-    """Stats for this BU's Production Sanity baseline, or None when it has none.
-
-    None is the normal state until the TestRail label exists, and every caller
-    treats it as "render nothing" — a section of zeros would claim the BU has no
-    production sanity, which is a different statement from "not measured yet".
-    """
-    if scope == "mobile_app":
-        return None
-    try:
-        _summary, expanded_by_bu, auto_by_bu = _prod_sanity_data()
-    except Exception:                                                   # noqa: BLE001
-        return None
-    exp = expanded_by_bu.get((bu, scope))
-    if exp is None or exp.empty:
-        return None
-    auto = auto_by_bu.get((bu, scope))
-    return _stats(exp, auto if auto is not None
-                  else pd.DataFrame(columns=_AUTO_SLIM_COLS))
-
-
-def _prod_sanity_section(bu: str, scope: str) -> None:
-    """Four tiles and a coverage line, the same shapes the regression block uses
-    — a reader should not have to learn a second layout for the same question."""
-    s = _prod_sanity_stats(bu, scope)
-    if not s:
-        return
-    st.divider()
-    section_title("Production Sanity")
-    tiles = [
-        ("total", "Total", s["total"], s["u_total"]),
-        ("automated", "Automated", s["automated"], s["u_auto"]),
-        ("backlog", "Backlog", s["backlog"], s["u_back"]),
-        ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"]),
-    ]
-    # SIX columns, not four: the same grid the regression tiles above use, so
-    # these line up with them instead of inflating to fill the row.  The two
-    # empty cells are the point — they show at a glance that this is a smaller
-    # population, not the same one measured again.
-    #
-    # Clickable for the same reason the regression tiles are: the number is the
-    # question, the rows behind it are the answer.
-    key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"ps_{scope}_{bu}")
-    evidence = _tile_evidence(bu, scope, baseline="prod_sanity")
-    for col, (cat, label, n, u) in zip(st.columns(6), tiles):
-        with col.container(key=f"tile_{key_base}_{cat}"):
-            stat_card(st, label, n, u)
-            if evidence.empty or not n:
-                continue
-            st.download_button(
-                f"Download the {n:,} rows behind {label}",
-                _csv_writer(evidence, cat, bu, scope,
-                            member_label=_LABEL_PROD_SANITY),
-                file_name=f"{bu.replace(' ', '_')}_ProdSanity_"
-                          f"{label.replace(' ', '_')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument."
-                     "spreadsheetml.sheet",
-                key=f"dl_{key_base}_{cat}",
-            )
-    st.markdown(
-        f"**Coverage:** `{s['cov_total']:.1f}%` &nbsp;·&nbsp; "
-        f"**Coverage vs Automatable:** `{s['cov_automatable']:.1f}%`",
-        unsafe_allow_html=True,
-    )
-
-
-
 # ── summary table ─────────────────────────────────────────────────────────────
 # The three flavours of outstanding work, stacked into one column.  Order is
 # deliberate: never automated, then automated-but-stale, then automated
@@ -742,6 +675,73 @@ def _carries_label(raw: pd.DataFrame, label: str) -> bool:
         return False
     return bool(raw["labels"].map(
         lambda ls: isinstance(ls, list) and label in ls).any())
+
+
+# ── runs ─────────────────────────────────────────────────────────────────────
+# The three populations are RUNS — which is how the spreadsheet this dashboard
+# replaces already names them ("Full regression run", "Release regression run",
+# "Prod Sanity run").  One control picks one, and the whole tab reports on it:
+# summary table, tiles, coverage, frameworks and pivot.  Stacking them instead
+# meant a reader met three sets of "Total / Automated / Backlog" on one page,
+# and the page grew a section every time the business gained a run.
+RUN_BIG   = "Big No-Regression"
+RUN_SMALL = "Small No-Regression"
+RUN_PS    = "Production Sanity"
+RUNS = [RUN_BIG, RUN_SMALL, RUN_PS]
+
+
+def _small_nr_cases(scope: str) -> set[int]:
+    """Case IDs carrying the `small_nr` checkbox.
+
+    A SUBSET marker: every case carrying it is already in the big_regr
+    baseline, so this never adds rows — it only narrows the ones already there.
+    """
+    try:
+        raw, _auto, _rules = _load_scope(scope)
+    except Exception:                                                   # noqa: BLE001
+        return set()
+    if raw.empty or "small_nr" not in raw.columns:
+        return set()
+    return set(raw.loc[raw["small_nr"].fillna(False), "case_id"].astype(int))
+
+
+def _run_data(run: str, scope: str):
+    """(summary, expanded_by_bu, auto_by_bu) for the selected run.
+
+    Small NR filters the regression payload instead of expanding a second time:
+    the subset shares every row with the baseline, so a second expansion could
+    only produce the same rows more slowly — or, worse, differently.
+    """
+    if run == RUN_PS:
+        return _prod_sanity_data()
+    loader = _mapp_backlog_data if scope == "mobile_app" else _backlog_data
+    summary, expanded_by_bu, auto_by_bu = loader()
+    if run != RUN_SMALL:
+        return summary, expanded_by_bu, auto_by_bu
+
+    ids = _small_nr_cases(scope)
+    if not ids:
+        return pd.DataFrame(), {}, {}
+    small = {k: e[e["case_id"].astype(int).isin(ids)]
+             for k, e in expanded_by_bu.items()}
+    rows = []
+    for (bu, sc), exp in small.items():
+        if exp.empty:
+            continue
+        st_ = _stats(exp, auto_by_bu.get((bu, sc),
+                                         pd.DataFrame(columns=_AUTO_SLIM_COLS)))
+        rows.append({
+            "BU": bu, "Scope": _SCOPE_DISPLAY.get(sc, "Website"),
+            "Total": st_["total"], "Automated": st_["automated"],
+            "Java": st_["java"], "TestIM": st_["testim"],
+            "Playwright": st_["playwright"], "Backlog": st_["backlog"],
+            "Partially Automated": st_["partially_automated"],
+            "To be Updated": st_["to_be_updated"],
+            "Not Applicable": st_["not_applicable"], "Unknown": st_["unknown"],
+            "Coverage %": round(st_["cov_total"], 1),
+            "Coverage excl. Partially %": round(st_["cov_ex_partial"], 1),
+        })
+    return pd.DataFrame(rows), small, auto_by_bu
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -1210,6 +1210,7 @@ def _detail_view(
     scope: str,
     expanded_by_bu: dict[tuple[str, str], pd.DataFrame],
     auto_by_bu: dict[tuple[str, str], pd.DataFrame],
+    run: str = RUN_BIG,
 ) -> None:
     # Both frames come straight from the cached `_backlog_data()` payload — no
     # recomputation on widget interactions.
@@ -1244,8 +1245,11 @@ def _detail_view(
         ("to_be_updated", "To be Updated", s["to_be_updated"], s["u_tbu"], ""),
         ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"], ""),
     ]
-    key_base = re.sub(r"[^A-Za-z0-9]+", "_", f"{scope}_{bu}")
-    evidence = _tile_evidence(bu, scope)     # cached: one build per refresh
+    key_base = re.sub(r"[^A-Za-z0-9]+", "_",
+                      f"{scope}_{bu}_{RUNS.index(run) if run in RUNS else 0}")
+    evidence = _tile_evidence(bu, scope,
+                              baseline=("prod_sanity" if run == RUN_PS
+                                        else "regression"))     # cached: one build per refresh
     for col, (cat, label, n, u, badge) in zip(st.columns(6), tiles):
         with col.container(key=f"tile_{key_base}_{cat}"):
             stat_card(st, label, n, u, badge_html=badge)
@@ -1280,14 +1284,6 @@ def _detail_view(
     cov_parts.append(f"**Not Applicable:** `{s['na_pct']:.1f}%`")
     st.markdown(" &nbsp;·&nbsp; ".join(cov_parts), unsafe_allow_html=True)
 
-    # ── Production Sanity ─────────────────────────────────────────────────────
-    # Straight after the regression headline numbers: the two baselines' totals
-    # read together, and the breakdowns that follow (frameworks, pivot) are
-    # regression-only.  These rows are counted here AND, where the case also
-    # carries a big_regr label, above — "100 automated, 5 of them prod sanity"
-    # reads 100 and 5.
-    _prod_sanity_section(bu, scope)
-
     st.divider()
 
     # ── Row 2: Framework breakdown ────────────────────────────────────────────
@@ -1320,8 +1316,12 @@ def _detail_view(
         st.divider()
 
     # ── Pivot ─────────────────────────────────────────────────────────────────
-    bu_key = bu.lower().replace(" ", "_")
-    _baseline_pivot(expanded, key_prefix=f"bl_{bu_key}_{scope}")
+    bu_key  = bu.lower().replace(" ", "_")
+    run_key = RUNS.index(run) if run in RUNS else 0
+    # The pivot key carries the run: without it the three would share one
+    # widget state and a Country/Device choice made on one would silently
+    # reappear on another, over different rows.
+    _baseline_pivot(expanded, key_prefix=f"bl_{bu_key}_{scope}_{run_key}")
 
 
 
@@ -1386,16 +1386,13 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
                   != df["Coverage %"].round(1)).any())
     )
     cov_head = "Coverage excl. Partially" if leads_ex else "Coverage"
-    show_ps = "PS Total" in df.columns and int(df["PS Total"].sum()) > 0
     head = (
         '<thead><tr>'
         '<th class="l">Business Unit</th>'
         + ('<th class="l">Scope</th>' if show_scope else '')
         + "".join(f'<th>{v}</th>' if k == "col" else '<th>Outstanding</th>'
                    for k, v in items)
-        + f'<th class="l">{cov_head}</th>'
-        + ('<th class="l">Prod Sanity</th>' if show_ps else '')
-        + '</tr></thead>'
+        + f'<th class="l">{cov_head}</th></tr></thead>'
     )
     body_rows = []
     for _, r in df.iterrows():
@@ -1456,66 +1453,16 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
             f'</div>{ex_html}</td>'
         )
-        # Production Sanity as ONE cell, not four columns: a different
-        # population belongs in its own column with its own name, and four more
-        # columns would push the table back to scrolling.  Same two-line idiom
-        # the Backlog and Coverage cells already use.
-        ps_cell = ""
-        if show_ps:
-            ps_tot = int(r.get("PS Total") or 0)
-            if ps_tot:
-                ps_auto = int(r.get("PS Automated") or 0)
-                ps_pct  = ps_auto / ps_tot * 100
-                _d, ps_color = coverage_health(ps_pct)
-                ps_cell = (
-                    f'<td class="l"><div class="cov-wrap">'
-                    f'<div class="cov-track"><div class="cov-fill" '
-                    f'style="width:{min(ps_pct, 100):.0f}%;'
-                    f'background:{ps_color}"></div></div>'
-                    f'<span class="cov-val" style="color:{ps_color}">'
-                    f'{ps_pct:.1f}%</span></div>'
-                    f"<span class='cov-ex' title='Production Sanity: "
-                    f"{ps_auto:,} automated of {ps_tot:,} rows.  A separate "
-                    f"baseline — a case in both is counted in both, so this "
-                    f"does not add up with the regression columns.'>"
-                    f"{ps_auto:,} / {ps_tot:,}</span></td>"
-                )
-            else:
-                ps_cell = '<td class="l"></td>'
         sel_cls  = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
         scope_td = (f'<td class="l"><span class="scope-pill">'
                     f'{html.escape(str(r["Scope"]))}</span></td>') if show_scope else ''
         body_rows.append(
             f'<tr{sel_cls}>'
             f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
-            f'{scope_td}{nums}{cov_cell}{ps_cell}</tr>'
+            f'{scope_td}{nums}{cov_cell}</tr>'
         )
     return (f'<div class="bl-summary"><table>{head}'
             f'<tbody>{"".join(body_rows)}</tbody></table></div>')
-
-
-def _with_prod_sanity(display: pd.DataFrame, scope_display: str) -> pd.DataFrame:
-    """Attach the Production Sanity totals so the summary can carry them in one
-    cell.
-
-    They used to live in a second table under this one, which read as an
-    afterthought: two tables of equal weight, the reader unsure which was the
-    headline.  One column, named for itself, says the same thing without
-    competing — and the detail block below still breaks it down per category.
-    """
-    try:
-        ps_summary, _exp, _auto = _prod_sanity_data()
-    except Exception:                                                   # noqa: BLE001
-        return display
-    if ps_summary.empty or "BU" not in ps_summary.columns:
-        return display
-    ps = ps_summary[ps_summary["Scope"] == scope_display][
-        ["BU", "Total", "Automated"]].rename(
-        columns={"Total": "PS Total", "Automated": "PS Automated"})
-    if ps.empty:
-        return display
-    return display.merge(ps, on="BU", how="left").fillna(
-        {"PS Total": 0, "PS Automated": 0})
 
 
 @st.fragment
@@ -1523,29 +1470,29 @@ def render() -> None:
     # Scope drives which baseline we show: Mobile App uses a priority-based
     # baseline (separate pipeline), everything else the big_regr label baseline.
     scope, bu = global_filter.current()
-    is_mapp = scope == "mobile_app"
 
-    if is_mapp:
-        # (What the baseline is per scope lives in "How the numbers are
-        # calculated" — repeating it on every tab was noise.)
-        with st.spinner("📱 Computing Mobile App backlog — first load can take "
-                        "~30-60s, then it's cached…"):
-            summary, expanded_by_bu, auto_by_bu = _mapp_backlog_data()
-        empty_msg = ("No Mobile App baseline data found — no High/Highest-priority "
-                     "cases in the mobile-app suites, or the data hasn't loaded yet "
-                     "(↻ next to the tabs).")
-    else:
+    # One run at a time.  Everything below — table, tiles, coverage, frameworks,
+    # pivot — reports on the run picked here, so no two populations share a page.
+    run = st.segmented_control(
+        "Run", RUNS, default=RUN_BIG, required=True,
+        key=f"bl_run_{scope}", label_visibility="collapsed",
+    ) or RUN_BIG
 
-        # One cached call — the heavy pipeline only runs on the first render after
-        # a data refresh; every interaction after that is a cache hit.
-        with st.spinner("Computing backlog stats…"):
-            summary, expanded_by_bu, auto_by_bu = _backlog_data()
-        empty_msg = ("No baseline data found. Ensure cases have the "
-                     "big_regr_desktop / big_regr_mobile labels in TestRail — new "
-                     "labels appear at the next data refresh (↻ next to the tabs).")
+    spinner = ("📱 Computing Mobile App backlog — first load can take ~30-60s, "
+               "then it's cached…" if scope == "mobile_app"
+               else f"Computing {run}…")
+    with st.spinner(spinner):
+        summary, expanded_by_bu, auto_by_bu = _run_data(run, scope)
 
-    if summary.empty:
-        st.warning(empty_msg)
+    if summary is None or summary.empty:
+        st.warning({
+            RUN_SMALL: "No Small No-Regression rows yet — tick the `small_nr` "
+                       "checkbox in TestRail.",
+            RUN_PS:    "No Production Sanity rows yet — add the `prod_sanity` "
+                       "label in TestRail.",
+        }.get(run, "No baseline data found. Ensure cases have the "
+                   "big_regr_desktop / big_regr_mobile labels in TestRail.")
+             + "  New values appear at the next data refresh (↻ next to the tabs).")
         return
 
     # ── Summary table ─────────────────────────────────────────────────────────
@@ -1604,18 +1551,18 @@ def render() -> None:
             mime="text/csv",
             help="Download the table above, exactly as shown, as a CSV.",
         )
-    st.markdown(_summary_table_html(_with_prod_sanity(display, scope_display),
-                                    num_cols, selected_bu=bu),
+    st.markdown(_summary_table_html(display, num_cols, selected_bu=bu),
                 unsafe_allow_html=True)
 
     st.divider()
 
     # ── Detail — follows the GLOBAL scope + BU selector ───────────────────────
     section_title("Detail by Business Unit")
-    if (bu, scope) not in expanded_by_bu:
-        st.info(f"No baseline detail for **{bu}** in this scope.")
+    exp = expanded_by_bu.get((bu, scope))
+    if exp is None or exp.empty:
+        st.info(f"No {run} rows for **{bu}** in this scope.")
         return
-    _detail_view(bu, scope, expanded_by_bu, auto_by_bu)
+    _detail_view(bu, scope, expanded_by_bu, auto_by_bu, run=run)
 
     # (The TestRail hygiene checklist now lives in the utility bar next to
     # "Updated …" — see `_freshness_label` in app.py.)

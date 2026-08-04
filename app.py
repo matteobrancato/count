@@ -7,9 +7,8 @@ import streamlit as st
 from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
 from src.ui import (
-    backlog_tab, chat_assistant, coverage_tab, data_quality, debug_tab,
-    global_filter, kpi_strip, overview_tab, report_tab, runs_tab,
-    stability_tab, styles,
+    backlog_tab, chat_assistant, coverage_tab, data_quality, global_filter,
+    kpi_strip, overview_tab, report_tab, runs_tab, stability_tab, styles,
 )
 from src.ui.styles import COLORS
 
@@ -290,9 +289,9 @@ def main() -> None:
     with st.container(key="tabs_zone"):
         _freshness_label(_scope_now)
         (tab_backlog, tab_coverage, tab_runs, tab_stability, tab_overview,
-         tab_report, tab_debug) = st.tabs(
+         tab_report) = st.tabs(
             ["📋 Backlog", "📐 Coverage", "🏃 Runs", "📈 Stability",
-             "🧭 Overview", "📄 Report", "🧪 Debug"]
+             "🧭 Overview", "📄 Report"]
         )
 
     try:
@@ -371,9 +370,6 @@ def main() -> None:
     _render_tab(tab_coverage, coverage_tab.render, "Coverage")
     _render_tab(tab_overview, overview_tab.render, "Overview", "overview_anim")
     _render_tab(tab_report,   report_tab.render,   "Report",   "report_anim")
-    # Last, and a clone: a place to try a different structure without touching
-    # the tab the managers actually read.
-    _render_tab(tab_debug,    debug_tab.render,    "Debug")
     # Runs is rendered LAST on purpose (its position in the tab bar is
     # unchanged — content binds to its tab regardless of execution order):
     # on the first visit of a BU it fires 30-50s of TestRail calls (plan
