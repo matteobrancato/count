@@ -128,6 +128,9 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     color: {c['muted']};
     font-weight: 600;
     font-size: 14px;
+    /* Emoji sit taller than the text they follow; without room of their own the
+       line box crops them and the label reads as cut off. */
+    line-height: 1.5;
     transition: color .15s ease, background .15s ease;
 }}
 [data-baseweb="tab"]:hover {{
@@ -887,6 +890,10 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     margin-top: 3px;
     line-height: 1.4;
 }}
+
+/* Segmented controls: same reason as the tabs — a cropped glyph reads as a
+   rendering fault, and these labels are read at a glance. */
+[data-testid="stButtonGroup"] button p {{ line-height: 1.5 !important; }}
 
 /* Granularity picker — a quiet, secondary control next to the view radio.
    (st.segmented_control renders as data-testid="stButtonGroup".) */

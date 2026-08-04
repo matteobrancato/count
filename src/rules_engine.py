@@ -189,9 +189,7 @@ def _get_small_nr(case: dict, reg: FieldRegistry) -> bool:
     A checkbox, and a SUBSET marker: every case carrying it is already in the
     big_regr baseline, so it never adds rows — it only narrows them.
     """
-    meta = (reg.field(SMALL_NR_FIELD)
-            or reg.field("custom_smaller_nr")
-            or reg.field("custom_small_nr"))
+    meta = reg.field(SMALL_NR_FIELD) or reg.field("custom_small_nr")
     if not meta:
         return False
     return bool(case.get(meta.system_name))

@@ -16,7 +16,7 @@ Nothing is duplicated: every number comes from the Backlog tab's own functions,
 so the two tabs cannot drift while the experiment runs.
 
   Big No-Regression    every big_regr row            (today's default)
-  Small No-Regression  the `Smaller NR` SUBSET of the same rows
+  Small No-Regression  the `small_nr` SUBSET of the same rows
   Production Sanity    the separate `prod_sanity` baseline
 """
 from __future__ import annotations
@@ -28,14 +28,16 @@ from . import backlog_tab as bl
 from . import global_filter
 from .styles import section_title
 
-_RUN_BIG   = "📋 Big No-Regression"
-_RUN_SMALL = "🎯 Small No-Regression"
-_RUN_PS    = "🚀 Production Sanity"
+# Plain text: the glyph rendered clipped inside the button, and it was
+# decoration — the three names already say which run you are looking at.
+_RUN_BIG   = "Big No-Regression"
+_RUN_SMALL = "Small No-Regression"
+_RUN_PS    = "Production Sanity"
 _RUNS = [_RUN_BIG, _RUN_SMALL, _RUN_PS]
 
 
 def _small_nr_cases(scope: str) -> set[int]:
-    """Case IDs carrying the Smaller NR checkbox.
+    """Case IDs carrying the `small_nr` checkbox.
 
     A SUBSET marker: these cases are already in the big_regr baseline, so this
     never adds rows — it only narrows the ones already counted.
@@ -104,7 +106,7 @@ def render() -> None:
     if summary is None or summary.empty:
         st.info(
             "Nothing in this run yet. Small No-Regression needs the "
-            "`Smaller NR` checkbox in TestRail; Production Sanity needs the "
+            "`small_nr` checkbox in TestRail; Production Sanity needs the "
             "`prod_sanity` label. New values appear at the next data refresh "
             "(↻ next to the tabs)."
         )
