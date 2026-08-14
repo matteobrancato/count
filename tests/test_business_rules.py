@@ -1957,3 +1957,41 @@ class TestRateLimitPolicy:
         client._url = lambda e: e
         client._get("get_cases/1")
         assert sleeps == [60]
+
+
+class TestDexterKnowsTheRuns:
+    """Dexter's snapshot has to carry the same three runs the tab shows, on the
+    same basis.  Production Sanity counted CASES here while the dashboard
+    counted ROWS — the identical drift that once had Dexter quoting 91.9% where
+    the screen said 95.2%."""
+
+    def test_prod_sanity_is_row_based(self):
+        import inspect
+        from src.ui import chat_assistant as ca
+        src = inspect.getsource(ca.get_bu_coverage)
+        assert "_regression_stats(exp_ps)" in src
+        assert 'nunique())' not in src.split("prod_sanity")[1][:400]
+
+    def test_small_nr_is_filtered_not_re_expanded(self):
+        import inspect
+        from src.ui import chat_assistant as ca
+        src = inspect.getsource(ca.get_bu_coverage)
+        assert "_small_nr_cases(scope)" in src
+        assert "isin(ids_small)" in src
+
+    def test_both_runs_reach_the_brief(self):
+        import inspect
+        from src.ui import chat_assistant as ca
+        src = inspect.getsource(ca)
+        assert '"small_no_regression":' in src
+        assert "Small No-Regression run" in src
+        assert "Production Sanity run" in src
+
+    def test_the_brief_says_the_runs_do_not_add_up(self):
+        """A subset and a separate baseline summed together is the one arithmetic
+        error the snapshot invites if it stays silent."""
+        import inspect
+        from src.ui import chat_assistant as ca
+        src = inspect.getsource(ca)
+        assert "Never sum two runs" in src
+        assert "already counted in it" in src

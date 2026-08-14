@@ -205,6 +205,9 @@ Answer shape (example for "how is X doing")
   **28.3%** automation coverage
   • 1,116 automated of 3,949 cases
   • No-Regression baseline: 92% (X/Y) · Production Sanity: 64% (X/Y)
+  • Three RUNS, and they do not add up: Big No-Regression is the baseline;
+    Small No-Regression is a SUBSET of it (already counted in it); Production
+    Sanity is a SEPARATE baseline that may overlap it.  Never sum two runs.
   • Weakest area: <area> at 11%
 """
 
@@ -381,18 +384,25 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
         if not exp_base.empty:
             regression = _regression_stats(exp_base)
 
-    from .backlog_tab import _LABEL_PROD_SANITY
-    nd_ps, ab_ps, ids_ps, _exp_ps = coverage_tab._baseline_like_backlog(
+    # ROWS, for the same reason the regression figures above are: Production
+    # Sanity became a row-based baseline like the others, and counting its cases
+    # here made Dexter quote a coverage no screen shows.  The classified frame
+    # is already in hand — `_regression_stats` is the one place rows become
+    # numbers, so using it is what keeps Dexter and the tabs on one answer.
+    from .backlog_tab import _LABEL_PROD_SANITY, _small_nr_cases
+    _nd_ps, _ab_ps, _ids_ps, exp_ps = coverage_tab._baseline_like_backlog(
         non_dep, auto_bu, rules_bu, member_label=_LABEL_PROD_SANITY)
-    prod_sanity: dict[str, Any] = {}
-    if not nd_ps.empty:
-        ps_total = int(nd_ps["case_id"].nunique())
-        ps_auto  = int(nd_ps["case_id"].isin(ids_ps).sum())
-        prod_sanity = {
-            "total_cases":      ps_total,
-            "automated_unique": ps_auto,
-            "coverage_pct":     round((ps_auto / ps_total * 100) if ps_total else 0.0, 1),
-        }
+    prod_sanity = _regression_stats(exp_ps) if not exp_ps.empty else {}
+
+    # Small No-Regression: the `small_nr` subset of the SAME rows, so it is
+    # filtered rather than expanded again — exactly what the Backlog tab does.
+    small_nr: dict[str, Any] = {}
+    if regression and exp_base is not None and not exp_base.empty:
+        ids_small = _small_nr_cases(scope)
+        if ids_small:
+            sub = exp_base[exp_base["case_id"].astype(int).isin(ids_small)]
+            if not sub.empty:
+                small_nr = _regression_stats(sub)
 
     return {
         "business_unit":                     canonical,
@@ -404,6 +414,7 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
         "top_areas":                         top_areas,
         "regression_baseline":               regression,
         "production_sanity":                 prod_sanity,
+        "small_no_regression":               small_nr,
     }
 
 
@@ -684,11 +695,23 @@ def _build_coverage_brief() -> str:
             f"call this 'coverage'): {d['coverage_pct']}% "
             f"({d['automated_unique']:,} automated of {d['total_cases']:,} cases)"
         )
+        # Rows, not cases: the percentage beside them is row-based, and a
+        # ratio in one unit next to a percentage in another is how a reader
+        # ends up quoting a number that reconciles with nothing.
         ps = d.get("production_sanity") or {}
         if ps:
             lines.append(
-                f"- Production Sanity: {ps['coverage_pct']}% "
-                f"({ps['automated_unique']:,}/{ps['total_cases']:,})"
+                f"- Production Sanity run: {ps['coverage_pct']}% "
+                f"({ps['automated_rows']:,} automated of {ps['total_rows']:,} "
+                f"rows) — a SEPARATE baseline, never add it to the regression one"
+            )
+        sm = d.get("small_no_regression") or {}
+        if sm:
+            lines.append(
+                f"- Small No-Regression run (the Release run): "
+                f"{sm['coverage_pct']}% ({sm['automated_rows']:,} automated of "
+                f"{sm['total_rows']:,} rows) — a SUBSET of the No-Regression "
+                f"baseline above, already counted in it"
             )
         areas = d.get("top_areas") or []
         weak = sorted(
