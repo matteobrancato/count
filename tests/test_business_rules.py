@@ -1897,3 +1897,63 @@ class TestCountryColumnBelongsToItsBu:
         """The counting guarantee behind all of the above."""
         rule = self._rule()
         assert bl._expand_baseline(self._raw(["MRN"]), [rule]).empty
+
+
+class TestRateLimitPolicy:
+    """TestRail dropped the cap to 50 requests/minute (confirmed 2026-08-14 in
+    the 429 body).  The pacer must stay under it, and a 429 must be waited out
+    rather than given up on: TestRail asks for 41-44s when the window is full,
+    and the old 30s cap failed the load before it reopened."""
+
+    def test_the_pacer_stays_under_the_cap(self):
+        from src import testrail_client as trc
+        assert 60 / trc._PACE_INTERVAL <= 50
+
+    def test_a_429_is_retried_until_the_window_reopens(self, monkeypatch):
+        from src import testrail_client as trc
+        sleeps: list[float] = []
+        monkeypatch.setattr(trc.time, "sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr(trc, "_pace", lambda: None)
+
+        class _Resp:
+            def __init__(self, code):
+                self.status_code, self.ok = code, code == 200
+                self.headers = {"Retry-After": "44"}
+                self.text = "{}"
+
+            def json(self):
+                return {"ok": True}
+
+        seq = [_Resp(429), _Resp(429), _Resp(200)]
+        client = trc.TestRailClient.__new__(trc.TestRailClient)
+        client._session = SimpleNamespace(get=lambda *a, **k: seq.pop(0))
+        client.timeout = 5
+        client._url = lambda e: e
+        client.creds = SimpleNamespace(base_url="https://x")
+        assert client._get("get_cases/1") == {"ok": True}
+        # waited the full Retry-After each time, not a clipped 30s
+        assert sleeps == [44, 44]
+
+    def test_the_wait_is_still_capped(self, monkeypatch):
+        """A hostile or buggy header must not stall a worker thread."""
+        from src import testrail_client as trc
+        sleeps: list[float] = []
+        monkeypatch.setattr(trc.time, "sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr(trc, "_pace", lambda: None)
+
+        class _Resp:
+            def __init__(self, code):
+                self.status_code, self.ok = code, code == 200
+                self.headers = {"Retry-After": "99999"}
+                self.text = "{}"
+
+            def json(self):
+                return {}
+
+        seq = [_Resp(429), _Resp(200)]
+        client = trc.TestRailClient.__new__(trc.TestRailClient)
+        client._session = SimpleNamespace(get=lambda *a, **k: seq.pop(0))
+        client.timeout = 5
+        client._url = lambda e: e
+        client._get("get_cases/1")
+        assert sleeps == [60]

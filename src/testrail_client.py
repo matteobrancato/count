@@ -26,20 +26,31 @@ class TestRailError(RuntimeError):
 
 
 # ── global request pacer ──────────────────────────────────────────────────────
-# TestRail Cloud rate-limits at ~180 requests/minute PER USER.  Firing our
+# TestRail Cloud now rate-limits at **50 requests/minute PER USER**, not the
+# ~180 this pacer was built for.  Confirmed 2026-08-14 from the 429 body itself:
+# "API Rate Limit Exceeded - 50 per minute maximum allowed."  At 0.35s/slot we
+# were firing ~170/min — 3.4x over — so every cold start produced exactly the
+# avalanche described below, and because nothing reached the cache, the next
+# session started over and made it worse.
+#
+# The cost is TestRail's, not ours: ~180 paginated requests at 50/min is a
+# ~4-minute cold download.  The 6h TTL and the background re-warm are what keep
+# that off a human's screen; Mobile App stays deferred for the same reason.
+#
+# Firing our
 # parallel warm-up (up to ~80 concurrent requests) at that limiter causes a
 # 429 avalanche: every worker sleeps its Retry-After (up to 30s), retries into
 # ANOTHER 429, and the download looks frozen — and a browser refresh makes it
 # worse, because the old run's threads keep downloading while the new session
 # starts more.  The cure is to never exceed the limit in the first place:
 # every request from every thread and session (same process) reserves a time
-# slot ~0.35s apart → ~170/min, just under the cap.  Parallel workers simply
+# slot ~1.3s apart → ~46/min, just under the cap.  Parallel workers simply
 # queue on the pacer; the cold download becomes deterministic (~requests ×
 # 0.35s) with essentially zero 429s.  Warm loads make few API calls, so the
 # pacing cost there is negligible.
 _PACE_LOCK = threading.Lock()
 _PACE_NEXT = 0.0
-_PACE_INTERVAL = 0.35
+_PACE_INTERVAL = 1.30
 
 
 # ── single-flight ─────────────────────────────────────────────────────────────
@@ -128,15 +139,18 @@ class TestRailClient:
     def _get(self, endpoint: str) -> Any:
         _pace()
         resp = self._session.get(self._url(endpoint), timeout=self.timeout)
-        if resp.status_code == 429:
-            # Rate limit — honour Retry-After (seconds form; RFC 7231 also
-            # allows an HTTP-date, which int() can't parse) and retry once.
-            # Capped so a hostile/buggy header can't stall a worker thread.
-            # Rare with the global pacer, but kept as the safety net.
+        # Rate limit — honour Retry-After (seconds form; RFC 7231 also allows an
+        # HTTP-date, which int() can't parse).  THREE attempts, not one: TestRail
+        # asks for 41-44s when the window is full and the old 30s cap gave up
+        # before it reopened, turning a wait into a failed load.  Capped so a
+        # hostile or buggy header cannot stall a worker thread indefinitely.
+        for _ in range(3):
+            if resp.status_code != 429:
+                break
             try:
-                wait = min(int(resp.headers.get("Retry-After", "5")), 30)
+                wait = min(int(resp.headers.get("Retry-After", "10")), 60)
             except ValueError:
-                wait = 5
+                wait = 10
             time.sleep(wait)
             _pace()
             resp = self._session.get(self._url(endpoint), timeout=self.timeout)
