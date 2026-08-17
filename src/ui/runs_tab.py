@@ -376,7 +376,11 @@ def _completed_runs_for_bu(
         plan_ids = [int(p["id"]) for p in matching_plans]
         max_workers = min(len(plan_ids), 10)
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(tr.fetch_plan, plan_id): plan_id
+            # `fetch_plan_closed`, not `fetch_plan`: these plans are the ones
+            # TestRail reports as completed, so nothing in them can change.
+            # Under the short TTL these ~20 detail calls per BU were re-issued
+            # every ten minutes for history that was already final.
+            futures = {pool.submit(tr.fetch_plan_closed, plan_id): plan_id
                        for plan_id in plan_ids}
             for fut in as_completed(futures):
                 try:

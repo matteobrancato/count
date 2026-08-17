@@ -2069,6 +2069,139 @@ class TestCasePaginationAsksOnlyForWhatExists:
         assert len(asked) == 2
 
 
+class TestClosedHistoryIsNotRedownloaded:
+    """A completed run or plan cannot change, so re-fetching it on a ten-minute
+    TTL spent the rate limit on history that was already final — roughly 25
+    requests per BU, taken out of the same budget the coverage data needs."""
+
+    def test_completed_runs_route_to_the_persisted_cache(self, monkeypatch):
+        from src import testrail_client as trc
+        seen: list[tuple] = []
+        monkeypatch.setattr(trc, "_fetch_runs_closed",
+                            lambda pid: seen.append(("closed", pid)) or [])
+        monkeypatch.setattr(trc, "_fetch_runs_live",
+                            lambda pid, c: seen.append(("live", pid, c)) or [])
+        trc.fetch_runs(1, is_completed=True)
+        trc.fetch_runs(1, is_completed=False)
+        trc.fetch_runs(1)
+        assert seen == [("closed", 1), ("live", 1, False), ("live", 1, None)]
+
+    def test_completed_plans_route_to_the_persisted_cache(self, monkeypatch):
+        from src import testrail_client as trc
+        seen: list[tuple] = []
+        monkeypatch.setattr(trc, "_fetch_plans_closed",
+                            lambda pid: seen.append(("closed", pid)) or [])
+        monkeypatch.setattr(trc, "_fetch_plans_live",
+                            lambda pid, c: seen.append(("live", pid, c)) or [])
+        trc.fetch_plans(2, is_completed=True)
+        trc.fetch_plans(2, is_completed=False)
+        assert seen == [("closed", 2), ("live", 2, False)]
+
+    def test_the_completed_plan_details_use_the_closed_fetcher(self):
+        """The ~20 detail calls per BU are the bulk of the cost."""
+        import inspect
+        from src.ui import runs_tab
+        src = inspect.getsource(runs_tab._completed_runs_for_bu)
+        assert "fetch_plan_closed" in src
+        assert "submit(tr.fetch_plan," not in src
+
+    def test_the_active_plan_details_stay_on_the_short_ttl(self):
+        """Active plans are exactly the thing that IS still moving."""
+        import inspect
+        from src.ui import runs_tab
+        src = inspect.getsource(runs_tab._flatten_active_runs)
+        assert "submit(tr.fetch_plan," in src
+        assert "fetch_plan_closed" not in src
+
+    def test_clearing_every_cache_still_resolves(self):
+        """`clear_all_caches` names its functions by hand — a renamed cache
+        turns the refresh button into a NameError at the worst moment."""
+        from src import testrail_client as trc
+        trc.clear_all_caches()
+
+
+class TestPrewarmSurvivesABadWindow:
+    """A warm-up that failed used to claim the next six hours: `_WARMED_AT` was
+    set upfront and never reset, so one rate-limit storm left every later
+    session fetching lazily and serially long after TestRail had recovered.
+    The progress hook has to keep reporting throughout, too — at the current cap
+    a single suite can take a minute, and a box that stands still that long is
+    indistinguishable from a dead one."""
+
+    def _stub(self, monkeypatch, trc, cases):
+        monkeypatch.setattr(trc, "resolve_project_id", lambda sid: 1)
+        monkeypatch.setattr(trc, "fetch_cases", cases)
+        monkeypatch.setattr(trc, "fetch_sections", lambda p, s: [])
+        monkeypatch.setattr(trc, "fetch_labels", lambda p: {})
+        monkeypatch.setattr(trc, "_WARMED_AT", 0.0)
+
+    def test_a_failed_warmup_lets_the_next_one_retry_soon(self, monkeypatch):
+        from src import testrail_client as trc
+
+        def _boom(pid, sid):
+            raise trc.TestRailError("429: rate limited")
+
+        self._stub(monkeypatch, trc, _boom)
+        trc.prefetch_all_suites([1, 2])
+        held = trc._WARM_INTERVAL - (trc.time.time() - trc._WARMED_AT)
+        assert 0 < held <= trc._WARM_RETRY_AFTER + 5
+
+    def test_a_clean_warmup_holds_the_full_interval(self, monkeypatch):
+        from src import testrail_client as trc
+        self._stub(monkeypatch, trc, lambda p, s: [])
+        trc.prefetch_all_suites([1, 2])
+        held = trc._WARM_INTERVAL - (trc.time.time() - trc._WARMED_AT)
+        assert held > trc._WARM_RETRY_AFTER
+
+    def test_progress_keeps_reporting_while_a_download_runs(self, monkeypatch):
+        import threading
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_PROGRESS_TICK", 0.05)
+        blocked = threading.Event()
+
+        def _slow(pid, sid):
+            blocked.wait(0.4)
+            return []
+
+        self._stub(monkeypatch, trc, _slow)
+        seen: list[tuple] = []
+        trc.prefetch_all_suites([1], on_progress=lambda d, t, r: seen.append((d, t, r)))
+        assert len(seen) >= 3           # ticked DURING the download, not only after
+        assert seen[-1][0] == seen[-1][1]   # and ended on a complete count
+
+    def test_a_dead_ui_callback_cannot_abort_the_download(self, monkeypatch):
+        """Other sessions are waiting on this same download."""
+        from src import testrail_client as trc
+        self._stub(monkeypatch, trc, lambda p, s: [])
+
+        def _dead(*_a):
+            raise KeyboardInterrupt("session gone")
+
+        trc.prefetch_all_suites([1], on_progress=_dead)   # must not raise
+
+    def test_successful_requests_are_counted(self, monkeypatch):
+        """The counter the loader uses as its heartbeat."""
+        import itertools
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_pace", lambda: None)
+
+        class _Resp:
+            status_code, ok, text, headers = 200, True, "{}", {}
+
+            def json(self):
+                return {"ok": 1}
+
+        client = trc.TestRailClient.__new__(trc.TestRailClient)
+        client._sessions = [SimpleNamespace(get=lambda *a, **k: _Resp())]
+        client._rr = itertools.count()
+        client.timeout = 5
+        client._url = lambda e: e
+        before = trc.requests_served()
+        client._get("a")
+        client._get("b")
+        assert trc.requests_served() == before + 2
+
+
 class TestDexterKnowsTheRuns:
     """Dexter's snapshot has to carry the same three runs the tab shows, on the
     same basis.  Production Sanity counted CASES here while the dashboard

@@ -11,7 +11,7 @@ import logging
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
@@ -123,6 +123,20 @@ def _configured_limit() -> int:
         return max(1, int(st.secrets["TESTRAIL_RATE_LIMIT"]))
     except Exception:                                                   # noqa: BLE001
         return _DEFAULT_LIMIT
+
+
+_STATS_LOCK = threading.Lock()
+_REQUESTS_SERVED = 0
+
+
+def requests_served() -> int:
+    """Successful API calls this process has made.
+
+    The loader's heartbeat.  Suite-level progress ticks once every ~80s at the
+    current cap, which on a twelve-minute download is indistinguishable from a
+    hang; this moves with every single request.
+    """
+    return _REQUESTS_SERVED
 
 
 def rate_summary() -> dict[str, float | int | bool]:
@@ -319,6 +333,9 @@ class TestRailClient:
             resp = self._next_session().get(self._url(endpoint), timeout=self.timeout)
         if not resp.ok:
             raise TestRailError(f"GET {endpoint} → {resp.status_code}: {resp.text[:300]}")
+        global _REQUESTS_SERVED
+        with _STATS_LOCK:
+            _REQUESTS_SERVED += 1
         try:
             return resp.json()
         except ValueError as exc:
@@ -645,19 +662,60 @@ def fetch_labels(project_id: int) -> dict[int, str]:
         return _fetch_labels_cached(project_id)
 
 
-# ── runs / plans / results — shorter TTL because active state changes often ──
+# ── runs / plans / results ───────────────────────────────────────────────────
+# Split by whether the thing being asked about can still change.
+#
+# A COMPLETED run or plan is immutable — TestRail cannot alter it — so it gets
+# the same long, persisted TTL `fetch_tests` has always used.  Only the ACTIVE
+# queries need the short one.
+#
+# This used to be a single 10-minute TTL for both, which was affordable at 180
+# requests/minute.  At 5 it is not arithmetic that works: the Runs/Stability
+# view costs roughly 25 requests per BU, which at the current pace is ~90
+# seconds — so a 10-minute TTL meant closed history nobody could have changed
+# was re-downloaded all day, out of the same budget the coverage data needs.
 @st.cache_data(show_spinner=False, ttl=600)
-def fetch_runs(project_id: int, is_completed: bool | None = None) -> list[dict]:
+def _fetch_runs_live(project_id: int, is_completed: bool | None) -> list[dict]:
     return _get_client().get_runs(project_id, is_completed=is_completed)
 
 
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+def _fetch_runs_closed(project_id: int) -> list[dict]:
+    return _get_client().get_runs(project_id, is_completed=True)
+
+
+def fetch_runs(project_id: int, is_completed: bool | None = None) -> list[dict]:
+    if is_completed is True:
+        return _fetch_runs_closed(project_id)
+    return _fetch_runs_live(project_id, is_completed)
+
+
 @st.cache_data(show_spinner=False, ttl=600)
-def fetch_plans(project_id: int, is_completed: bool | None = None) -> list[dict]:
+def _fetch_plans_live(project_id: int, is_completed: bool | None) -> list[dict]:
     return _get_client().get_plans(project_id, is_completed=is_completed)
+
+
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+def _fetch_plans_closed(project_id: int) -> list[dict]:
+    return _get_client().get_plans(project_id, is_completed=True)
+
+
+def fetch_plans(project_id: int, is_completed: bool | None = None) -> list[dict]:
+    if is_completed is True:
+        return _fetch_plans_closed(project_id)
+    return _fetch_plans_live(project_id, is_completed)
 
 
 @st.cache_data(show_spinner=False, ttl=600)
 def fetch_plan(plan_id: int) -> dict:
+    """Detail of an ACTIVE plan — its runs and counts are still moving."""
+    return _get_client().get_plan(plan_id)
+
+
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+def fetch_plan_closed(plan_id: int) -> dict:
+    """Detail of a COMPLETED plan.  Use ONLY for plans TestRail reports as
+    completed — same immutability contract as `fetch_tests`."""
     return _get_client().get_plan(plan_id)
 
 
@@ -710,7 +768,9 @@ def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
                fetch_suite, _fetch_sections_cached, _fetch_cases_cached,
                _fetch_labels_cached,
-               fetch_runs, fetch_plans, fetch_plan, fetch_tests, fetch_tests_fresh,
+               _fetch_runs_live, _fetch_runs_closed,
+               _fetch_plans_live, _fetch_plans_closed,
+               fetch_plan, fetch_plan_closed, fetch_tests, fetch_tests_fresh,
                fetch_failed_results, fetch_case, fetch_results_for_case,
                fetch_statuses):
         fn.clear()
@@ -724,58 +784,100 @@ _WARMED_AT = 0.0
 _WARM_INTERVAL = 21300.0   # data TTL (6h) minus 5 min — re-warm just before expiry
 
 
+# How long a failed warm-up holds the lock before another session may retry.
+# NOT the full interval: the caches are empty when it fails, so claiming the
+# next six hours turns one bad rate-limit window into an afternoon of lazy,
+# serial fetches — which is exactly how a single 429 storm used to become a
+# dashboard that stayed broken long after TestRail had recovered.
+_WARM_RETRY_AFTER = 120.0
+
+# How often the download reports in.  Suite completions are ~80s apart at the
+# current cap; this ticks the counter in between so the box always moves.
+_PROGRESS_TICK = 2.0
+
+
 def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
-    """Pre-warm fetch_cases + fetch_sections caches for every known suite.
+    """Pre-warm fetch_cases + fetch_sections + fetch_labels for every suite.
 
     Fault-tolerant per suite: one deleted/renamed suite must not blank the
     whole dashboard — its failure is logged and skipped here, and if the suite
     genuinely matters, `evaluate_rules` will surface a visible error for it.
 
-    *on_progress* is an optional callback(done, total) fired as each suite's
-    case download completes — the UI uses it for a live "suite 7/16" counter,
-    so the (rate-limit-bound, ~1 min) download never looks frozen.
+    *on_progress* is an optional callback(done, total, requests) fired at least
+    every couple of seconds — from THIS thread, never from a worker, so the UI
+    call is always made where Streamlit expects it.
     """
     global _WARMED_AT
     if time.time() - _WARMED_AT < _WARM_INTERVAL:
         return
-    _WARMED_AT = time.time()   # set upfront so concurrent sessions don't re-warm
+    _WARMED_AT = time.time()   # claimed upfront so concurrent sessions don't re-warm
+    failures = 0
 
-    # Step 1: resolve all project IDs in parallel (skip suites that fail)
-    with ThreadPoolExecutor(max_workers=min(len(suite_ids), 8)) as pool:
-        pid_futures = {sid: pool.submit(resolve_project_id, sid) for sid in suite_ids}
-    suite_to_project: dict[int, int] = {}
-    for sid, fut in pid_futures.items():
+    def tick(done: int, total: int) -> None:
+        if not on_progress:
+            return
         try:
-            suite_to_project[sid] = fut.result()
-        except Exception:                                               # noqa: BLE001
-            logging.getLogger(__name__).exception(
-                "prefetch: could not resolve suite %s — skipping", sid)
+            on_progress(done, total, _REQUESTS_SERVED)
+        except BaseException:                                           # noqa: BLE001
+            # See evaluate_rules' progress hook: a killed session's UI callback
+            # must not abort a download the other sessions are waiting on.
+            pass
 
-    # Step 2: fetch cases + sections + labels for all suites in parallel.
-    # Failures here are harmless: these calls only warm the cache, and any
-    # suite that failed will simply be fetched (with retries) on first use.
-    project_ids = set(suite_to_project.values())
-    n_total = len(suite_to_project)
-    n_done  = 0
-    with ThreadPoolExecutor(max_workers=min(len(suite_ids) * 2 + len(project_ids), 16)) as pool:
-        case_futures = {pool.submit(fetch_cases, pid, sid): sid
-                        for sid, pid in suite_to_project.items()}
-        for sid, pid in suite_to_project.items():
-            pool.submit(fetch_sections, pid, sid)
-        for pid in project_ids:
-            pool.submit(fetch_labels, pid)
-        for fut in as_completed(case_futures):
-            n_done += 1
+    try:
+        # Step 1: resolve all project IDs in parallel (skip suites that fail)
+        with ThreadPoolExecutor(max_workers=min(len(suite_ids), 8)) as pool:
+            pid_futures = {sid: pool.submit(resolve_project_id, sid)
+                           for sid in suite_ids}
+        suite_to_project: dict[int, int] = {}
+        for sid, fut in pid_futures.items():
             try:
-                fut.result()
-            except Exception:                                           # noqa: BLE001
-                logging.getLogger(__name__).exception(
-                    "prefetch: suite %s failed — will retry on first use",
-                    case_futures[fut])
-            if on_progress:
-                try:
-                    on_progress(n_done, n_total)
-                except BaseException:                                   # noqa: BLE001
-                    # See evaluate_rules' progress hook: a killed session's UI
-                    # callback must not abort the shared download.
-                    pass
+                suite_to_project[sid] = fut.result()
+            except Exception as exc:                                    # noqa: BLE001
+                failures += 1
+                logging.getLogger(__name__).warning(
+                    "prefetch: could not resolve suite %s — skipping (%s)",
+                    sid, str(exc)[:200])
+
+        # Step 2: cases + sections + labels for every suite, in parallel.
+        # A failure here is not fatal — these calls only warm the cache, and
+        # anything missing is fetched on first use — but it IS expensive now,
+        # so it is counted and it shortens the next re-warm's cooldown.
+        project_ids = set(suite_to_project.values())
+        n_total = len(suite_to_project) + len(suite_to_project) + len(project_ids)
+        n_done = 0
+        with ThreadPoolExecutor(
+                max_workers=min(len(suite_ids) * 2 + len(project_ids), 16)) as pool:
+            labels: dict[Future, str] = {}
+            for sid, pid in suite_to_project.items():
+                labels[pool.submit(fetch_cases, pid, sid)] = f"suite {sid}"
+                labels[pool.submit(fetch_sections, pid, sid)] = f"sections of {sid}"
+            for pid in project_ids:
+                labels[pool.submit(fetch_labels, pid)] = f"labels of project {pid}"
+
+            pending = set(labels)
+            tick(0, n_total)
+            while pending:
+                # Poll rather than block: `as_completed` only wakes on a
+                # completion, and at ~3.5s a request those are a minute or more
+                # apart.  A progress box that stands still for a minute is
+                # indistinguishable from one that has died.
+                done, pending = wait(pending, timeout=_PROGRESS_TICK)
+                for fut in done:
+                    n_done += 1
+                    try:
+                        fut.result()
+                    except Exception as exc:                            # noqa: BLE001
+                        failures += 1
+                        # One line, not a traceback: a rate-limited fetch is an
+                        # expected outcome with a self-explanatory message, and
+                        # nine 60-line stacks buried the one line that mattered.
+                        logging.getLogger(__name__).warning(
+                            "prefetch: %s failed — will retry on first use (%s)",
+                            labels[fut], str(exc)[:200])
+                tick(n_done, n_total)
+    finally:
+        if failures:
+            _WARMED_AT = time.time() - _WARM_INTERVAL + _WARM_RETRY_AFTER
+            logging.getLogger(__name__).warning(
+                "prefetch: %d task(s) failed — re-warm allowed again in %.0fs",
+                failures, _WARM_RETRY_AFTER)

@@ -157,45 +157,57 @@ def _freshness_label(scope: str = "website") -> None:
             else:
                 st.caption("Available once the data has finished loading.")
 
+        # ONE markdown element, not two.  "Updated 3m ago" and "· 4 workers"
+        # used to be separate st.markdown calls, which made them separate flex
+        # children: the gap before the "·" came from the container's `gap`
+        # while the gap after it was a plain space, so the separator sat off
+        # centre and each half carried its own line box.  A single span gives
+        # the whole label one baseline and one symmetric separator.
+        #
         # <span>, not <div>: Streamlit gives the markdown container a
         # margin-bottom of -1rem assuming a <p> inside supplies +1rem.  A bare
         # block <div> gets no such margin, so the box collapses 16px and the
         # text drifts below the row's centre line.  Inline HTML is wrapped in a
         # <p> by the markdown pass, which restores the balance.
-        st.markdown(
-            f"<span style='color:{COLORS['muted']};font-size:11px;"
-            f"white-space:nowrap'>Updated "
-            f"<b style='color:{COLORS['text']};font-weight:600'>"
-            f"{_relative_time(updated_at)}</b></span>",
-            unsafe_allow_html=True,
-        )
-        # How many TestRail accounts are serving the fetch.  Shown only when
-        # there is more than one, and only as a number: it is the difference
-        # between a load that is slow and a load that is slow because something
-        # is misconfigured, and without it the pool is invisible.
+        #
+        # The worker count is appended only when there is something to say: it
+        # is the difference between a load that is slow and a load that is slow
+        # because something is misconfigured, and without it the pool is
+        # invisible.
         try:
             _workers, _configured = tr.n_workers(), tr.n_accounts_configured()
-            _cap = tr.rate_summary()["limit_per_account"]
+            _cap = int(tr.rate_summary()["limit_per_account"])
         except Exception:                                               # noqa: BLE001
-            _workers = _configured = 0
-            _cap = 0
-        if _workers > 1 or (_configured and _workers < _configured):
-            st.markdown(
-                f"<span title='Requests are spread across {_workers} TestRail "
-                f"account(s), each rate-limited at {_cap:.0f} requests/minute "
-                f"on its own — so the data loads about {_workers}x faster than "
-                f"with one."
+            _workers = _configured = _cap = 0
+        _short = _configured > _workers
+        _parts = [
+            f"<span style='color:{COLORS['muted']}'>Updated </span>"
+            f"<b style='color:{COLORS['text']};font-weight:600'>"
+            f"{_relative_time(updated_at)}</b>"
+        ]
+        if _workers > 1 or (_configured and _short):
+            _tip = (
+                f"Requests are spread across {_workers} TestRail account(s), "
+                f"each rate-limited at {_cap} requests/minute on its own — so "
+                f"the data loads about {_workers}x faster than with one."
                 + (f"  {_configured - _workers} configured account(s) are NOT "
                    f"answering and were left out; the app log names them."
-                   if _configured > _workers else "")
-                + f"' style='color:{COLORS['muted']};font-size:11px;"
-                f"white-space:nowrap;cursor:help'>· "
-                f"<b style='color:{'#DC2626' if _configured > _workers else COLORS['text']};"
-                f"font-weight:600'>{_workers}</b>"
-                + (f" of {_configured}" if _configured > _workers else "")
-                + " workers</span>",
-                unsafe_allow_html=True,
+                   if _short else "")
             )
+            _parts.append(
+                f"<span title='{_tip}' style='cursor:help;color:{COLORS['muted']}'>"
+                f"<b style='color:{'#DC2626' if _short else COLORS['text']};"
+                f"font-weight:600'>{_workers}</b>"
+                + (f" of {_configured}" if _short else "")
+                + " workers</span>"
+            )
+        _sep = (f"<span style='color:{COLORS['muted']};opacity:.55;"
+                f"margin:0 6px'>·</span>")
+        st.markdown(
+            f"<span style='font-size:11px;white-space:nowrap'>"
+            f"{_sep.join(_parts)}</span>",
+            unsafe_allow_html=True,
+        )
         # No help tooltip: it rendered a large card covering the label.  The ↻
         # glyph + hover rotation are self-explanatory.
         if st.button("↻", key="refresh_mini"):
@@ -280,6 +292,17 @@ def main() -> None:
     _header()
     if not _creds_ok():
         st.stop()
+
+    # Build the account pool BEFORE anything reports on it.  It was built
+    # lazily by the first fetch — which happens inside the tab, well after the
+    # freshness bar has already been drawn — so on a cold start the bar showed
+    # no workers and the right number only appeared on the next rerun.  That is
+    # the whole of "cambia solo dopo refresh".  One parallel, unpaced round
+    # trip, so the cost is a fraction of a second.
+    try:
+        tr.ensure_pool()
+    except Exception:  # noqa: BLE001 — the fetches surface credential errors
+        traceback.print_exc()
 
     # Render the floating chat FIRST — Streamlit renders incrementally, so
     # placing it here makes the FAB appear immediately, before the (slow) data

@@ -807,10 +807,16 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     # runs — the user must always see it moving, never a frozen spinner.
     _t_dl = _time.time()
 
-    def _dl_progress(done: int, total: int) -> None:
-        if on_label:
-            on_label(f"⚡ Loading dashboard data… · 📥 suite {done}/{total} "
-                     f"· {int(_time.time() - _t_dl)}s")
+    def _dl_progress(done: int, total: int, requests: int) -> None:
+        if not on_label:
+            return
+        secs = int(_time.time() - _t_dl)
+        clock = f"{secs // 60}m {secs % 60:02d}s" if secs >= 60 else f"{secs}s"
+        # The request count is the part that actually moves: at the current cap
+        # a whole suite can take a minute, and a counter that stands still for
+        # a minute reads as a dead page.
+        on_label(f"⚡ Loading dashboard data… · 📥 {done}/{total} downloads "
+                 f"· {requests} requests · {clock}")
 
     tr.prefetch_all_suites(suite_ids, on_progress=_dl_progress)
     if on_label:
@@ -835,9 +841,19 @@ def warmup_cache(on_step=None, on_label=None) -> None:
             # iteration today, but binding keeps it correct if that ever changes.
             def _exp_progress(done: int, total: int, _name: str,
                               lbl: str = _scope_lbl, t0: float = _t_exp) -> None:
-                if on_label:
-                    on_label(f"⚡ Loading dashboard data… · 🧮 {lbl} "
-                             f"rule {done}/{total} · {int(_time.time() - t0)}s")
+                if not on_label:
+                    return
+                # Rule expansion is pure Python UNLESS the pre-warm was skipped
+                # or failed, in which case each rule quietly downloads its own
+                # suite.  Carrying the request counter here is what tells those
+                # two apart on screen: a rule counter that has not moved in a
+                # minute next to a request counter that has is a slow download,
+                # not a hang.  Without it this is the line the log used to sit
+                # on for half an hour with nothing to show for it.
+                served = f" · {tr.requests_served()} requests"
+                on_label(f"⚡ Loading dashboard data… · 🧮 {lbl} "
+                         f"rule {done}/{total}{served} "
+                         f"· {int(_time.time() - t0)}s")
 
             _PROGRESS_HOOK = _exp_progress
             try:
