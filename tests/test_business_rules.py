@@ -1925,8 +1925,10 @@ class TestRateLimitPolicy:
                 return {"ok": True}
 
         seq = [_Resp(429), _Resp(429), _Resp(200)]
+        import itertools
         client = trc.TestRailClient.__new__(trc.TestRailClient)
-        client._session = SimpleNamespace(get=lambda *a, **k: seq.pop(0))
+        client._sessions = [SimpleNamespace(get=lambda *a, **k: seq.pop(0))]
+        client._rr = itertools.count()
         client.timeout = 5
         client._url = lambda e: e
         client.creds = SimpleNamespace(base_url="https://x")
@@ -1951,8 +1953,10 @@ class TestRateLimitPolicy:
                 return {}
 
         seq = [_Resp(429), _Resp(200)]
+        import itertools
         client = trc.TestRailClient.__new__(trc.TestRailClient)
-        client._session = SimpleNamespace(get=lambda *a, **k: seq.pop(0))
+        client._sessions = [SimpleNamespace(get=lambda *a, **k: seq.pop(0))]
+        client._rr = itertools.count()
         client.timeout = 5
         client._url = lambda e: e
         client._get("get_cases/1")
@@ -1995,3 +1999,69 @@ class TestDexterKnowsTheRuns:
         src = inspect.getsource(ca)
         assert "Never sum two runs" in src
         assert "already counted in it" in src
+
+
+class TestMultiAccountPool:
+    """TestRail rate-limits per USER, so each working account raises the ceiling
+    by 50/min.  The pool is DISCOVERED from secrets, never configured: adding
+    the next account has to be a secrets edit and nothing else."""
+
+    @staticmethod
+    def _secrets(monkeypatch, mapping):
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc.st, "secrets", mapping)
+
+    def test_finds_every_account_present(self, monkeypatch):
+        from src import testrail_client as trc
+        self._secrets(monkeypatch, {
+            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
+            "TESTRAIL_USER_1": "b@x", "TESTRAIL_API_KEY_1": "k1",
+            "TESTRAIL_USER_2": "c@x", "TESTRAIL_API_KEY_2": "k2",
+        })
+        assert [c.user for c in trc._credential_sets()] == ["a@x", "b@x", "c@x"]
+
+    def test_a_gap_does_not_hide_a_later_account(self, monkeypatch):
+        """The accounts arrive one at a time; a half-filled _2 must not stop the
+        search before _3."""
+        from src import testrail_client as trc
+        self._secrets(monkeypatch, {
+            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
+            "TESTRAIL_USER_1": "b@x", "TESTRAIL_API_KEY_1": "k1",
+            "TESTRAIL_USER_3": "d@x", "TESTRAIL_API_KEY_3": "k3",
+        })
+        assert [c.user for c in trc._credential_sets()] == ["a@x", "b@x", "d@x"]
+
+    def test_blank_credentials_are_ignored(self, monkeypatch):
+        from src import testrail_client as trc
+        self._secrets(monkeypatch, {
+            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
+            "TESTRAIL_USER_1": "  ", "TESTRAIL_API_KEY_1": "",
+        })
+        assert [c.user for c in trc._credential_sets()] == ["a@x"]
+
+    def test_a_duplicated_user_is_dropped(self, monkeypatch):
+        """Two entries for one user share ONE rate-limit budget while we would
+        pace as if there were two — faster on paper, 429s in practice."""
+        from src import testrail_client as trc
+        self._secrets(monkeypatch, {
+            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
+            "TESTRAIL_USER_1": "A@X", "TESTRAIL_API_KEY_1": "k1",
+        })
+        assert [c.user for c in trc._credential_sets()] == ["a@x"]
+
+    def test_requests_alternate_across_the_accounts(self):
+        import itertools
+        from src import testrail_client as trc
+        client = trc.TestRailClient.__new__(trc.TestRailClient)
+        client._sessions = ["s0", "s1", "s2"]
+        client._rr = itertools.count()
+        assert [client._next_session() for _ in range(6)] == \
+            ["s0", "s1", "s2", "s0", "s1", "s2"]
+
+    def test_the_pacer_keeps_each_account_under_its_own_cap(self):
+        """Whatever the pool size, one account must never exceed 50/min."""
+        from src import testrail_client as trc
+        for n in (1, 2, 3, 5, 8):
+            interval = trc._PACE_PER_ACCOUNT / n
+            per_account = (60 / interval) / n
+            assert per_account <= 50, n

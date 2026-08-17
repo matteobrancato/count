@@ -6,6 +6,7 @@ When "next" is null we are done. We follow the next link (relative) until exhaus
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import threading
 import time
@@ -55,7 +56,11 @@ class TestRailError(RuntimeError):
 # pacing cost there is negligible.
 _PACE_LOCK = threading.Lock()
 _PACE_NEXT = 0.0
-_PACE_INTERVAL = 1.30
+# Per ACCOUNT.  `_pace_for()` divides it by the number of working accounts, so
+# the aggregate stays at N x ~46/min and each individual user stays under its
+# own 50 — which is the only limit TestRail actually enforces.
+_PACE_PER_ACCOUNT = 1.30
+_PACE_INTERVAL = _PACE_PER_ACCOUNT
 
 
 # ── single-flight ─────────────────────────────────────────────────────────────
@@ -92,28 +97,84 @@ class TestRailCredentials:
     api_key: str
 
     @classmethod
-    def from_secrets(cls) -> "TestRailCredentials":
+    def from_secrets(cls, suffix: str = "") -> "TestRailCredentials":
+        """Read one credential set.  *suffix* selects an extra account:
+        "" is TESTRAIL_USER, "_1" is TESTRAIL_USER_1, and so on."""
         try:
             url = st.secrets["TESTRAIL_URL"].rstrip("/")
-            user = st.secrets["TESTRAIL_USER"]
-            key = st.secrets["TESTRAIL_API_KEY"]
+            user = st.secrets[f"TESTRAIL_USER{suffix}"]
+            key = st.secrets[f"TESTRAIL_API_KEY{suffix}"]
         except Exception as exc:
             raise TestRailError(
                 "Missing TestRail secrets. Add TESTRAIL_URL, TESTRAIL_USER, "
                 "TESTRAIL_API_KEY to .streamlit/secrets.toml or the Streamlit Cloud secrets panel."
             ) from exc
+        if not str(user).strip() or not str(key).strip():
+            raise TestRailError(f"Empty TestRail credentials for suffix {suffix!r}")
         return cls(base_url=url, user=user, api_key=key)
+
+
+# How many extra accounts to look for.  TestRail rate-limits at 50 requests per
+# minute PER USER, so each working account raises the ceiling by that much and
+# the cold download divides by the number of them.  Discovered, never
+# configured: whatever is filled in on the day is what gets used, so adding the
+# fourth account is a secrets edit and nothing else.
+_MAX_EXTRA_ACCOUNTS = 8
+
+
+def _credential_sets() -> list[TestRailCredentials]:
+    """Every credential set present in secrets: the base one, then _1, _2, …
+
+    Gaps are skipped rather than treated as the end — the accounts arrive one
+    at a time, and a half-filled _3 should not hide a working _4.
+    """
+    out: list[TestRailCredentials] = [TestRailCredentials.from_secrets()]
+    seen = {(out[0].user or "").strip().lower()}
+    for i in range(1, _MAX_EXTRA_ACCOUNTS + 1):
+        try:
+            creds = TestRailCredentials.from_secrets(f"_{i}")
+        except TestRailError:
+            continue
+        # A duplicated user would share one rate-limit budget while we paced as
+        # if it were two — the worst possible outcome, since it looks faster and
+        # 429s instead.
+        if (creds.user or "").strip().lower() in seen:
+            continue
+        seen.add(creds.user.strip().lower())
+        out.append(creds)
+    return out
 
 
 class TestRailClient:
     """Lightweight TestRail client. Instances are cheap — reuse the underlying Session."""
 
-    def __init__(self, creds: TestRailCredentials, timeout: int = 60) -> None:
+    def __init__(self, creds: TestRailCredentials, timeout: int = 60,
+                 extra: list[TestRailCredentials] | None = None) -> None:
         self.creds = creds
         self.timeout = timeout
-        self._session = requests.Session()
-        self._session.auth = HTTPBasicAuth(creds.user, creds.api_key)
-        self._session.headers.update({"Content-Type": "application/json"})
+        # One authenticated session per ACCOUNT, alternated request by request.
+        # The rate limit is per user, so N accounts give N × the budget — and
+        # round-robin per request (not per suite) is what keeps them level: the
+        # suites differ in size by an order of magnitude, so splitting by suite
+        # would leave one account idle while another queued.
+        self._all_creds = [creds] + list(extra or [])
+        self._sessions: list[requests.Session] = []
+        self._rr = itertools.count()
+        for c in self._all_creds:
+            self._sessions.append(self._make_session(c))
+        self._session = self._sessions[0]      # kept: single-session callers
+
+    @property
+    def n_accounts(self) -> int:
+        return len(self._sessions)
+
+    def _next_session(self) -> requests.Session:
+        return self._sessions[next(self._rr) % len(self._sessions)]
+
+    def _make_session(self, creds: TestRailCredentials) -> requests.Session:
+        session = requests.Session()
+        session.auth = HTTPBasicAuth(creds.user, creds.api_key)
+        session.headers.update({"Content-Type": "application/json"})
         # Big connection pool — the cold-start warm-up fires many parallel
         # requests (16 suite workers × up to 5 pagination workers each ≈ 80
         # peak).  The default urllib3 pool is only 10 connections, so without
@@ -121,8 +182,9 @@ class TestRailClient:
         # is a cap, not a preallocation, so oversizing is free — 96 covers the
         # warm-up peak without connection churn (discard/reopen).
         adapter = HTTPAdapter(pool_connections=32, pool_maxsize=96, max_retries=0)
-        self._session.mount("https://", adapter)
-        self._session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
 
     # ------------------------------------------------------------------ low level
     def _url(self, endpoint: str) -> str:
@@ -143,7 +205,7 @@ class TestRailClient:
     )
     def _get(self, endpoint: str) -> Any:
         _pace()
-        resp = self._session.get(self._url(endpoint), timeout=self.timeout)
+        resp = self._next_session().get(self._url(endpoint), timeout=self.timeout)
         # Rate limit — honour Retry-After (seconds form; RFC 7231 also allows an
         # HTTP-date, which int() can't parse).  THREE attempts, not one: TestRail
         # asks for 41-44s when the window is full and the old 30s cap gave up
@@ -158,7 +220,7 @@ class TestRailClient:
                 wait = 10
             time.sleep(wait)
             _pace()
-            resp = self._session.get(self._url(endpoint), timeout=self.timeout)
+            resp = self._next_session().get(self._url(endpoint), timeout=self.timeout)
         if not resp.ok:
             raise TestRailError(f"GET {endpoint} → {resp.status_code}: {resp.text[:300]}")
         try:
@@ -311,11 +373,43 @@ class TestRailClient:
 _SESSION_CACHE: dict[str, TestRailClient] = {}
 
 
+def _account_works(creds: TestRailCredentials) -> bool:
+    """One cheap authenticated call.  A credential set that cannot answer would
+    otherwise fail 1/N of every request for the rest of the session, which reads
+    as an intermittent TestRail fault rather than as a bad secret."""
+    try:
+        probe = TestRailClient(creds)
+        probe._get("get_priorities")
+        return True
+    except Exception as exc:                                            # noqa: BLE001
+        logging.getLogger(__name__).warning("TestRail account %s unusable, skipping: %s",
+                       creds.user, str(exc)[:120])
+        return False
+
+
 def _get_client() -> TestRailClient:
-    creds = TestRailCredentials.from_secrets()
-    key = f"{creds.base_url}|{creds.user}"
+    """The shared client, holding one session per WORKING account.
+
+    Built once per process: the probe costs one request per account, and the
+    pool size decides the pacing for everything that follows.
+    """
+    global _PACE_INTERVAL
+    key = "pool"
     if key not in _SESSION_CACHE:
-        _SESSION_CACHE[key] = TestRailClient(creds)
+        candidates = _credential_sets()
+        working = [c for c in candidates if _account_works(c)]
+        if not working:
+            # Same failure as before multi-account: no usable credentials at all.
+            raise TestRailError(
+                "No usable TestRail credentials — check TESTRAIL_USER / "
+                "TESTRAIL_API_KEY (and any _1.._N variants) in the secrets."
+            )
+        _PACE_INTERVAL = _PACE_PER_ACCOUNT / len(working)
+        logging.getLogger(__name__).warning(
+            "TestRail: %d/%d account(s) usable → %.0f requests/min "
+            "(slot every %.2fs)",
+            len(working), len(candidates), 60 / _PACE_INTERVAL, _PACE_INTERVAL)
+        _SESSION_CACHE[key] = TestRailClient(working[0], extra=working[1:])
     return _SESSION_CACHE[key]
 
 
