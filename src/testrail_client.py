@@ -371,6 +371,17 @@ class TestRailClient:
 # We cache at the *function* level so Streamlit's cache key includes arguments.
 # The actual TestRailClient is rebuilt per call but reuses a module-level Session.
 _SESSION_CACHE: dict[str, TestRailClient] = {}
+_POOL_LOCK = threading.Lock()
+
+
+def n_workers() -> int:
+    """How many accounts are actually serving requests, 0 before the pool exists.
+
+    Read by the UI: the whole point of the pool is invisible otherwise, and a
+    speed-up nobody can see is a speed-up nobody trusts.
+    """
+    pool = _SESSION_CACHE.get("pool")
+    return pool.n_accounts if pool is not None else 0
 
 
 def _account_works(creds: TestRailCredentials) -> bool:
@@ -395,7 +406,18 @@ def _get_client() -> TestRailClient:
     """
     global _PACE_INTERVAL
     key = "pool"
-    if key not in _SESSION_CACHE:
+    cached = _SESSION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    # Double-checked: the warm-up submits up to 8 suite workers at once and they
+    # all arrive here before the pool exists.  Unguarded, each one probed EVERY
+    # account — 24 wasted requests on a pool of three, paced at the
+    # single-account rate because the pacer had not been widened yet, which is
+    # roughly half a minute of the speed-up spent before any real work started.
+    with _POOL_LOCK:
+        cached = _SESSION_CACHE.get(key)
+        if cached is not None:
+            return cached
         candidates = _credential_sets()
         working = [c for c in candidates if _account_works(c)]
         if not working:
@@ -410,7 +432,7 @@ def _get_client() -> TestRailClient:
             "(slot every %.2fs)",
             len(working), len(candidates), 60 / _PACE_INTERVAL, _PACE_INTERVAL)
         _SESSION_CACHE[key] = TestRailClient(working[0], extra=working[1:])
-    return _SESSION_CACHE[key]
+        return _SESSION_CACHE[key]
 
 
 @st.cache_data(show_spinner=False, ttl=21600, persist="disk")

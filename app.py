@@ -163,6 +163,25 @@ def _freshness_label(scope: str = "website") -> None:
             f"{_relative_time(updated_at)}</b></span>",
             unsafe_allow_html=True,
         )
+        # How many TestRail accounts are serving the fetch.  Shown only when
+        # there is more than one, and only as a number: it is the difference
+        # between a load that is slow and a load that is slow because something
+        # is misconfigured, and without it the pool is invisible.
+        try:
+            _workers = tr.n_workers()
+        except Exception:                                               # noqa: BLE001
+            _workers = 0
+        if _workers > 1:
+            st.markdown(
+                f"<span title='Requests are spread across {_workers} TestRail "
+                f"accounts. Each is rate-limited at 50 requests/minute on its "
+                f"own, so the data loads about {_workers}x faster than with "
+                f"one.' style='color:{COLORS['muted']};font-size:11px;"
+                f"white-space:nowrap;cursor:help'>· "
+                f"<b style='color:{COLORS['text']};font-weight:600'>"
+                f"{_workers}</b> workers</span>",
+                unsafe_allow_html=True,
+            )
         # No help tooltip: it rendered a large card covering the label.  The ↻
         # glyph + hover rotation are self-explanatory.
         if st.button("↻", key="refresh_mini"):

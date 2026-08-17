@@ -2065,3 +2065,39 @@ class TestMultiAccountPool:
             interval = trc._PACE_PER_ACCOUNT / n
             per_account = (60 / interval) / n
             assert per_account <= 50, n
+
+
+class TestWorkerPoolIsBuiltOnce:
+    """The warm-up submits up to 8 suite workers at once and they all reach the
+    pool builder before it exists.  Unguarded, each probed EVERY account — on a
+    pool of three that is 24 wasted requests, paced at the single-account rate
+    because the pacer had not widened yet, which is most of the speed-up spent
+    before any real work starts."""
+
+    def test_concurrent_callers_build_one_pool(self, monkeypatch):
+        import threading
+        from src import testrail_client as trc
+
+        builds: list[int] = []
+        trc._SESSION_CACHE.clear()
+        creds = [trc.TestRailCredentials("https://x", f"u{i}@x", "k")
+                 for i in range(3)]
+        monkeypatch.setattr(trc, "_credential_sets",
+                            lambda: builds.append(1) or creds)
+        monkeypatch.setattr(trc, "_account_works", lambda c: True)
+        monkeypatch.setattr(trc.TestRailClient, "_make_session",
+                            lambda self, c: object())
+
+        threads = [threading.Thread(target=trc._get_client) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert builds == [1]
+        assert trc._SESSION_CACHE["pool"].n_accounts == 3
+        trc._SESSION_CACHE.clear()
+
+    def test_n_workers_is_zero_before_the_pool_exists(self):
+        from src import testrail_client as trc
+        trc._SESSION_CACHE.clear()
+        assert trc.n_workers() == 0
