@@ -1900,14 +1900,53 @@ class TestCountryColumnBelongsToItsBu:
 
 
 class TestRateLimitPolicy:
-    """TestRail dropped the cap to 50 requests/minute (confirmed 2026-08-14 in
-    the 429 body).  The pacer must stay under it, and a 429 must be waited out
-    rather than given up on: TestRail asks for 41-44s when the window is full,
-    and the old 30s cap failed the load before it reopened."""
+    """The cap MOVES — the 429 body has said 180, then 50 (2026-08-14), then 5
+    (2026-08-17) requests/minute — and each time we were still pacing for the
+    old number the dashboard stopped loading entirely.  So the number is no
+    longer ours to maintain: we start pessimistic and believe the limiter.
+
+    A 429 must also be waited out rather than given up on: TestRail asks for
+    41-57s when the window is full, and the old 30s cap failed the load before
+    it reopened."""
 
     def test_the_pacer_stays_under_the_cap(self):
+        """The invariant, at any pool size: one account never exceeds its own
+        allowance, whatever that allowance currently is."""
         from src import testrail_client as trc
-        assert 60 / trc._PACE_INTERVAL <= 50
+        trc._repace()
+        assert (60 / trc._PACE_INTERVAL) / trc._pool_size <= trc._effective_limit()
+
+    def test_the_default_is_the_pessimistic_one(self):
+        """Guessing low costs minutes; guessing high costs the dashboard."""
+        from src import testrail_client as trc
+        assert trc._DEFAULT_LIMIT <= 5
+
+    def test_the_cap_is_read_out_of_the_429_body(self, monkeypatch):
+        """TestRail states the real number in the error it sends back."""
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_observed", None)
+        monkeypatch.setattr(trc, "_limit_declared", 50)
+        trc._learn_limit('{"error":"API Rate Limit Exceeded - 5 per minute '
+                         'maximum allowed. Retry after 57 seconds."}')
+        assert trc._effective_limit() == 5
+
+    def test_the_cap_is_never_raised_by_a_429(self, monkeypatch):
+        """A stray higher figure must not undo what we already learned — the
+        expensive mistake is always the optimistic one."""
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_observed", 5)
+        monkeypatch.setattr(trc, "_limit_declared", 50)
+        trc._learn_limit("API Rate Limit Exceeded - 200 per minute maximum allowed.")
+        assert trc._effective_limit() == 5
+
+    def test_a_429_backs_the_WHOLE_pacer_off(self, monkeypatch):
+        """The avalanche: the thread that got the 429 always waited politely,
+        while the other seventy-nine fired into the same closed window."""
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc.time, "sleep", lambda s: None)
+        monkeypatch.setattr(trc, "_PACE_NEXT", 0.0)
+        trc._pace_cooldown(44)
+        assert trc._PACE_NEXT >= trc.time.time() + 43
 
     def test_a_429_is_retried_until_the_window_reopens(self, monkeypatch):
         from src import testrail_client as trc
@@ -1961,6 +2000,73 @@ class TestRateLimitPolicy:
         client._url = lambda e: e
         client._get("get_cases/1")
         assert sleeps == [60]
+
+
+class TestCasePaginationAsksOnlyForWhatExists:
+    """`get_cases` is the hot path — every number on the dashboard comes out of
+    it — and it used to speculate five pages ahead, awaiting the whole batch
+    before noticing the short page.  That was free while requests were cheap;
+    against a 5/min cap each overshoot is a real ~3.5s.  Both halves are pinned
+    here: every case still comes back, and nothing past the last page is ever
+    requested."""
+
+    def _client(self, pages):
+        """A client whose `_get` replays *pages* and records what was asked."""
+        from src import testrail_client as trc
+        client = trc.TestRailClient.__new__(trc.TestRailClient)
+        asked: list[str] = []
+
+        def _get(endpoint):
+            asked.append(endpoint)
+            return pages[len(asked) - 1]
+
+        client._get = _get
+        return client, asked
+
+    @staticmethod
+    def _page(ids, nxt=None):
+        return {"cases": [{"id": i} for i in ids], "_links": {"next": nxt}}
+
+    def test_every_page_is_collected_in_order(self):
+        nxt = "/api/v2/get_cases/1&suite_id=2&limit=250&offset={}"
+        client, asked = self._client([
+            self._page([1, 2], nxt.format(250)),
+            self._page([3, 4], nxt.format(500)),
+            self._page([5], None),
+        ])
+        assert [c["id"] for c in client.get_cases(1, 2)] == [1, 2, 3, 4, 5]
+        assert len(asked) == 3
+
+    def test_a_single_page_suite_costs_exactly_one_request(self):
+        client, asked = self._client([self._page([1, 2, 3], None)])
+        assert len(client.get_cases(1, 2)) == 3
+        assert len(asked) == 1
+
+    def test_nothing_is_requested_past_the_last_page(self):
+        """The overshoot this replaces: a four-page suite used to cost six."""
+        nxt = "get_cases/1&suite_id=2&limit=250&offset={}"
+        client, asked = self._client([
+            self._page(range(0, 250), nxt.format(250)),
+            self._page(range(250, 500), nxt.format(500)),
+            self._page(range(500, 750), nxt.format(750)),
+            self._page(range(750, 900), None),
+        ])
+        assert len(client.get_cases(1, 2)) == 900
+        assert len(asked) == 4
+
+    def test_the_legacy_bare_list_shape_still_works(self):
+        """Older TestRail deployments answer without a pagination envelope."""
+        client, _ = self._client([[{"id": 1}, {"id": 2}]])
+        assert [c["id"] for c in client.get_cases(1, 2)] == [1, 2]
+
+    def test_a_next_link_that_returns_nothing_cannot_loop(self):
+        """A self-referential `next` would otherwise never return — and at
+        ~3.5s a request that is a warm-up that hangs instead of finishing."""
+        forever = "get_cases/1&suite_id=2&limit=250&offset=250"
+        client, asked = self._client(
+            [self._page([1], forever)] + [self._page([], forever)] * 5)
+        assert [c["id"] for c in client.get_cases(1, 2)] == [1]
+        assert len(asked) == 2
 
 
 class TestDexterKnowsTheRuns:
@@ -2059,12 +2165,17 @@ class TestMultiAccountPool:
             ["s0", "s1", "s2", "s0", "s1", "s2"]
 
     def test_the_pacer_keeps_each_account_under_its_own_cap(self):
-        """Whatever the pool size, one account must never exceed 50/min."""
+        """Whatever the pool size, one account must never exceed its own cap.
+
+        Round-robin is what makes this hold: consecutive slots land on
+        consecutive accounts, so the aggregate rate divides cleanly by the
+        pool size instead of piling onto one user."""
         from src import testrail_client as trc
+        cap = trc._effective_limit()
         for n in (1, 2, 3, 5, 8):
-            interval = trc._PACE_PER_ACCOUNT / n
+            interval = 60.0 / (cap * n * trc._HEADROOM)
             per_account = (60 / interval) / n
-            assert per_account <= 50, n
+            assert per_account <= cap, n
 
 
 class TestWorkerPoolIsBuiltOnce:
@@ -2123,6 +2234,36 @@ class TestRejectedAccountsAreVisible:
         assert trc.n_accounts_configured() == 4
         trc._SESSION_CACHE.clear()
 
+    def test_a_throttled_account_still_counts_as_working(self, monkeypatch):
+        """The cap is PER USER, so a 429 proves TestRail authenticated the
+        account before throttling it.  Rejecting it dropped healthy accounts
+        whenever the startup window happened to be closed — halving the pool
+        exactly when it was needed most."""
+        from src import testrail_client as trc
+
+        class _Resp:
+            status_code, ok, text = 429, False, (
+                '{"error":"API Rate Limit Exceeded - 5 per minute maximum allowed."}')
+
+        monkeypatch.setattr(trc.TestRailClient, "_make_session",
+                            lambda self, c: SimpleNamespace(
+                                get=lambda *a, **k: _Resp()))
+        assert trc._account_works(
+            trc.TestRailCredentials("https://x", "u@x", "k")) is True
+
+    def test_a_rejected_credential_is_still_dropped(self, monkeypatch):
+        """The tolerance above must not swallow a genuinely bad secret."""
+        from src import testrail_client as trc
+
+        class _Resp:
+            status_code, ok, text = 401, False, "Authentication failed"
+
+        monkeypatch.setattr(trc.TestRailClient, "_make_session",
+                            lambda self, c: SimpleNamespace(
+                                get=lambda *a, **k: _Resp()))
+        assert trc._account_works(
+            trc.TestRailCredentials("https://x", "u@x", "k")) is False
+
     def test_the_pacer_follows_the_WORKING_count(self, monkeypatch):
         """Pacing for four while three answer would push each over its own cap."""
         from src import testrail_client as trc
@@ -2134,5 +2275,5 @@ class TestRejectedAccountsAreVisible:
         monkeypatch.setattr(trc.TestRailClient, "_make_session",
                             lambda self, c: object())
         trc._get_client()
-        assert (60 / trc._PACE_INTERVAL) / trc.n_workers() <= 50
+        assert (60 / trc._PACE_INTERVAL) / trc.n_workers() <= trc._effective_limit()
         trc._SESSION_CACHE.clear()

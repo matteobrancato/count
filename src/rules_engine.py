@@ -783,11 +783,26 @@ def warmup_cache(on_step=None, on_label=None) -> None:
 
     # Phase 1 – parallelised API fetch.  These two messages bracket the single
     # (longest) blocking call, so the accurate "Downloading…" line is what shows
-    # while it runs.  NOTE: TestRail Cloud rate-limits at ~180 requests/minute
-    # and ~44k cases paginate into ~180 requests — a cold download is therefore
-    # ~1 minute regardless of our parallelism.  That ceiling is TestRail's.
+    # while it runs.  The ceiling here is TestRail's, not ours: ~44k cases
+    # paginate into ~200 requests, and TestRail's per-user cap decides how long
+    # that takes.  We say the cap out loud — a ten-minute wait nobody can
+    # explain reads as a frozen dashboard, the same wait with the arithmetic
+    # next to it reads as a queue.
     step("🔌 Connecting to TestRail…")
-    step(f"📥 Downloading {len(suite_ids)} test suites across {n_bu} Business Units…")
+    try:
+        tr.ensure_pool()      # so the pacing quoted below is the real one
+    except Exception:                                                   # noqa: BLE001
+        # Credential failures surface through the fetches themselves, with the
+        # error the user can act on; this step must not become a second one.
+        logger.exception("warmup: could not build the TestRail account pool")
+    _rate = tr.rate_summary()
+    _pace_note = (
+        f" — TestRail allows {_rate['limit_per_account']:.0f} requests/min per "
+        f"account, so ~{_rate['per_minute']:.0f}/min across "
+        f"{_rate['workers']:.0f} worker(s)"
+    )
+    step(f"📥 Downloading {len(suite_ids)} test suites across {n_bu} "
+         f"Business Units{_pace_note}…")
     # Live counter in the status LABEL while the (rate-limit-bound) download
     # runs — the user must always see it moving, never a frozen spinner.
     _t_dl = _time.time()

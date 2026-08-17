@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,41 +27,117 @@ class TestRailError(RuntimeError):
     pass
 
 
-# Every cached read below is persisted to disk.  At 50 requests/minute a cold
-# download is ~4 minutes, and until now a script restart threw it away and paid
-# it again — which is what "the dashboard stopped loading" actually was.  The
-# payloads are lists of dicts, so they pickle cleanly; ↻ still clears them.
+# Every cached read below is persisted to disk.  A cold download is ~200
+# paginated requests, so at the cap TestRail currently enforces it is measured
+# in minutes, not seconds — and until this was persisted a script restart threw
+# it away and paid it again, which is what "the dashboard stopped loading"
+# actually was.  The payloads are lists of dicts, so they pickle cleanly.
+#
+# CAVEAT worth knowing: Streamlit drops `ttl` on persisted caches (it says so in
+# the log on every boot), so these entries do NOT expire on their own.  The 6h
+# refresh is driven instead by `app.py`'s watchdog, which clears them explicitly
+# — see `_numbers_fetched_at`, which is persisted for the same reason so the
+# "Updated Xm ago" label ages with the data rather than with the process.
 
 # ── global request pacer ──────────────────────────────────────────────────────
-# TestRail Cloud now rate-limits at **50 requests/minute PER USER**, not the
-# ~180 this pacer was built for.  Confirmed 2026-08-14 from the 429 body itself:
-# "API Rate Limit Exceeded - 50 per minute maximum allowed."  At 0.35s/slot we
-# were firing ~170/min — 3.4x over — so every cold start produced exactly the
-# avalanche described below, and because nothing reached the cache, the next
-# session started over and made it worse.
+# The limiter is the whole performance story, and its number MOVES.  The 429
+# body has said "180 per minute" (when this pacer was written), "50 per minute"
+# (2026-08-14) and "5 per minute" (2026-08-17) — and every one of those changes
+# broke the dashboard in exactly the same way: we kept firing at the old rate,
+# every request came back 429, each retry slept into a window the retries
+# themselves were holding shut, and the load never finished.  Re-editing a
+# constant after each outage is not a fix; the third repeat is what
+# "lentissimo e non carica più" was.
 #
-# The cost is TestRail's, not ours: ~180 paginated requests at 50/min is a
-# ~4-minute cold download.  The 6h TTL and the background re-warm are what keep
-# that off a human's screen; Mobile App stays deferred for the same reason.
+# So the rate is no longer a constant we maintain.  It is, in order:
+#   1. TESTRAIL_RATE_LIMIT from the secrets, when set (requests/min per user);
+#   2. otherwise the pessimistic default below;
+# and in BOTH cases it is lowered the moment TestRail contradicts us — the 429
+# body carries the real number, so the one authority on the limit is the
+# limiter itself.  We never raise it from a 429: guessing low costs minutes,
+# guessing high costs the entire dashboard.
 #
-# Firing our
-# parallel warm-up (up to ~80 concurrent requests) at that limiter causes a
-# 429 avalanche: every worker sleeps its Retry-After (up to 30s), retries into
-# ANOTHER 429, and the download looks frozen — and a browser refresh makes it
-# worse, because the old run's threads keep downloading while the new session
-# starts more.  The cure is to never exceed the limit in the first place:
-# every request from every thread and session (same process) reserves a time
-# slot ~1.3s apart → ~46/min, just under the cap.  Parallel workers simply
-# queue on the pacer; the cold download becomes deterministic (~requests ×
-# 0.35s) with essentially zero 429s.  Warm loads make few API calls, so the
-# pacing cost there is negligible.
+# Why a pacer at all: the warm-up fires up to ~80 concurrent requests.  Against
+# a limiter that is an avalanche — one 429 becomes eighty, a browser refresh
+# starts a second wave over the first, and nothing reaches the cache so the
+# next session pays it all again.  Every request from every thread and session
+# (same process) instead reserves a time slot, so the cold download is
+# deterministic and produces essentially zero 429s.  Round-robin across the
+# pool means consecutive slots land on consecutive accounts, which is what
+# keeps each individual user under its own per-user cap.
 _PACE_LOCK = threading.Lock()
 _PACE_NEXT = 0.0
-# Per ACCOUNT.  `_pace_for()` divides it by the number of working accounts, so
-# the aggregate stays at N x ~46/min and each individual user stays under its
-# own 50 — which is the only limit TestRail actually enforces.
-_PACE_PER_ACCOUNT = 1.30
-_PACE_INTERVAL = _PACE_PER_ACCOUNT
+
+# What TestRail enforced on 2026-08-17.  Deliberately the pessimistic figure:
+# if the cap is raised again, TESTRAIL_RATE_LIMIT is a one-line secrets edit,
+# whereas a default that is too high takes the dashboard down.
+_DEFAULT_LIMIT = 5
+# 15% headroom.  Pacing at exactly the cap sits on the boundary, where our
+# clock and TestRail's disagree by more than enough to 429 anyway.
+_HEADROOM = 0.85
+
+_LIMIT_LOCK = threading.Lock()
+_limit_declared = _DEFAULT_LIMIT      # from the secrets, or the default
+_limit_observed: int | None = None    # what a 429 told us; wins when lower
+_pool_size = 1                        # working accounts; set by `_get_client`
+_PACE_INTERVAL = 60.0 / (_DEFAULT_LIMIT * _HEADROOM)
+
+# "API Rate Limit Exceeded - 5 per minute maximum allowed. Retry after 57s."
+_LIMIT_RE = re.compile(r"(\d+)\s+per\s+minute\s+maximum\s+allowed", re.I)
+
+
+def _effective_limit() -> int:
+    """Requests/minute allowed on ONE account, believing the smaller claim."""
+    if _limit_observed is not None:
+        return min(_limit_declared, _limit_observed)
+    return _limit_declared
+
+
+def _repace() -> None:
+    """Recompute the slot interval from (per-account limit × working accounts)."""
+    global _PACE_INTERVAL
+    _PACE_INTERVAL = 60.0 / max(0.1, _effective_limit() * _pool_size * _HEADROOM)
+
+
+def _learn_limit(body: str) -> None:
+    """Take TestRail's word for the cap — downwards only."""
+    global _limit_observed
+    match = _LIMIT_RE.search(body or "")
+    if not match:
+        return
+    told = max(1, int(match.group(1)))
+    with _LIMIT_LOCK:
+        if _limit_observed is not None and told >= _limit_observed:
+            return
+        _limit_observed = told
+        _repace()
+    logging.getLogger(__name__).warning(
+        "TestRail says the cap is %d requests/minute per account — re-pacing to "
+        "%.0f/min across %d worker(s) (slot every %.1fs)",
+        told, 60 / _PACE_INTERVAL, _pool_size, _PACE_INTERVAL)
+
+
+def _configured_limit() -> int:
+    """TESTRAIL_RATE_LIMIT from the secrets, else the default."""
+    try:
+        return max(1, int(st.secrets["TESTRAIL_RATE_LIMIT"]))
+    except Exception:                                                   # noqa: BLE001
+        return _DEFAULT_LIMIT
+
+
+def rate_summary() -> dict[str, float | int | bool]:
+    """What the pacer is actually doing — surfaced in the log and the loader.
+
+    A wait nobody can explain reads as a hang; the same wait with "TestRail
+    allows 5 requests/minute per account" next to it reads as a queue.
+    """
+    return {
+        "limit_per_account": _effective_limit(),
+        "workers": _pool_size,
+        "per_minute": 60.0 / _PACE_INTERVAL,
+        "slot_seconds": _PACE_INTERVAL,
+        "learned": _limit_observed is not None,
+    }
 
 
 # ── single-flight ─────────────────────────────────────────────────────────────
@@ -90,6 +167,19 @@ def _pace() -> None:
         time.sleep(wait)
 
 
+def _pace_cooldown(seconds: float) -> None:
+    """Push EVERY queued slot past the window TestRail just closed.
+
+    The thread that collected the 429 always waited politely.  The other
+    seventy-nine kept firing into the same closed window — so one 429 became
+    eighty, and the retries were what held the window shut.  Backing the whole
+    pacer off together is what turns an avalanche into a pause.
+    """
+    global _PACE_NEXT
+    with _PACE_LOCK:
+        _PACE_NEXT = max(_PACE_NEXT, time.time() + seconds)
+
+
 @dataclass(frozen=True)
 class TestRailCredentials:
     base_url: str
@@ -114,11 +204,12 @@ class TestRailCredentials:
         return cls(base_url=url, user=user, api_key=key)
 
 
-# How many extra accounts to look for.  TestRail rate-limits at 50 requests per
-# minute PER USER, so each working account raises the ceiling by that much and
-# the cold download divides by the number of them.  Discovered, never
-# configured: whatever is filled in on the day is what gets used, so adding the
-# fourth account is a secrets edit and nothing else.
+# How many extra accounts to look for.  The cap is PER USER, so each working
+# account raises the ceiling by one whole allowance and the cold download
+# divides by the number of them — with the cap now at 5/min that is the only
+# lever left that actually scales.  Discovered, never configured: whatever is
+# filled in on the day is what gets used, so adding an account is a secrets
+# edit and nothing else.
 _MAX_EXTRA_ACCOUNTS = 8
 
 
@@ -208,16 +299,21 @@ class TestRailClient:
         resp = self._next_session().get(self._url(endpoint), timeout=self.timeout)
         # Rate limit — honour Retry-After (seconds form; RFC 7231 also allows an
         # HTTP-date, which int() can't parse).  THREE attempts, not one: TestRail
-        # asks for 41-44s when the window is full and the old 30s cap gave up
+        # asks for 41-57s when the window is full and the old 30s cap gave up
         # before it reopened, turning a wait into a failed load.  Capped so a
         # hostile or buggy header cannot stall a worker thread indefinitely.
         for _ in range(3):
             if resp.status_code != 429:
                 break
+            # The body names the real cap.  Reading it here is what stops the
+            # next outage: whatever TestRail moves the number to, the pacer
+            # follows within one request instead of within one commit.
+            _learn_limit(resp.text)
             try:
                 wait = min(int(resp.headers.get("Retry-After", "10")), 60)
             except ValueError:
                 wait = 10
+            _pace_cooldown(wait)
             time.sleep(wait)
             _pace()
             resp = self._next_session().get(self._url(endpoint), timeout=self.timeout)
@@ -267,36 +363,31 @@ class TestRailClient:
         return out
 
     def get_cases(self, project_id: int, suite_id: int, limit: int = 250) -> list[dict]:
-        """Fetch all cases with parallel pagination (N pages at a time)."""
-        base = f"get_cases/{project_id}&suite_id={suite_id}&limit={limit}"
+        """Every case in a suite, following TestRail's own `_links.next`.
 
-        # Page 0 — always sequential so we know if there is more
-        first = self._get(f"{base}&offset=0")
-        if isinstance(first, list):
-            return first
-        cases: list[dict] = list(first.get("cases", []))
-        if first.get("size", 0) < limit:
-            return cases  # fits in a single page
-
-        # Fetch remaining pages in parallel batches of BATCH_SIZE
-        BATCH_SIZE = 5
-        offset = limit
-        while True:
-            offsets = list(range(offset, offset + BATCH_SIZE * limit, limit))
-            with ThreadPoolExecutor(max_workers=BATCH_SIZE) as pool:
-                futures = [(o, pool.submit(self._get, f"{base}&offset={o}"))
-                           for o in offsets]
-            done = False
-            for o, fut in futures:            # already in order
-                data = fut.result()
-                page = data.get("cases", []) if not isinstance(data, list) else data
-                cases.extend(page)
-                if len(page) < limit:        # last page found → stop
-                    done = True
-                    break
-            if done:
-                break
-            offset += BATCH_SIZE * limit
+        Sequential ON PURPOSE, like `get_sections` and `_get_paginated`.  This
+        used to speculate five pages ahead, which was free while requests were
+        cheap — the pacer serialises every request anyway, so the parallelism
+        never bought wall-clock here.  What it did buy was the pages *past* the
+        end of each suite: a 4-page suite cost 6 requests, and the whole batch
+        was always awaited before the short page was noticed.  At the cap
+        TestRail now enforces those overshoots run to about a minute per cold
+        start across the core suites, so we ask for exactly the pages that
+        exist.
+        """
+        endpoint = f"get_cases/{project_id}&suite_id={suite_id}&limit={limit}&offset=0"
+        cases: list[dict] = []
+        while endpoint:
+            payload = self._get(endpoint)
+            if isinstance(payload, list):     # old TR without pagination envelope
+                return payload
+            page = payload.get("cases", [])
+            cases.extend(page)
+            nxt = (payload.get("_links") or {}).get("next")
+            # An empty page cannot be a legitimate middle page: a `next` that
+            # keeps pointing at nothing would otherwise loop forever, and at
+            # ~3.5s per request that is a warm-up that never returns.
+            endpoint = nxt.lstrip("/") if (nxt and page) else None
         return cases
 
     def get_case(self, case_id: int) -> dict:
@@ -395,18 +486,46 @@ def n_accounts_configured() -> int:
     return _POOL_SUMMARY["configured"]
 
 
+def ensure_pool() -> None:
+    """Build the account pool now, so callers can report the real pacing.
+
+    The warm-up's "🔌 Connecting to TestRail…" step used to connect to nothing
+    — the pool was built lazily by the first fetch, several lines later, which
+    meant anything printed before it described a pool of one.
+    """
+    _get_client()
+
+
 def _account_works(creds: TestRailCredentials) -> bool:
     """One cheap authenticated call.  A credential set that cannot answer would
     otherwise fail 1/N of every request for the rest of the session, which reads
-    as an intermittent TestRail fault rather than as a bad secret."""
+    as an intermittent TestRail fault rather than as a bad secret.
+
+    Two deliberate choices here, both learned the hard way:
+
+    * UNPACED.  This is exactly one request on one account, so no per-user cap
+      can be breached — while paying the global slot (now ~14s) for each probe
+      would spend most of a minute before the download even starts.
+    * A 429 counts as WORKING.  The cap is per user, so TestRail had to
+      authenticate the account before it could throttle it: a 429 proves the
+      credentials are good.  Rejecting it dropped healthy accounts whenever the
+      window happened to be closed at startup — which is the likeliest reason a
+      fourth configured account once showed up as "3 of 4 workers".
+    """
     try:
         probe = TestRailClient(creds)
-        probe._get("get_priorities")
-        return True
+        resp = probe._sessions[0].get(probe._url("get_priorities"), timeout=30)
+        if resp.status_code == 429:
+            _learn_limit(resp.text)
+            return True
+        if resp.ok:
+            return True
+        reason = f"{resp.status_code}: {resp.text[:120]}"
     except Exception as exc:                                            # noqa: BLE001
-        logging.getLogger(__name__).warning("TestRail account %s unusable, skipping: %s",
-                       creds.user, str(exc)[:120])
-        return False
+        reason = str(exc)[:120]
+    logging.getLogger(__name__).warning(
+        "TestRail account %s unusable, skipping: %s", creds.user, reason)
+    return False
 
 
 def _get_client() -> TestRailClient:
@@ -415,7 +534,7 @@ def _get_client() -> TestRailClient:
     Built once per process: the probe costs one request per account, and the
     pool size decides the pacing for everything that follows.
     """
-    global _PACE_INTERVAL
+    global _pool_size, _limit_declared
     key = "pool"
     cached = _SESSION_CACHE.get(key)
     if cached is not None:
@@ -430,7 +549,11 @@ def _get_client() -> TestRailClient:
         if cached is not None:
             return cached
         candidates = _credential_sets()
-        working = [c for c in candidates if _account_works(c)]
+        # Probed in parallel: one request each, on distinct accounts, so the
+        # whole pool costs a single round trip instead of one per account.
+        with ThreadPoolExecutor(max_workers=max(1, len(candidates))) as pool:
+            verdicts = list(pool.map(_account_works, candidates))
+        working = [c for c, ok in zip(candidates, verdicts) if ok]
         if not working:
             # Same failure as before multi-account: no usable credentials at all.
             raise TestRailError(
@@ -438,11 +561,15 @@ def _get_client() -> TestRailClient:
                 "TESTRAIL_API_KEY (and any _1.._N variants) in the secrets."
             )
         _POOL_SUMMARY.update(working=len(working), configured=len(candidates))
-        _PACE_INTERVAL = _PACE_PER_ACCOUNT / len(working)
+        _pool_size = len(working)
+        _limit_declared = _configured_limit()
+        _repace()
         logging.getLogger(__name__).warning(
-            "TestRail: %d/%d account(s) usable → %.0f requests/min "
-            "(slot every %.2fs)",
-            len(working), len(candidates), 60 / _PACE_INTERVAL, _PACE_INTERVAL)
+            "TestRail: %d/%d account(s) usable, cap %d req/min each%s → "
+            "%.0f requests/min total (slot every %.1fs)",
+            len(working), len(candidates), _effective_limit(),
+            " (observed from a 429)" if _limit_observed is not None else "",
+            60 / _PACE_INTERVAL, _PACE_INTERVAL)
         _SESSION_CACHE[key] = TestRailClient(working[0], extra=working[1:])
         return _SESSION_CACHE[key]
 

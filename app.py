@@ -22,14 +22,20 @@ st.set_page_config(
 
 
 # -------------------------------------------------------------------- header
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=21600, show_spinner=False, persist="disk")
 def _numbers_fetched_at() -> float:
     """Wall-clock time the current cached numbers were fetched.
 
-    Cached cross-session with the SAME ttl as `evaluate_rules`, so it represents
-    the real age of the data (not when *this* browser tab opened) and survives
-    page reloads.  Cleared by "Refresh Numbers" alongside the data caches, so it
-    resets to 'now' on a manual refresh.
+    Cached cross-session, so it represents the real age of the data (not when
+    *this* browser tab opened) and survives page reloads.  Cleared by "Refresh
+    Numbers" alongside the data caches, so it resets to 'now' on a refresh.
+
+    PERSISTED, and that is the whole point.  The TestRail payloads it describes
+    are persisted to disk, and Streamlit drops `ttl` on persisted caches — so
+    they outlive the process while this stamp, held only in memory, did not.
+    A restart therefore re-stamped day-old numbers as "Updated just now", and
+    the watchdog below then saw an age of zero and left them alone.  Ageing the
+    label with the data is what makes both of those tell the truth again.
     """
     return time.time()
 
@@ -169,14 +175,16 @@ def _freshness_label(scope: str = "website") -> None:
         # is misconfigured, and without it the pool is invisible.
         try:
             _workers, _configured = tr.n_workers(), tr.n_accounts_configured()
+            _cap = tr.rate_summary()["limit_per_account"]
         except Exception:                                               # noqa: BLE001
             _workers = _configured = 0
+            _cap = 0
         if _workers > 1 or (_configured and _workers < _configured):
             st.markdown(
                 f"<span title='Requests are spread across {_workers} TestRail "
-                f"account(s), each rate-limited at 50 requests/minute on its "
-                f"own — so the data loads about {_workers}x faster than with "
-                f"one."
+                f"account(s), each rate-limited at {_cap:.0f} requests/minute "
+                f"on its own — so the data loads about {_workers}x faster than "
+                f"with one."
                 + (f"  {_configured - _workers} configured account(s) are NOT "
                    f"answering and were left out; the app log names them."
                    if _configured > _workers else "")
