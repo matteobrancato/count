@@ -186,7 +186,13 @@ def _parse_dropdown_configs(raw_field: dict) -> tuple[dict, dict]:
     return v, i
 
 
-@st.cache_data(show_spinner="Resolving TestRail custom fields…", ttl=900)
+# 6h, matching the data caches — NOT 15 minutes.  This runs at the top of every
+# rule evaluation, so a short TTL meant three API calls every quarter of an hour
+# and, when one of them met a 429, the whole expansion died with it: that is the
+# `get_case_types → 429` in the 2026-08-14 logs.  Custom fields change rarely,
+# and ↻ clears this with everything else.
+@st.cache_data(show_spinner="Resolving TestRail custom fields…", ttl=21600,
+               persist="disk")
 def _build_registry_raw() -> dict:
     fields = tr.fetch_case_fields()
     types  = tr.fetch_case_types()

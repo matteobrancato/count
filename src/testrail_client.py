@@ -25,6 +25,11 @@ class TestRailError(RuntimeError):
     pass
 
 
+# Every cached read below is persisted to disk.  At 50 requests/minute a cold
+# download is ~4 minutes, and until now a script restart threw it away and paid
+# it again — which is what "the dashboard stopped loading" actually was.  The
+# payloads are lists of dicts, so they pickle cleanly; ↻ still clears them.
+
 # ── global request pacer ──────────────────────────────────────────────────────
 # TestRail Cloud now rate-limits at **50 requests/minute PER USER**, not the
 # ~180 this pacer was built for.  Confirmed 2026-08-14 from the 429 body itself:
@@ -314,27 +319,27 @@ def _get_client() -> TestRailClient:
     return _SESSION_CACHE[key]
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def fetch_case_fields() -> list[dict]:
     return _get_client().get_case_fields()
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def fetch_case_types() -> list[dict]:
     return _get_client().get_case_types()
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def fetch_priorities() -> list[dict]:
     return _get_client().get_priorities()
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def fetch_suite(suite_id: int) -> dict:
     return _get_client().get_suite(suite_id)
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def _fetch_sections_cached(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_sections(project_id, suite_id)
 
@@ -363,7 +368,7 @@ def _slim_case(case: dict) -> dict:
     return case
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def _fetch_cases_cached(project_id: int, suite_id: int) -> list[dict]:
     return [_slim_case(c) for c in _get_client().get_cases(project_id, suite_id)]
 
@@ -373,7 +378,7 @@ def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
         return _fetch_cases_cached(project_id, suite_id)
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def _fetch_labels_cached(project_id: int) -> dict[int, str]:
     """Return {label_id: label_name} for the given project."""
     raw = _get_client().get_labels(project_id)
@@ -402,7 +407,7 @@ def fetch_plan(plan_id: int) -> dict:
 
 
 # Completed-run data is immutable → long TTL (6h).  Use ONLY for completed runs.
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def fetch_tests(run_id: int) -> list[dict]:
     return _get_client().get_tests(run_id)
 
@@ -413,7 +418,7 @@ def fetch_tests_fresh(run_id: int) -> list[dict]:
     return _get_client().get_tests(run_id)
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def fetch_statuses() -> dict[int, str]:
     """{status_id: display label} incl. custom statuses (id ≥ 6)."""
     return {
@@ -428,7 +433,7 @@ def fetch_failed_results(run_id: int) -> list[dict]:
     return _get_client().get_results_for_run(run_id, status_id=5)
 
 
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
 def fetch_case(case_id: int) -> dict:
     """A single case by ID — used by the Runs tab's in-depth analysis."""
     return _get_client().get_case(case_id)
