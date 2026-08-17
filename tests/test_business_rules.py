@@ -2101,3 +2101,38 @@ class TestWorkerPoolIsBuiltOnce:
         from src import testrail_client as trc
         trc._SESSION_CACHE.clear()
         assert trc.n_workers() == 0
+
+
+class TestRejectedAccountsAreVisible:
+    """"3 workers" when four are configured is the difference between a slow day
+    and a silently rejected account.  The counts must survive the pool build so
+    the UI can say "3 of 4" instead of just "3"."""
+
+    def test_both_counts_are_recorded(self, monkeypatch):
+        from src import testrail_client as trc
+        trc._SESSION_CACHE.clear()
+        creds = [trc.TestRailCredentials("https://x", f"u{i}@x", "k")
+                 for i in range(4)]
+        monkeypatch.setattr(trc, "_credential_sets", lambda: creds)
+        monkeypatch.setattr(trc, "_account_works",
+                            lambda c: c.user != "u2@x")     # one rejected
+        monkeypatch.setattr(trc.TestRailClient, "_make_session",
+                            lambda self, c: object())
+        trc._get_client()
+        assert trc.n_workers() == 3
+        assert trc.n_accounts_configured() == 4
+        trc._SESSION_CACHE.clear()
+
+    def test_the_pacer_follows_the_WORKING_count(self, monkeypatch):
+        """Pacing for four while three answer would push each over its own cap."""
+        from src import testrail_client as trc
+        trc._SESSION_CACHE.clear()
+        creds = [trc.TestRailCredentials("https://x", f"u{i}@x", "k")
+                 for i in range(4)]
+        monkeypatch.setattr(trc, "_credential_sets", lambda: creds)
+        monkeypatch.setattr(trc, "_account_works", lambda c: c.user != "u2@x")
+        monkeypatch.setattr(trc.TestRailClient, "_make_session",
+                            lambda self, c: object())
+        trc._get_client()
+        assert (60 / trc._PACE_INTERVAL) / trc.n_workers() <= 50
+        trc._SESSION_CACHE.clear()

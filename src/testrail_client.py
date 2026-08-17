@@ -374,6 +374,12 @@ _SESSION_CACHE: dict[str, TestRailClient] = {}
 _POOL_LOCK = threading.Lock()
 
 
+# (working, configured) from the last pool build.  The UI shows both when they
+# differ: "3 workers" when four are configured means one is being rejected, and
+# without the second number that silence looks like a slow day.
+_POOL_SUMMARY: dict[str, int] = {"working": 0, "configured": 0}
+
+
 def n_workers() -> int:
     """How many accounts are actually serving requests, 0 before the pool exists.
 
@@ -382,6 +388,11 @@ def n_workers() -> int:
     """
     pool = _SESSION_CACHE.get("pool")
     return pool.n_accounts if pool is not None else 0
+
+
+def n_accounts_configured() -> int:
+    """How many credential sets were FOUND, working or not."""
+    return _POOL_SUMMARY["configured"]
 
 
 def _account_works(creds: TestRailCredentials) -> bool:
@@ -426,6 +437,7 @@ def _get_client() -> TestRailClient:
                 "No usable TestRail credentials — check TESTRAIL_USER / "
                 "TESTRAIL_API_KEY (and any _1.._N variants) in the secrets."
             )
+        _POOL_SUMMARY.update(working=len(working), configured=len(candidates))
         _PACE_INTERVAL = _PACE_PER_ACCOUNT / len(working)
         logging.getLogger(__name__).warning(
             "TestRail: %d/%d account(s) usable → %.0f requests/min "

@@ -168,18 +168,24 @@ def _freshness_label(scope: str = "website") -> None:
         # between a load that is slow and a load that is slow because something
         # is misconfigured, and without it the pool is invisible.
         try:
-            _workers = tr.n_workers()
+            _workers, _configured = tr.n_workers(), tr.n_accounts_configured()
         except Exception:                                               # noqa: BLE001
-            _workers = 0
-        if _workers > 1:
+            _workers = _configured = 0
+        if _workers > 1 or (_configured and _workers < _configured):
             st.markdown(
                 f"<span title='Requests are spread across {_workers} TestRail "
-                f"accounts. Each is rate-limited at 50 requests/minute on its "
-                f"own, so the data loads about {_workers}x faster than with "
-                f"one.' style='color:{COLORS['muted']};font-size:11px;"
+                f"account(s), each rate-limited at 50 requests/minute on its "
+                f"own — so the data loads about {_workers}x faster than with "
+                f"one."
+                + (f"  {_configured - _workers} configured account(s) are NOT "
+                   f"answering and were left out; the app log names them."
+                   if _configured > _workers else "")
+                + f"' style='color:{COLORS['muted']};font-size:11px;"
                 f"white-space:nowrap;cursor:help'>· "
-                f"<b style='color:{COLORS['text']};font-weight:600'>"
-                f"{_workers}</b> workers</span>",
+                f"<b style='color:{'#DC2626' if _configured > _workers else COLORS['text']};"
+                f"font-weight:600'>{_workers}</b>"
+                + (f" of {_configured}" if _configured > _workers else "")
+                + " workers</span>",
                 unsafe_allow_html=True,
             )
         # No help tooltip: it rendered a large card covering the label.  The ↻
