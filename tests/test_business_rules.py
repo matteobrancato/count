@@ -1097,6 +1097,39 @@ class TestPlaywrightLabelGate:
         }
 
 
+class TestPlaywrightCountryCoverageResolves:
+    """The rule names the field by its UI label; TestRail may answer to either
+    that or to the system name it was created under
+    (`custom_playwright_country_coverage`).  Betting the rule on exactly one of
+    them is what silently emptied "Smaller NR", and an empty country field here
+    means every Marionnaud Playwright row quietly disappears."""
+
+    @staticmethod
+    def _reg(known_as: str):
+        from src.field_resolver import FieldMeta, FieldRegistry, _norm
+        meta = FieldMeta(system_name="custom_playwright_country_coverage",
+                         label="Playwright Country Coverage", type_id=12,
+                         values_by_id={7: "MFR", 8: "MCH"}, ids_by_label={})
+        reg = FieldRegistry()
+        if known_as == "label":
+            reg.fields_by_label[_norm("Playwright Country Coverage")] = meta
+        else:
+            reg.fields_by_system["custom_playwright_country_coverage"] = meta
+        return reg
+
+    @pytest.mark.parametrize("known_as", ["label", "system"])
+    def test_the_tokens_come_back_either_way(self, known_as):
+        case = {"custom_playwright_country_coverage": [7, 8]}
+        assert eng._get_country_tokens(
+            case, self._reg(known_as), "Playwright Country Coverage") == ["MFR", "MCH"]
+
+    def test_an_unknown_field_yields_no_tokens_rather_than_raising(self):
+        from src.field_resolver import FieldRegistry
+        assert eng._get_country_tokens(
+            {"custom_playwright_country_coverage": [7]},
+            FieldRegistry(), "Playwright Country Coverage") == []
+
+
 class TestMarionnaudUnifiedStatusField:
     """MRN folded its four per-country-group status fields into the shared
     "Automation Status" (2026-08).  What used to separate the frameworks was a

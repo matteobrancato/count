@@ -64,7 +64,7 @@ def _get_country_tokens(
       - "Testim Country Coverage"   → custom_case_country_coverage_testim  (MRN TestIM)
       - "Java Country Coverage"     → custom_country_coverage_automation
                                     / custom_country_coverage             (MRN Java)
-      - "Playwright Country Coverage" → custom_country_coverage_playwright (MRN PW)
+      - "Playwright Country Coverage" → custom_playwright_country_coverage (MRN PW)
 
     *project_id* selects the correct per-project value map so that the same
     integer ID resolves to the right label in each suite.
@@ -85,17 +85,12 @@ def _get_country_tokens(
             or reg.field("country_coverage_automation")
         )
     if not meta and field_label == "Playwright Country Coverage":
-        # Candidates, not a single name.  The lesson from "Smaller NR": a field
-        # is known by its LABEL in the UI and by a system name in the API, and
-        # narrowing to one of them is what silently empties a rule.  The label
-        # above is tried first and is what MRN actually created; these are the
-        # spellings the API might return it under.
-        meta = (
-            reg.field("custom_country_coverage_playwright")
-            or reg.field("custom_playwright_country_coverage")
-            or reg.field("custom_case_country_coverage_playwright")
-            or reg.field("country_coverage_playwright")
-        )
+        # System name confirmed by the person who created the field, so this is
+        # the real one rather than a guess.  It stays as a SECOND chance behind
+        # the label lookup above for the same reason "Smaller NR" needed one: a
+        # field answers to its UI label and to its API system name, and betting
+        # the rule on exactly one of them is what silently empties it.
+        meta = reg.field("custom_playwright_country_coverage")
     if not meta:
         return []
     raw = case.get(meta.system_name)
