@@ -21,6 +21,12 @@ AUTOMATED_FULL       = ["Automated", "Automated DEV", "Automated UAT", "Automate
 # framework precedence can never disagree on its spelling.
 PLAYWRIGHT_LABEL = "playwright"
 
+# The TestRail label that marks a Java test.  Only Marionnaud needs it: it
+# folded its per-country status fields into the shared "Automation Status", so
+# the label is now the ONLY thing separating a Java case from a Playwright one
+# on the same field.  Elsewhere a dedicated status field still does that job.
+JAVA_LABEL = "java"
+
 # The TestRail label that puts a case in the Production Sanity baseline.
 # It replaced the "Test Automation PRD Run" checkbox, which no longer counts.
 PROD_SANITY_LABEL = "prod_sanity"
@@ -250,15 +256,28 @@ def build_rules() -> list[Rule]:
                           type_filter=[])
 
     # ==================================================================== Marionnaud
-    # BU-specific status fields per country group. No type_filter.
-    # Country matching uses dedicated fields (not multi_countries):
-    #   Java   → "Java Country Coverage"   (custom_country_coverage_automation)
-    #   TestIM → "Testim Country Coverage" (custom_case_country_coverage_testim)
-    # Tokens MAT and MAT_SPR both map to "AT" — dedup on (case_id, country_label, device)
-    # ensures a case tagged with both counts only once.
+    # Marionnaud folded its four per-country-group status fields into the ONE
+    # shared "Automation Status" (2026-08).  What used to tell the frameworks
+    # apart — a field each — is now a LABEL each, and the countries each
+    # framework actually covers come from its own coverage field:
+    #
+    #   Java        → Automation Status + label `java`        + Java Country Coverage
+    #   Playwright  → Automation Status + label `playwright`  + Playwright Country Coverage
+    #
+    # TestIM was never used on this BU, so it has no rule here at all.
+    #
+    # The label gate is load-bearing and fails CLOSED: both rules read the same
+    # field with the same automated values, so without it every Java case would
+    # also match the Playwright rule and vice versa.
+    #
+    # The per-country-group split (MFR vs the seven SPR countries) is gone with
+    # the fields that caused it — one field and one country source per framework
+    # means one rule per framework, over the union of the tokens.
+    # Tokens MAT and MAT_SPR both map to "AT"; dedup on
+    # (case_id, country_label, device) ensures a case tagged with both counts once.
     MRN_SUITE = 30784
 
-    # Shared label maps: bare and _SPR tokens both resolve to the same ISO code.
+    # Bare and _SPR tokens both resolve to the same ISO code.
     MRN_ALL_LABELS = {
         "MFR": "FR",
         "MCH": "CH", "MCH_SPR": "CH",
@@ -269,51 +288,39 @@ def build_rules() -> list[Rule]:
         "MSK": "SK", "MSK_SPR": "SK",
         "MHU": "HU", "MHU_SPR": "HU",
     }
+    MRN_TOKENS = list(MRN_ALL_LABELS)
 
-    # France: Automation Status MFR — country from "Java Country Coverage".
-    # TestIM Desktop/Mobile — country from Testim Country Coverage.
-    MFR_TOKENS = ["MFR"]
+    # No `country_fallback_field_label` on either rule.  The coverage field IS
+    # the statement of which countries the automation covers; falling back to
+    # `multi_countries` would let the baseline's country list stand in for it
+    # and report a country as automated on the strength of the case merely
+    # being scoped to it.
     rules.append(Rule(
-        name="MFR JAVA", bu="Marionnaud", scope="website", framework="java",
+        name="MRN JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
-        status_field_label="Automation Status MFR",
-        automated_values=list(AUTOMATED_JAVA),
-        countries_filter=MFR_TOKENS,
-        country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
-        type_filter=[],
-        country_field_label="Java Country Coverage",
-        country_fallback_field_label="multi_countries",
-    ))
-    rules += _testim_pair("Marionnaud", "MFR", MRN_SUITE, MFR_TOKENS,
-                          country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MFR_TOKENS},
-                          type_filter=[],
-                          country_field_label="Testim Country Coverage",
-                          country_fallback_field_label="Country Validation")
-
-    # Other 7 MRN countries (CH, AT, RO, IT, CZ, SK, HU).
-    # Java:  Automation Status MRN SPR — country from "Java Country Coverage" (bare + _SPR tokens).
-    # TestIM: TestIM Desktop/Mobile    — country from Testim Country Coverage.
-    #         Both bare (MAT) and _SPR (MAT_SPR) tokens are accepted; dedup on
-    #         (case_id, country_label, device) ensures a case counts once per country.
-    MRN_TOKENS = ["MCH", "MAT", "MRO", "MIT", "MCZ", "MSK", "MHU",
-                  "MCH_SPR", "MAT_SPR", "MRO_SPR", "MIT_SPR", "MCZ_SPR", "MSK_SPR", "MHU_SPR"]
-
-    rules.append(Rule(
-        name="MRN OTHER JAVA", bu="Marionnaud", scope="website", framework="java",
-        suite_id=MRN_SUITE,
-        status_field_label="Automation Status MRN SPR",
-        automated_values=list(AUTOMATED_JAVA),
+        status_field_label="Automation Status",
+        # AUTOMATED_FULL, not AUTOMATED_JAVA: it is now the SAME field as
+        # Playwright's, and one value on one field cannot mean automated for
+        # one framework and backlog for the other.
+        automated_values=list(AUTOMATED_FULL),
         countries_filter=MRN_TOKENS,
-        country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_TOKENS},
+        country_labels=dict(MRN_ALL_LABELS),
+        labels_filter=[JAVA_LABEL],
         type_filter=[],
         country_field_label="Java Country Coverage",
-        country_fallback_field_label="multi_countries",
     ))
-    rules += _testim_pair("Marionnaud", "MRN OTHER", MRN_SUITE, MRN_TOKENS,
-                          country_labels={k: v for k, v in MRN_ALL_LABELS.items() if k in MRN_TOKENS},
-                          type_filter=[],
-                          country_field_label="Testim Country Coverage",
-                          country_fallback_field_label="Country Validation")
+
+    rules.append(Rule(
+        name="MRN PLAYWRIGHT", bu="Marionnaud", scope="website", framework="playwright",
+        suite_id=MRN_SUITE,
+        status_field_label="Automation Status",
+        automated_values=list(AUTOMATED_FULL),
+        countries_filter=MRN_TOKENS,
+        country_labels=dict(MRN_ALL_LABELS),
+        labels_filter=[PLAYWRIGHT_LABEL],
+        type_filter=[],
+        country_field_label="Playwright Country Coverage",
+    ))
 
     # ==================================================================== Superdrug
     # Slide label: "GB"
@@ -442,12 +449,17 @@ def build_rules() -> list[Rule]:
     # their Playwright cases land in the automated set on their own and
     # `rules_engine._apply_framework_precedence` relabels them from the label.
     #
-    # These four do NOT read it — their automation lives in BU-specific fields
-    # (KV SPR / TP / MRN SPR / the Testim pair) — so without a rule of their own
-    # a clean Playwright case would be classified UNKNOWN: not automated, and
-    # not backlog either, because the status looks automated.  Today those BUs
-    # only show Playwright rows where the OLD Testim status was left behind,
-    # which means the numbers would collapse the moment anyone cleaned it up.
+    # These three do NOT read it — their automation lives in BU-specific fields
+    # (KV SPR / TP / the Testim pair) — so without a rule of their own a clean
+    # Playwright case would be classified UNKNOWN: not automated, and not
+    # backlog either, because the status looks automated.  Today those BUs only
+    # show Playwright rows where the OLD Testim status was left behind, which
+    # means the numbers would collapse the moment anyone cleaned it up.
+    #
+    # Marionnaud used to be the fourth entry here.  It now declares its own
+    # Playwright rule above, because it is the only BU whose Playwright
+    # countries come from a dedicated coverage field rather than from
+    # `multi_countries`.
     #
     # The label gate is what makes this safe: without it the rule would also
     # sweep in legacy cases whose generic field is filled but whose automation
@@ -458,7 +470,6 @@ def build_rules() -> list[Rule]:
         ("Kruidvat",     KV_SUITE,  KV_TOKENS,  KV_LABELS),
         ("Trekpleister", KV_SUITE,  TKP_TOKENS, TKP_LABELS),
         ("Watsons",      WTR_SUITE, WTR_TOKENS, WTR_LABELS),
-        ("Marionnaud",   MRN_SUITE, MFR_TOKENS + MRN_TOKENS, MRN_ALL_LABELS),
     ):
         rules.append(Rule(
             name=f"{bu} PLAYWRIGHT", bu=bu, scope="website", framework="playwright",

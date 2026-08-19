@@ -1065,18 +1065,82 @@ class TestPlaywrightLabelGate:
         gapped = {r.bu for r in website} - reads_generic
         assert {r.bu for r in website if r.framework == "playwright"} == gapped
 
-    def test_playwright_rules_use_the_baseline_country_field(self):
-        """Automated rows must line up with baseline rows, and the baseline for
-        all four is expanded from multi_countries."""
+    def test_playwright_rules_gate_on_the_label_and_match_their_siblings(self):
         for r in br.ALL_RULES:
             if r.framework != "playwright":
                 continue
-            assert r.country_field_label == "multi_countries", r.name
             assert r.labels_filter == [br.PLAYWRIGHT_LABEL], r.name
             siblings = {t for s in br.ALL_RULES if s.bu == r.bu
                         and s.framework != "playwright" and s.scope != "mobile_app"
                         for t in s.countries_filter}
             assert set(r.countries_filter) == siblings, r.name
+
+    def test_which_country_field_each_playwright_rule_reads(self):
+        """`multi_countries` is the field the BASELINE is expanded from, so a
+        Playwright rule reading it can never produce an automated row without a
+        baseline row to land on.
+
+        Marionnaud is the deliberate exception: its countries come from
+        per-framework coverage fields, which NARROW multi_countries rather than
+        replace it — the case is scoped to a country, the coverage field says
+        whether automation actually runs there.  A token present in the coverage
+        field but absent from multi_countries is therefore a data-entry error,
+        not a row: it has no baseline to attach to and Data Quality is where it
+        surfaces.  Spelled out per BU so that changing one is a decision, not a
+        side effect."""
+        assert {r.bu: r.country_field_label for r in br.ALL_RULES
+                if r.framework == "playwright"} == {
+            "Kruidvat":     "multi_countries",
+            "Trekpleister": "multi_countries",
+            "Watsons":      "multi_countries",
+            "Marionnaud":   "Playwright Country Coverage",
+        }
+
+
+class TestMarionnaudUnifiedStatusField:
+    """MRN folded its four per-country-group status fields into the shared
+    "Automation Status" (2026-08).  What used to separate the frameworks was a
+    field each; it is now a label each, with the countries each framework
+    actually covers read from its own coverage field.  TestIM was never used on
+    this BU."""
+
+    def _mrn(self):
+        return {r.framework: r for r in br.rules_for_bu("Marionnaud", "website")}
+
+    def test_the_two_frameworks_and_nothing_else(self):
+        assert set(self._mrn()) == {"java", "playwright"}
+
+    def test_both_read_the_one_unified_status_field(self):
+        for fw, rule in self._mrn().items():
+            assert rule.status_field_label == "Automation Status", fw
+
+    def test_the_label_is_the_only_thing_telling_them_apart(self):
+        mrn = self._mrn()
+        assert mrn["java"].labels_filter == [br.JAVA_LABEL]
+        assert mrn["playwright"].labels_filter == [br.PLAYWRIGHT_LABEL]
+        # Same field, same automated values: without the gate each rule would
+        # sweep in the other framework's cases wholesale.
+        assert mrn["java"].automated_values == mrn["playwright"].automated_values
+
+    def test_each_framework_reads_its_own_country_coverage(self):
+        mrn = self._mrn()
+        assert mrn["java"].country_field_label == "Java Country Coverage"
+        assert mrn["playwright"].country_field_label == "Playwright Country Coverage"
+
+    def test_no_country_fallback(self):
+        """The coverage field IS the statement of where automation runs.  A
+        fallback to multi_countries would report a country as automated on the
+        strength of the case merely being scoped to it."""
+        for fw, rule in self._mrn().items():
+            assert rule.country_fallback_field_label is None, fw
+
+    def test_both_cover_every_marionnaud_country(self):
+        """One field and one country source per framework means one rule per
+        framework — the MFR / SPR split went with the fields that caused it."""
+        mrn = self._mrn()
+        assert set(mrn["java"].countries_filter) == set(mrn["playwright"].countries_filter)
+        assert {mrn["java"].country_labels[t] for t in mrn["java"].countries_filter} == {
+            "FR", "CH", "AT", "RO", "IT", "CZ", "SK", "HU"}
 
 
 class TestToUpdateBeatsAutomated:
@@ -1263,15 +1327,28 @@ class TestUnknownReasons:
         assert "Testim Country Coverage" in out.iloc[0]["Evidence"]
 
     def test_country_field_covers_another_country(self, monkeypatch):
-        """The Marionnaud case: status in the MFR field, coverage says MCH."""
+        """The Marionnaud case: automated and labelled java, but Java Country
+        Coverage names CH while this row is France."""
         out = self._wire(monkeypatch, "Marionnaud", {
             "case_id": 4850869, "title": "eGiftcard", "url": "u",
-            "status_Automation Status MFR": "Automated",
+            "status_Automation Status": "Automated",
             "java_country_coverage": ["MCH"],
-            "multi_countries": ["MFR", "MCH"], "labels": ["big_regr_desktop"]},
+            "multi_countries": ["MFR", "MCH"],
+            "labels": ["big_regr_desktop", "java"]},
             country="FR")
         assert out.iloc[0]["Reason"] == dq._R_COUNTRY_MISS
         assert "MCH" in out.iloc[0]["Evidence"]
+
+    def test_marionnaud_automated_without_its_framework_label(self, monkeypatch):
+        """The migration's own failure mode: the status field is filled but the
+        case never got a `java` or `playwright` label, so no rule claims it."""
+        out = self._wire(monkeypatch, "Marionnaud", {
+            "case_id": 4850870, "title": "Checkout", "url": "u",
+            "status_Automation Status": "Automated",
+            "java_country_coverage": ["MFR"],
+            "multi_countries": ["MFR"], "labels": ["big_regr_desktop"]},
+            country="FR")
+        assert out.iloc[0]["Reason"] == dq._R_MISSING_LABEL
 
     def test_no_status_at_all(self, monkeypatch):
         out = self._wire(monkeypatch, "Kruidvat", {

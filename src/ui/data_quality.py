@@ -207,6 +207,7 @@ _COUNTRY_COL = {
     "custom_country_coverage":  "country_coverage",
     "Testim Country Coverage":  "testim_country_coverage",
     "Java Country Coverage":    "java_country_coverage",
+    "Playwright Country Coverage": "playwright_country_coverage",
     "Country Validation":       "country_validation",
 }
 
@@ -309,6 +310,8 @@ def _unknown_detail(bu: str, scope: str) -> pd.DataFrame:
             "multi_countries": ", ".join(_tok_list(case.get("multi_countries"))),
             "Testim Country Coverage": ", ".join(_tok_list(case.get("testim_country_coverage"))),
             "Java Country Coverage": ", ".join(_tok_list(case.get("java_country_coverage"))),
+            "Playwright Country Coverage": ", ".join(
+                _tok_list(case.get("playwright_country_coverage"))),
             "Country Validation": ", ".join(_tok_list(case.get("country_validation"))),
             **{k: v for k, v in filled.items()},
             "TestRail Link": case.get("url", ""),

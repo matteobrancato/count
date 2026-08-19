@@ -64,6 +64,7 @@ def _get_country_tokens(
       - "Testim Country Coverage"   → custom_case_country_coverage_testim  (MRN TestIM)
       - "Java Country Coverage"     → custom_country_coverage_automation
                                     / custom_country_coverage             (MRN Java)
+      - "Playwright Country Coverage" → custom_country_coverage_playwright (MRN PW)
 
     *project_id* selects the correct per-project value map so that the same
     integer ID resolves to the right label in each suite.
@@ -82,6 +83,18 @@ def _get_country_tokens(
             reg.field("custom_country_coverage_automation")
             or reg.field("custom_country_coverage")
             or reg.field("country_coverage_automation")
+        )
+    if not meta and field_label == "Playwright Country Coverage":
+        # Candidates, not a single name.  The lesson from "Smaller NR": a field
+        # is known by its LABEL in the UI and by a system name in the API, and
+        # narrowing to one of them is what silently empties a rule.  The label
+        # above is tried first and is what MRN actually created; these are the
+        # spellings the API might return it under.
+        meta = (
+            reg.field("custom_country_coverage_playwright")
+            or reg.field("custom_playwright_country_coverage")
+            or reg.field("custom_case_country_coverage_playwright")
+            or reg.field("country_coverage_playwright")
         )
     if not meta:
         return []
@@ -573,6 +586,8 @@ def _raw_case_row(
             case, reg, "Testim Country Coverage", project_id),
         "java_country_coverage": _get_country_tokens(
             case, reg, "Java Country Coverage", project_id),
+        "playwright_country_coverage": _get_country_tokens(
+            case, reg, "Playwright Country Coverage", project_id),
         "country_validation": _get_country_tokens(
             case, reg, "Country Validation", project_id),
         "labels":           case_labels,
