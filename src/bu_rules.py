@@ -68,7 +68,7 @@ ALL_COUNTRY_TOKENS: dict[str, str] = {
     "SD": "GB", "SV": "GB",
     # The Perfume Shop
     "TPSGB": "UK", "TPSIE": "IE",
-    # Watsons
+    # Watsons Turkey
     "WTR": "TR", "WTR_SPR": "TR",
     # Drogas (RU = second Latvia locale, maps to LV)
     "LV": "LV", "LT": "LT", "RU": "LV",
@@ -80,7 +80,7 @@ ALL_COUNTRY_TOKENS: dict[str, str] = {
 # Runs tab to associate a run with the right BU.
 #
 # A single alias CAN belong to multiple BUs (e.g. "EE" = Eastern Europe,
-# which covers Drogas, Watsons and Marionnaud's CEE countries) — in that case
+# which covers Drogas, Watsons Turkey and Marionnaud's CEE countries) — in that case
 # the same run will appear under each of them.
 #
 # Word-boundary regex matching means "TPS" doesn't accidentally match "TP",
@@ -91,11 +91,17 @@ BU_RUN_ALIASES: dict[str, list[str]] = {
     "The Perfume Shop": ["TPS"],
     "Kruidvat":         ["KV"],
     "Trekpleister":     ["TKP", "TP"],
-    "Watsons":          ["WTR", "EE"],          # EE = Eastern Europe (shared)
+    "Watsons Turkey":   ["WTR", "EE"],          # EE = Eastern Europe (shared)
+    # Deliberately NOT "EE", and not a bare "UA": "EE" would pull Turkey's,
+    # Drogas' and Marionnaud's Eastern-Europe runs in here too, and "UA" is
+    # short enough to match unrelated run names.  Narrow on purpose — an alias
+    # matching nothing shows an empty Runs tab, one matching too much reports
+    # another BU's runs as this one's.
+    "Watsons Ukraine":  ["WUA"],
     "ICI Paris XL":     ["IPXL"],
     "Marionnaud":       ["MFR", "MRN", "EE"],   # MRN CEE countries
     "Drogas":           ["DRG", "EE"],          # Baltic — Eastern Europe
-    "Microservices":         ["NG", "NEXTGEN"],
+    "Microservices":    ["NG", "NEXTGEN"],
 }
 
 
@@ -371,7 +377,7 @@ def build_rules() -> list[Rule]:
     rules += _testim_pair("The Perfume Shop", "TPS", TPS_SUITE, TPS_TOKENS,
                           country_labels=TPS_LABELS)
 
-    # ==================================================================== Watsons
+    # ==================================================================== Watsons Turkey
     # Suite 7544 is shared across BUs.
     # Token convention is asymmetric across fields:
     #   - Testim Country Coverage : only "WTR"            → drives automated match
@@ -381,9 +387,27 @@ def build_rules() -> list[Rule]:
     WTR_SUITE  = 7544
     WTR_TOKENS = ["WTR", "WTR_SPR"]
     WTR_LABELS = {"WTR": "TR", "WTR_SPR": "TR"}
-    rules += _testim_pair("Watsons", "WTR", WTR_SUITE, WTR_TOKENS,
+    rules += _testim_pair("Watsons Turkey", "WTR", WTR_SUITE, WTR_TOKENS,
                           country_labels=WTR_LABELS,
                           implicit_country="TR")
+
+    # ============================================================ Watsons Ukraine
+    # A BU in its own right, NOT a country of Watsons Turkey: it has its own
+    # suite, so nothing is shared with 7544 and the two never pool.  Country
+    # comes from a "UA" token in multi_countries — the same field the baseline
+    # is expanded from, so an automated row can never miss its baseline row.
+    WUA_SUITE  = 39694
+    WUA_TOKENS = ["UA"]
+    WUA_LABELS = {"UA": "UA"}
+    # `country_field_label` set explicitly: _testim_pair defaults to "Testim
+    # Country Coverage", which is right for Watsons Turkey but wrong here —
+    # Ukraine carries its country in multi_countries.  Leaving the default
+    # would have looked for UA in a field that does not hold it, and every
+    # TestIM case would have come out un-automated.  It also puts the automated
+    # rows on the same field the baseline expands from, so they cannot miss it.
+    rules += _testim_pair("Watsons Ukraine", "WUA", WUA_SUITE, WUA_TOKENS,
+                          country_labels=WUA_LABELS,
+                          country_field_label="multi_countries")
 
     # ==================================================================== Drogas
     # Java: "Automation Status DRG" → custom_automation_status_wtctr_spr
@@ -427,7 +451,7 @@ def build_rules() -> list[Rule]:
     # Automation tool breakdown done at UI layer via "Automation MAPP Tool" field.
     mobile_app_suites: dict[str, int] = {
         "Drogas":            19110,
-        "Watsons":           9416,
+        "Watsons Turkey":           9416,
         "ICI Paris XL":      1478,
         "The Perfume Shop":  27553,
         "Superdrug / Savers": 10029,
@@ -469,7 +493,8 @@ def build_rules() -> list[Rule]:
     for bu, suite_id, tokens, labels_map in (
         ("Kruidvat",     KV_SUITE,  KV_TOKENS,  KV_LABELS),
         ("Trekpleister", KV_SUITE,  TKP_TOKENS, TKP_LABELS),
-        ("Watsons",      WTR_SUITE, WTR_TOKENS, WTR_LABELS),
+        ("Watsons Turkey",      WTR_SUITE, WTR_TOKENS, WTR_LABELS),
+        ("Watsons Ukraine", WUA_SUITE, WUA_TOKENS, WUA_LABELS),
     ):
         rules.append(Rule(
             name=f"{bu} PLAYWRIGHT", bu=bu, scope="website", framework="playwright",

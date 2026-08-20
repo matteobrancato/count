@@ -1092,7 +1092,8 @@ class TestPlaywrightLabelGate:
                 if r.framework == "playwright"} == {
             "Kruidvat":     "multi_countries",
             "Trekpleister": "multi_countries",
-            "Watsons":      "multi_countries",
+            "Watsons Turkey":  "multi_countries",
+            "Watsons Ukraine": "multi_countries",
             "Marionnaud":   "Playwright Country Coverage",
         }
 
@@ -1128,6 +1129,86 @@ class TestPlaywrightCountryCoverageResolves:
         assert eng._get_country_tokens(
             {"custom_playwright_country_coverage": [7]},
             FieldRegistry(), "Playwright Country Coverage") == []
+
+
+class TestEveryBUIsWiredIntoEverySurface:
+    """Adding a BU means touching more than bu_rules: two hardcoded display
+    orders and the run-alias table all key off the BU NAME, in three different
+    files.  Miss one and nothing errors — the BU just silently sorts to the
+    bottom of a tab, or its Runs view comes back empty.  These are the guards
+    that turn that into a failing test instead."""
+
+    def test_the_global_filter_lists_every_website_bu(self):
+        from src.ui.global_filter import _BU_ORDER
+        assert set(br.WEBSITE_BUS) <= set(_BU_ORDER), \
+            sorted(set(br.WEBSITE_BUS) - set(_BU_ORDER))
+
+    def test_the_report_lists_every_website_bu(self):
+        from src.ui.report_tab import _BU_ORDER
+        assert set(br.WEBSITE_BUS) <= set(_BU_ORDER), \
+            sorted(set(br.WEBSITE_BUS) - set(_BU_ORDER))
+
+    def test_every_website_bu_can_be_matched_to_its_runs(self):
+        assert set(br.WEBSITE_BUS) <= set(br.BU_RUN_ALIASES), \
+            sorted(set(br.WEBSITE_BUS) - set(br.BU_RUN_ALIASES))
+
+    def test_no_display_order_names_a_bu_that_does_not_exist(self):
+        """A stale name is how a rename half-lands: the old entry keeps its
+        slot and the renamed BU falls to the end."""
+        from src.ui.global_filter import _BU_ORDER as gf
+        from src.ui.report_tab import _BU_ORDER as rt
+        known = set(br.WEBSITE_BUS) | {r.bu for r in br.ALL_RULES}
+        assert set(gf) <= known, sorted(set(gf) - known)
+        assert set(rt) <= known, sorted(set(rt) - known)
+
+
+class TestWatsonsUkraineIsItsOwnBU:
+    """Watsons Ukraine is a BU, not a country of Watsons Turkey.  The thing
+    that must never happen is the two pooling: separate suites are what keeps
+    their baselines, their coverage and their runs apart."""
+
+    def test_it_is_a_website_bu(self):
+        assert "Watsons Ukraine" in br.WEBSITE_BUS
+
+    def test_it_shares_no_suite_with_turkey(self):
+        ua = {r.suite_id for r in br.rules_for_bu("Watsons Ukraine")}
+        tr_ = {r.suite_id for r in br.rules_for_bu("Watsons Turkey")}
+        assert ua == {39694}
+        assert not (ua & tr_)
+
+    def test_testim_and_playwright_only(self):
+        assert {r.framework for r in br.rules_for_bu("Watsons Ukraine", "website")} == \
+            {"testim_desktop", "testim_mobile", "playwright"}
+
+    def test_playwright_reads_the_shared_field_behind_the_label(self):
+        pw = next(r for r in br.rules_for_bu("Watsons Ukraine")
+                  if r.framework == "playwright")
+        assert pw.status_field_label == "Automation Status"
+        assert pw.labels_filter == [br.PLAYWRIGHT_LABEL]
+
+    def test_the_country_is_a_UA_token_in_multi_countries(self):
+        """EVERY rule, TestIM included.  `_testim_pair` defaults to "Testim
+        Country Coverage" — correct for Turkey, wrong here: Ukraine carries its
+        country in multi_countries, and the default would have hunted for UA in
+        a field that does not hold it, leaving every TestIM case un-automated."""
+        for r in br.rules_for_bu("Watsons Ukraine", "website"):
+            assert r.countries_filter == ["UA"], r.name
+            assert r.country_labels == {"UA": "UA"}, r.name
+            assert r.country_field_label == "multi_countries", r.name
+
+    def test_UA_reaches_the_screen_with_a_country_name(self):
+        """Every other BU shows a country name; a bare code would read as a bug."""
+        from src.ui.backlog_tab import COUNTRY_NAMES
+        assert COUNTRY_NAMES.get("UA") == "Ukraine"
+
+    def test_its_run_alias_cannot_claim_another_BUs_runs(self):
+        """"EE" is shared by three BUs on purpose; Ukraine must not join them
+        by accident, and a bare "UA" would match unrelated run names."""
+        assert br.BU_RUN_ALIASES["Watsons Ukraine"] == ["WUA"]
+
+    def test_turkey_kept_its_suite_and_aliases_through_the_rename(self):
+        assert {r.suite_id for r in br.rules_for_bu("Watsons Turkey", "website")} == {7544}
+        assert br.BU_RUN_ALIASES["Watsons Turkey"] == ["WTR", "EE"]
 
 
 class TestMarionnaudUnifiedStatusField:
@@ -1294,7 +1375,7 @@ class TestCoverageExPartialInSummary:
         assert green in self._html([("ICI", 5713, 4472, 318)])
 
     def test_one_line_only_when_they_agree(self):
-        html_ = self._html([("Watsons", 1535, 1336, 0)])
+        html_ = self._html([("Watsons Turkey", 1535, 1336, 0)])
         assert "cov-ex" not in html_ and "87.0%" in html_
 
     def test_missing_column_falls_back_to_the_real_coverage(self):
@@ -1351,7 +1432,7 @@ class TestUnknownReasons:
 
     def test_country_field_left_empty(self, monkeypatch):
         """The Watsons case: Testim automated, Testim Country Coverage empty."""
-        out = self._wire(monkeypatch, "Watsons", {
+        out = self._wire(monkeypatch, "Watsons Turkey", {
             "case_id": 2708290, "title": "Delivery address", "url": "u",
             "status_Automation Status Testim Desktop": "Automated UAT",
             "multi_countries": ["WTR"], "testim_country_coverage": [],

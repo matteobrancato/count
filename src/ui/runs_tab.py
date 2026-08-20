@@ -72,7 +72,7 @@ _JIRA_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9_]+-\d+)\b")
 JIRA_BROWSE_URL = "https://elab-aswatson.atlassian.net/browse/"
 
 # Pre-compute BU-alias regexes.  Multiple BUs can share an alias (e.g. "EE"
-# matches Drogas, Watsons and Marionnaud) — the matcher returns ALL of them.
+# matches Drogas, Watsons Turkey and Marionnaud) — the matcher returns ALL of them.
 _BU_ALIAS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(rf"\b{re.escape(alias)}\b", re.IGNORECASE), bu)
     for bu, aliases in BU_RUN_ALIASES.items()

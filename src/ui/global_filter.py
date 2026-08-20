@@ -23,7 +23,7 @@ from ..bu_rules import ALL_RULES
 # ordering); BUs not listed fall to the end alphabetically.
 _BU_ORDER = [
     "Drogas", "ICI Paris XL", "Kruidvat", "Marionnaud", "Savers",
-    "Superdrug", "The Perfume Shop", "Trekpleister", "Watsons",
+    "Superdrug", "The Perfume Shop", "Trekpleister", "Watsons Turkey", "Watsons Ukraine",
 ]
 
 _SCOPE_LABELS = {

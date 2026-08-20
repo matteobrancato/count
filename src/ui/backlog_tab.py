@@ -142,7 +142,7 @@ COUNTRY_NAMES: dict[str, str] = {
     "HU": "Hungary",    "IE": "Ireland",     "IT": "Italy",
     "LT": "Lithuania",  "LU": "Luxembourg",  "LV": "Latvia",
     "NL": "Netherlands","RO": "Romania",     "SK": "Slovakia",
-    "TR": "Turkey",     "UK": "United Kingdom",
+    "TR": "Turkey",     "UA": "Ukraine",     "UK": "United Kingdom",
 }
 
 
@@ -817,7 +817,7 @@ def _backlog_badge_html(backlog: int, total: int) -> str:
 def _framework_cards(s: dict) -> list[tuple[str, int, int]]:
     """(label, rows, cases) for the frameworks that actually carry rows.
 
-    A card reading 0 is a label that lies: Watsons is 100% TestIM, so a "Java 0"
+    A card reading 0 is a label that lies: Watsons Turkey is 100% TestIM, so a "Java 0"
     card next to it was pure noise, and the same holds for Playwright until the
     migration produces its first labelled case.  Mobile App, whose rows carry the
     `mobile_app` framework, gets an empty list — the caller then drops the whole

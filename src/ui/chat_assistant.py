@@ -146,7 +146,7 @@ The VALID Business Units are EXACTLY the ones listed in the "LIVE COVERAGE
 SNAPSHOT" below — use those exact names and do NOT invent any others.  Note that
 "Superdrug / Savers" is a real, separate entry (the suite of tests shared between
 Superdrug and Savers); it is distinct from "Superdrug" and from "Savers".
-Common aliases to map: SD=Superdrug, KV=Kruidvat, WTR=Watsons,
+Common aliases to map: SD=Superdrug, KV=Kruidvat, WTR=Watsons Turkey, WUA=Watsons Ukraine,
 TPS=The Perfume Shop, ICI=ICI Paris XL, MRN=Marionnaud, DRO=Drogas.
 
 # WHERE YOUR DATA COMES FROM
@@ -1226,7 +1226,7 @@ def _render_chat_panel() -> None:
             f"tests, <br>numbers come live from TestRail and match the dashboard.</div>"
             f"<div style='font-size:11px;color:{COLORS['faint']};margin-top:12px;"
             f"font-style:italic;white-space:nowrap'>“How is Superdrug doing?”"
-            f"&nbsp;·&nbsp;“Compare all BUs”&nbsp;·&nbsp;“Open bugs in Watsons”</div>"
+            f"&nbsp;·&nbsp;“Compare all BUs”&nbsp;·&nbsp;“Open bugs in Watsons Turkey”</div>"
             f"</div>",
             unsafe_allow_html=True,
         )

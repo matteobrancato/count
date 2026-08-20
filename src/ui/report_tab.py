@@ -40,7 +40,7 @@ _ANDROID = "#16A34A"             # Android (Mobile App)
 
 _BU_ORDER = [
     "The Perfume Shop", "Savers", "Superdrug",
-    "Kruidvat", "Trekpleister", "Watsons", "Drogas",
+    "Kruidvat", "Trekpleister", "Watsons Turkey", "Watsons Ukraine", "Drogas",
     "Marionnaud", "ICI Paris XL", "Microservices",
 ]
 

@@ -86,7 +86,7 @@ attributed to the **newest** framework that covers it — the percentages add up
 to 100% and no row is counted twice. A Playwright test carries "Automation
 Status" = automated **plus** the `playwright` label; Testim and Java have their
 own status fields per BU. On the four BUs whose rules do not read the generic
-field (Kruidvat, Trekpleister, Marionnaud, Watsons) the label is what tells a
+field (Kruidvat, Trekpleister, Marionnaud, Watsons Turkey) the label is what tells a
 Playwright case from an older one with the same field filled, so a case missing
 it is not counted. Mobile App uses its own tooling (the "Automation MAPP Tool"
 field).
