@@ -1173,8 +1173,8 @@ class TestWatsonsUkraineIsItsOwnBU:
     def test_it_shares_no_suite_with_turkey(self):
         ua = {r.suite_id for r in br.rules_for_bu("Watsons Ukraine")}
         tr_ = {r.suite_id for r in br.rules_for_bu("Watsons Turkey")}
-        assert ua == {39694}
-        assert not (ua & tr_)
+        assert ua == {39694, 39695}        # website + mobile app
+        assert not (ua & tr_), sorted(ua & tr_)
 
     def test_testim_and_playwright_only(self):
         assert {r.framework for r in br.rules_for_bu("Watsons Ukraine", "website")} == \
@@ -1201,10 +1201,36 @@ class TestWatsonsUkraineIsItsOwnBU:
         from src.ui.backlog_tab import COUNTRY_NAMES
         assert COUNTRY_NAMES.get("UA") == "Ukraine"
 
-    def test_its_run_alias_cannot_claim_another_BUs_runs(self):
-        """"EE" is shared by three BUs on purpose; Ukraine must not join them
-        by accident, and a bare "UA" would match unrelated run names."""
-        assert br.BU_RUN_ALIASES["Watsons Ukraine"] == ["WUA"]
+    def test_it_has_a_mobile_app_suite_of_its_own(self):
+        mapp = [r for r in br.rules_for_bu("Watsons Ukraine", "mobile_app")]
+        assert [r.suite_id for r in mapp] == [39695]
+        assert "Watsons Ukraine" in br.MOBILE_APP_BUS
+
+    def test_microservices_can_reach_ukraine(self):
+        """The global token map is read by the Microservices rule alone, so a
+        missing token there means Microservices under-reports Ukraine rather
+        than erroring."""
+        assert br.ALL_COUNTRY_TOKENS.get("UA") == "UA"
+        ng = next(r for r in br.ALL_RULES if r.bu == "Microservices")
+        assert "UA" in ng.countries_filter
+
+    def test_its_aliases_do_not_join_the_shared_eastern_europe_pool(self):
+        """"EE" is shared by Turkey, Drogas and Marionnaud on purpose.  Ukraine
+        joining it would report their runs as Ukraine's."""
+        assert "EE" not in br.BU_RUN_ALIASES["Watsons Ukraine"]
+
+    def test_both_spellings_of_the_name_match_a_run(self):
+        """The display name is plural, the run names are not, and \bWatson
+        Ukraine\b does not match "Watsons Ukraine" — listing only one spelling
+        would quietly miss every run using the other."""
+        from src.ui.runs_tab import _bus_for_run_name
+        for name in ("WTCUA Regression 2026-08", "Watson Ukraine NR",
+                     "Watsons Ukraine NR", "Big NR UA"):
+            assert _bus_for_run_name(name) == {"Watsons Ukraine"}, name
+
+    def test_turkeys_runs_do_not_land_on_ukraine(self):
+        from src.ui.runs_tab import _bus_for_run_name
+        assert "Watsons Ukraine" not in _bus_for_run_name("WTR Big NR")
 
     def test_turkey_kept_its_suite_and_aliases_through_the_rename(self):
         assert {r.suite_id for r in br.rules_for_bu("Watsons Turkey", "website")} == {7544}

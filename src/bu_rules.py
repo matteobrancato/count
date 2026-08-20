@@ -70,6 +70,8 @@ ALL_COUNTRY_TOKENS: dict[str, str] = {
     "TPSGB": "UK", "TPSIE": "IE",
     # Watsons Turkey
     "WTR": "TR", "WTR_SPR": "TR",
+    # Watsons Ukraine
+    "UA": "UA",
     # Drogas (RU = second Latvia locale, maps to LV)
     "LV": "LV", "LT": "LT", "RU": "LV",
 }
@@ -92,12 +94,12 @@ BU_RUN_ALIASES: dict[str, list[str]] = {
     "Kruidvat":         ["KV"],
     "Trekpleister":     ["TKP", "TP"],
     "Watsons Turkey":   ["WTR", "EE"],          # EE = Eastern Europe (shared)
-    # Deliberately NOT "EE", and not a bare "UA": "EE" would pull Turkey's,
-    # Drogas' and Marionnaud's Eastern-Europe runs in here too, and "UA" is
-    # short enough to match unrelated run names.  Narrow on purpose — an alias
-    # matching nothing shows an empty Runs tab, one matching too much reports
-    # another BU's runs as this one's.
-    "Watsons Ukraine":  ["WUA"],
+    # Deliberately NOT "EE": that alias is shared by Turkey, Drogas and
+    # Marionnaud, and joining it would report their Eastern-Europe runs as
+    # Ukraine's.  Both spellings of the name are listed because the display
+    # name is plural and the run names are not — \b"Watson Ukraine"\b does not
+    # match "Watsons Ukraine", so listing one would quietly miss the other.
+    "Watsons Ukraine":  ["WTCUA", "UA", "Watson Ukraine", "Watsons Ukraine"],
     "ICI Paris XL":     ["IPXL"],
     "Marionnaud":       ["MFR", "MRN", "EE"],   # MRN CEE countries
     "Drogas":           ["DRG", "EE"],          # Baltic — Eastern Europe
@@ -456,6 +458,7 @@ def build_rules() -> list[Rule]:
         "The Perfume Shop":  27553,
         "Superdrug / Savers": 10029,
         "Marionnaud":        8470,
+        "Watsons Ukraine":   39695,
         "Kruidvat":          20995,
     }
     for bu, suite_id in mobile_app_suites.items():
