@@ -8,8 +8,15 @@ from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
 from src.ui import (
     backlog_tab, chat_assistant, coverage_tab, data_quality, global_filter,
-    kpi_strip, overview_tab, report_tab, runs_tab, stability_tab, styles,
+    kpi_strip, overview_tab, report_tab, styles,
 )
+# TEMPORARILY DISABLED — Runs & Stability.  See the tab bar in main(): both tabs
+# fire a 30-50s background TestRail load on EVERY script run (Streamlit executes
+# every tab, selected or not), which is by far the largest cost on the page.
+# The import is commented out with them so the module stays unreferenced here;
+# `chat_assistant` imports `runs_tab` on its own for Dexter's live-run tools, and
+# the tests import both modules directly, so neither is affected.
+# from src.ui import runs_tab, stability_tab
 from src.ui.styles import COLORS
 
 
@@ -344,11 +351,22 @@ def main() -> None:
     _scope_now, _ = global_filter.current()
     with st.container(key="tabs_zone"):
         _freshness_label(_scope_now)
-        (tab_backlog, tab_coverage, tab_runs, tab_stability, tab_overview,
+        # TEMPORARILY DISABLED — "🏃 Runs" and "📈 Stability" are commented out
+        # of the tab bar (and out of the render calls at the bottom of main())
+        # to cut the page's load time; they are the only two tabs that hit
+        # TestRail live.  To restore, put the two labels back in the list and
+        # the two names back in the tuple, then uncomment the two `_render_tab`
+        # calls and the import at the top of this file — nothing else changed.
+        (tab_backlog, tab_coverage, tab_overview,
          tab_report) = st.tabs(
-            ["📋 Backlog", "📐 Coverage", "🏃 Runs", "📈 Stability",
+            ["📋 Backlog", "📐 Coverage",
              "🧭 Overview", "📄 Report"]
         )
+        # (tab_backlog, tab_coverage, tab_runs, tab_stability, tab_overview,
+        #  tab_report) = st.tabs(
+        #     ["📋 Backlog", "📐 Coverage", "🏃 Runs", "📈 Stability",
+        #      "🧭 Overview", "📄 Report"]
+        # )
 
     try:
         with tab_backlog:
@@ -426,16 +444,30 @@ def main() -> None:
     _render_tab(tab_coverage, coverage_tab.render, "Coverage")
     _render_tab(tab_overview, overview_tab.render, "Overview", "overview_anim")
     _render_tab(tab_report,   report_tab.render,   "Report",   "report_anim")
-    # Runs is rendered LAST on purpose (its position in the tab bar is
-    # unchanged — content binds to its tab regardless of execution order):
-    # on the first visit of a BU it fires 30-50s of TestRail calls (plan
-    # details, failed results, stability tests — shared with Stability), and
-    # executing it last
-    # means every other tab is ready in seconds instead of queueing behind it.
-    _render_tab(tab_runs,     runs_tab.render,     "Runs",     "runs_anim")
-    # Stability rides on the SAME background warm-up as Runs (see
-    # runs_tab.live_context), so it costs nothing extra and must come after it.
-    _render_tab(tab_stability, stability_tab.render, "Stability", "stability_anim")
+    # TEMPORARILY DISABLED — Runs & Stability.
+    #
+    # These are the only two tabs that query TestRail live.  Rendering either
+    # one calls `runs_tab.live_context()`, which starts a background thread
+    # warming 30-50s of TestRail calls for the selected BU (plan details, failed
+    # results, stability tests).  Streamlit runs EVERY tab's body on every
+    # script run, not just the selected one, so that cost was paid on every
+    # interaction even by people who never opened these tabs.
+    #
+    # `live_context()` is the ONLY caller of `_start_bg_load()`, and these two
+    # lines are the only callers of `live_context()` — so commenting them out
+    # stops the background load entirely, with no edit needed inside
+    # `runs_tab.py`.  Its helpers stay intact and Dexter keeps answering
+    # questions about runs, bugs and stability (its tools call them directly,
+    # on demand, only when asked).
+    #
+    # Runs was rendered LAST on purpose (its position in the tab bar is
+    # unchanged — content binds to its tab regardless of execution order), so
+    # every other tab was ready in seconds instead of queueing behind it.
+    # Stability rode on the SAME warm-up as Runs, so it cost nothing extra and
+    # had to come after it.  Keep that order when restoring.
+    #
+    # _render_tab(tab_runs,     runs_tab.render,     "Runs",     "runs_anim")
+    # _render_tab(tab_stability, stability_tab.render, "Stability", "stability_anim")
 
     # Dexter's snapshot builds OFF the critical path: everything above has
     # already rendered; this line only costs time when its cache is cold
