@@ -206,7 +206,8 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     true.  A case carrying only the new label has no big_regr labels to read, so
     its devices come from the TestRail Device field instead.
     """
-    _empty = pd.DataFrame(columns=["case_id", "country_label", "device", "_cat_base"])
+    _empty = pd.DataFrame(columns=["case_id", "country_label", "device",
+                                   "_cat_base", "_tool_automated"])
 
     if raw.empty:
         return _empty
@@ -293,6 +294,28 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     raw.loc[tbu_mask,       "_cat_base"] = "to_be_updated"
     raw.loc[na_mask,        "_cat_base"] = "not_applicable"
 
+    # Does ANY of THIS BU's tool status fields say a script already exists?
+    #
+    # A different question from "is this row automated", and the gap between the
+    # two is not hypothetical: a row is automated only once the rules engine can
+    # attribute it to a country, and each tool takes its countries from its OWN
+    # field (TestIM from "Testim Country Coverage", not from `multi_countries`).
+    # When that field is empty the rule never matches, the case looks automated
+    # NOWHERE, and every one of its rows fell into Backlog — 57 rows over 28
+    # cases on ICI alone, all carrying "Automated UAT" on Testim Desktop.
+    #
+    # Backlog means "write a script from scratch"; Partially Automated means
+    # "extend one that exists".  A case whose tool field says Automated has one,
+    # wherever it runs — so it belongs in the second, and telling a QA lead
+    # otherwise sends them to write something already written.
+    #
+    # Restricted to `status_cols` for the same reason the classification is:
+    # another BU's field must never speak for this one's rows.
+    auto_mask = pd.Series(False, index=raw.index)
+    for col in status_cols:
+        auto_mask |= raw[col].isin(_STATUS_AUTO)
+    raw["_tool_automated"] = auto_mask
+
     # ── Country expansion ─────────────────────────────────────────────────────
     if all_tokens:
         # Conditional tokens (e.g. ICI's LU only for Highest priority) are
@@ -354,7 +377,8 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
 
     # ── Dedup on (case_id, country_label, device) ─────────────────────────────
     return (
-        raw[["case_id", "country_label", "device_exp", "_cat_base"]]
+        raw[["case_id", "country_label", "device_exp", "_cat_base",
+             "_tool_automated"]]
         .drop_duplicates(subset=["case_id", "country_label", "device_exp"])
         .rename(columns={"device_exp": "device"})
         .reset_index(drop=True)
@@ -372,7 +396,8 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
       * no country dimension — country_label is the BU name, matching the
         automated set (rules_engine emits country_label = rule.bu for MAPP).
     """
-    _empty = pd.DataFrame(columns=["case_id", "country_label", "device", "_cat_base"])
+    _empty = pd.DataFrame(columns=["case_id", "country_label", "device",
+                                   "_cat_base", "_tool_automated"])
     if raw.empty or "priority_label" not in raw.columns or "mapp_devices" not in raw.columns:
         return _empty
 
@@ -402,6 +427,16 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     raw.loc[tbu_mask,      "_cat_base"] = "to_be_updated"
     raw.loc[na_mask,       "_cat_base"] = "not_applicable"
 
+    # Same flag the website baseline carries (see there for why).  MAPP has no
+    # country field of its own — `country_label` IS the BU — so a case with an
+    # automated status always matches its rule and this can never disagree with
+    # the automated set.  Computed anyway so `_classify_expanded` has one shape
+    # to reason about instead of two.
+    auto_mask = pd.Series(False, index=raw.index)
+    for col in status_cols:
+        auto_mask |= raw[col].isin(_STATUS_AUTO)
+    raw["_tool_automated"] = auto_mask
+
     # Device expansion from the OS list (iOS / Android).
     raw["_devs"] = raw["mapp_devices"].apply(lambda d: d if isinstance(d, list) else [])
     raw = raw[raw["_devs"].map(len) > 0]
@@ -411,7 +446,8 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     raw["country_label"] = bu
 
     return (
-        raw[["case_id", "country_label", "device_exp", "_cat_base"]]
+        raw[["case_id", "country_label", "device_exp", "_cat_base",
+             "_tool_automated"]]
         .drop_duplicates(subset=["case_id", "country_label", "device_exp"])
         .rename(columns={"device_exp": "device"})
         .reset_index(drop=True)
@@ -426,32 +462,36 @@ def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFra
     """
     expanded = expanded.copy()
     expanded["category"] = expanded["_cat_base"]
-    if auto.empty:
-        return expanded
 
-    auto_keys = (
-        auto[["case_id", "country_label", "device"]]
-        .drop_duplicates()
-        .assign(case_id=lambda d: d["case_id"].astype(int))
-        .assign(_auto=True)
-    )
-    expanded["case_id"] = expanded["case_id"].astype(int)
-    merged = expanded.merge(auto_keys, on=["case_id", "country_label", "device"], how="left")
-    is_auto = merged["_auto"].fillna(False).to_numpy()
+    # An EMPTY `auto` used to return here.  It cannot any more: a BU whose
+    # automation is invisible to the rules engine — every tool status filled,
+    # every tool country field empty — produces exactly that, and it is the
+    # case the Backlog/Partially split below now has to handle.
+    if not auto.empty:
+        auto_keys = (
+            auto[["case_id", "country_label", "device"]]
+            .drop_duplicates()
+            .assign(case_id=lambda d: d["case_id"].astype(int))
+            .assign(_auto=True)
+        )
+        expanded["case_id"] = expanded["case_id"].astype(int)
+        merged = expanded.merge(auto_keys, on=["case_id", "country_label", "device"], how="left")
+        is_auto = merged["_auto"].fillna(False).to_numpy()
 
-    # ── "To be updated" beats "Automated" ────────────────────────────────────
-    # The two answer different questions and are written by different people:
-    # the tool fields (Testim, KV SPR, MRN SPR, Playwright…) say whether a script
-    # exists, and the manual QAs write "To be updated" when the test itself has
-    # changed.  A script that no longer matches its test is work to do, not
-    # coverage — so the flag wins, whichever field carries it.
-    #
-    # The row is still REMEMBERED as automated (`_automated_row`) so To Update
-    # can say how much of it is maintenance of an existing script rather than
-    # automation to write from scratch.
-    expanded["_automated_row"] = is_auto
-    expanded.loc[is_auto & (expanded["_cat_base"] != "to_be_updated"),
-                 "category"] = "automated"
+        # ── "To be updated" beats "Automated" ────────────────────────────────
+        # The two answer different questions and are written by different
+        # people: the tool fields (Testim, KV SPR, MRN SPR, Playwright…) say
+        # whether a script exists, and the manual QAs write "To be updated"
+        # when the test itself has changed.  A script that no longer matches
+        # its test is work to do, not coverage — so the flag wins, whichever
+        # field carries it.
+        #
+        # The row is still REMEMBERED as automated (`_automated_row`) so To
+        # Update can say how much of it is maintenance of an existing script
+        # rather than automation to write from scratch.
+        expanded["_automated_row"] = is_auto
+        expanded.loc[is_auto & (expanded["_cat_base"] != "to_be_updated"),
+                     "category"] = "automated"
 
     # ── Rows of a case that IS automated somewhere ───────────────────────────
     # A test automated for NL but not BE used to land in the backlog with the
@@ -470,6 +510,18 @@ def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFra
     # Partially Automated means.  Unknown is left to mean what it should: the
     # case is automated NOWHERE and no status explains why.
     auto_cases = set(expanded.loc[expanded["category"] == "automated", "case_id"])
+    # A case can carry proof that a script exists WITHOUT producing a single
+    # automated row: the tool's status field says "Automated UAT" while the
+    # tool's own country field is empty, so the rules engine never attributed it
+    # to a country and never matched the case at all.  Those rows are not
+    # "write a script from scratch" — the script is written, it just isn't
+    # pointed at this country yet — so they belong here with the rest of the
+    # partial coverage.  `_expand_baseline` computes the flag from THIS BU's
+    # status fields only.  Guarded: several tests (and any caller building a
+    # frame by hand) pass an `expanded` without the column.
+    if "_tool_automated" in expanded.columns:
+        auto_cases |= set(
+            expanded.loc[expanded["_tool_automated"].fillna(False), "case_id"])
     if auto_cases:
         expanded.loc[
             expanded["category"].isin(["backlog", "unknown"])
@@ -1020,14 +1072,25 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
     bu_tokens = {t for r in ALL_RULES
                  if r.bu == bu and r.scope == scope for t in r.countries_filter}
 
-    def _split(v) -> tuple[str, str]:
+    def _split(v, prio) -> tuple[str, str]:
         toks = [str(t) for t in v] if isinstance(v, list) else []
-        mine = [t for t in toks if t in bu_tokens]
+        # Conditional tokens are dropped here for the same reason the baseline
+        # drops them: ICI's LU counts only on Highest, so on a High case it
+        # produces NO row.  Naming it under "Countries counted for this BU"
+        # made the column contradict the rows beside it — three countries
+        # listed, two rows exported — and someone reconciling the export by
+        # hand has no way to see which of the three went missing.  The column
+        # says "counted"; it must list only what was.
+        mine = [t for t in filter_conditional_tokens(toks, prio)
+                if t in bu_tokens]
         other = [t for t in toks if t not in bu_tokens]
         return ", ".join(mine), ", ".join(other)
 
     if "multi_countries" in out.columns and bu_tokens:
-        split = [_split(v) for v in out["multi_countries"]]
+        # `priority_label` has already been renamed to "Priority" above.
+        prios = (out["Priority"] if "Priority" in out.columns
+                 else pd.Series([None] * len(out), index=out.index))
+        split = [_split(v, p) for v, p in zip(out["multi_countries"], prios)]
         out["multi_countries"] = [m for m, _ in split]
         other = [o for _, o in split]
         if any(other):

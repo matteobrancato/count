@@ -398,6 +398,114 @@ class TestBacklogSplit:
         assert s["partially_automated"] == 1
 
 
+# ── a script that exists but is pointed at no country ────────────────────────
+class TestToolAutomatedWithoutACountry:
+    """Found reviewing ICI with its QA lead on 2026-09-11: 57 Backlog rows over
+    28 cases carried "Automated UAT" on Automation Status Testim Desktop.
+
+    A row becomes Automated only once the rules engine can attribute it to a
+    country, and every tool reads its OWN country field — TestIM takes
+    "Testim Country Coverage", NOT `multi_countries`.  Leave that field empty
+    and the rule never matches at all: the case looks automated NOWHERE and
+    each of its rows fell into Backlog, which tells a QA lead to go and write a
+    script that is already written.  Backlog means "from scratch"; a case whose
+    tool field says Automated is "extend the one that exists"."""
+
+    @staticmethod
+    def _rules():
+        java = SimpleNamespace(
+            bu="ICI Paris XL", scope="website", suite_id=1, framework="java",
+            status_field_label="Automation Status",
+            automated_values=["Automated"],
+            countries_filter=["IPXL NL", "IPXL BE"],
+            country_labels={"IPXL NL": "NL", "IPXL BE": "BE"},
+            country_field_label="multi_countries", type_filter=[])
+        testim = SimpleNamespace(
+            bu="ICI Paris XL", scope="website", suite_id=1,
+            framework="testim_desktop",
+            status_field_label="Automation Status Testim Desktop",
+            automated_values=["Automated UAT"],
+            countries_filter=["IPXL NL", "IPXL BE"],
+            country_labels={"IPXL NL": "NL", "IPXL BE": "BE"},
+            # The field the automation is attributed BY — and the one that is
+            # empty on all 28 cases, which is the whole bug.
+            country_field_label="Testim Country Coverage", type_filter=[])
+        return [java, testim]
+
+    def _frames(self, **extra_cols):
+        countries = ["IPXL NL", "IPXL BE"]
+        raw = pd.DataFrame([
+            # A Testim script EXISTS, but nothing says which country it covers,
+            # so the rules engine returned no automated row for this case.
+            _case(case_id=1, multi_countries=countries,
+                  **{"status_Automation Status": "Ready to be automated",
+                     "status_Automation Status Testim Desktop": "Automated UAT",
+                     **extra_cols}),
+            # Automated nowhere and claiming nothing: real Backlog, stays Backlog.
+            _case(case_id=2, multi_countries=countries,
+                  **{"status_Automation Status": "Ready to be automated",
+                     "status_Automation Status Testim Desktop": "",
+                     **extra_cols}),
+        ])
+        # EMPTY on purpose — that is exactly what the rules engine produces here.
+        return bl._classify_expanded(bl._expand_baseline(raw, self._rules()),
+                                     pd.DataFrame())
+
+    def test_a_case_with_a_script_is_not_called_backlog(self):
+        exp = self._frames()
+        cats = dict(zip(zip(exp["case_id"], exp["country_label"]),
+                        exp["category"]))
+        assert cats[(1, "NL")] == "partially_automated"
+        assert cats[(1, "BE")] == "partially_automated"
+
+    def test_a_case_with_nothing_anywhere_is_still_backlog(self):
+        """The category has to keep meaning something."""
+        exp = self._frames()
+        cats = dict(zip(zip(exp["case_id"], exp["country_label"]),
+                        exp["category"]))
+        assert cats[(2, "NL")] == "backlog"
+        assert cats[(2, "BE")] == "backlog"
+
+    def test_coverage_does_not_move(self):
+        """THE property that makes this safe to ship mid-review: both
+        categories are non-automated, so the numerator and the denominator are
+        untouched and every published percentage stays where it was."""
+        s = bl._stats(self._frames(), pd.DataFrame())
+        assert s["automated"] == 0
+        assert s["cov_total"] == 0.0
+        assert s["cov_automatable"] == 0.0
+
+    def test_the_rows_only_move_between_the_two_buckets(self):
+        s = bl._stats(self._frames(), pd.DataFrame())
+        assert s["backlog"] == 2                # was 4 before
+        assert s["partially_automated"] == 2
+        assert (s["automated"] + s["backlog"] + s["partially_automated"]
+                + s["to_be_updated"] + s["not_applicable"] + s["unknown"]
+                ) == s["total"] == 4
+
+    def test_another_bus_status_field_does_not_rescue_a_row(self):
+        """The same trap `_read_status_cols` exists for: TestRail custom fields
+        are global, so an ICI case can carry a value in Automation Status SD.
+        A field no rule of this BU reads must not speak for its rows."""
+        exp = self._frames(**{"status_Automation Status SD": "Automated"})
+        cats = dict(zip(zip(exp["case_id"], exp["country_label"]),
+                        exp["category"]))
+        assert cats[(2, "NL")] == "backlog"     # SD says Automated; irrelevant
+        assert cats[(2, "BE")] == "backlog"
+
+    def test_to_be_updated_is_left_alone(self):
+        """Only Backlog and Unknown move.  "To be updated" already means a
+        script exists and is stale, and it deliberately outranks Automated."""
+        raw = pd.DataFrame([
+            _case(case_id=1, multi_countries=["IPXL NL", "IPXL BE"],
+                  **{"status_Automation Status": "To be updated",
+                     "status_Automation Status Testim Desktop": "Automated UAT"}),
+        ])
+        exp = bl._classify_expanded(bl._expand_baseline(raw, self._rules()),
+                                    pd.DataFrame())
+        assert set(exp["category"]) == {"to_be_updated"}
+
+
 # ── the export behind a tile must match the tile ─────────────────────────────
 class TestTileExports:
     """Each tile offers a CSV of the rows behind its number.  If the two ever
@@ -2109,6 +2217,49 @@ class TestCountryColumnBelongsToItsBu:
     def test_no_extra_column_when_the_case_is_this_bus_only(self, monkeypatch):
         ev = self._evidence(monkeypatch, ["IPXL NL", "IPXL BE"])
         assert "Other BUs on this case" not in ev.columns
+
+    def _lu_evidence(self, monkeypatch, priority):
+        """ICI's real rule, LU included — the conditional token lives there."""
+        rule = self._rule()
+        rule.countries_filter = ["IPXL NL", "IPXL BE", "IPXL LU"]
+        rule.country_labels = {"IPXL NL": "NL", "IPXL BE": "BE",
+                               "IPXL LU": "LU"}
+        raw = self._raw(["IPXL NL", "IPXL BE", "IPXL LU"])
+        raw.loc[0, "priority_label"] = priority
+        monkeypatch.setattr(bl, "_load_scope",
+                            lambda scope: (raw, pd.DataFrame(), [rule]))
+        monkeypatch.setattr(bl, "ALL_RULES", [rule])
+        exp = bl._classify_expanded(bl._expand_baseline(raw, [rule]),
+                                    pd.DataFrame())
+        return exp, bl._evidence_frame(exp, "website", "ICI Paris XL")
+
+    def test_a_conditional_token_that_counts_nowhere_is_not_listed_as_counted(
+            self, monkeypatch):
+        """ICI's LU counts only on Highest, so on a High case it produces no
+        row at all.  The column said "IPXL NL, IPXL BE, IPXL LU" next to two
+        exported rows — three countries named, two delivered, and no way to see
+        which one went missing."""
+        exp, ev = self._lu_evidence(monkeypatch, "High")
+        assert sorted(exp["country_label"]) == ["BE", "NL"]      # LU: no row
+        assert set(ev["Countries counted for this BU"]) == {"IPXL NL, IPXL BE"}
+
+    def test_the_same_token_IS_listed_when_it_does_count(self, monkeypatch):
+        """The column must not simply hide LU — on a Highest case it counts,
+        and hiding it there would be the same lie in the other direction."""
+        exp, ev = self._lu_evidence(monkeypatch, "Highest")
+        assert sorted(exp["country_label"]) == ["BE", "LU", "NL"]
+        assert set(ev["Countries counted for this BU"]) == {
+            "IPXL NL, IPXL BE, IPXL LU"}
+
+    def test_the_column_always_matches_the_rows_beside_it(self, monkeypatch):
+        """The invariant behind both tests above: whatever the column names,
+        that is exactly the set of countries the export delivered rows for."""
+        for priority in ("High", "Highest"):
+            exp, ev = self._lu_evidence(monkeypatch, priority)
+            listed = {t.strip() for t in
+                      ev.iloc[0]["Countries counted for this BU"].split(",")}
+            iso = {"IPXL NL": "NL", "IPXL BE": "BE", "IPXL LU": "LU"}
+            assert {iso[t] for t in listed} == set(exp["country_label"]), priority
 
     def test_a_case_with_no_token_of_this_bu_produces_no_rows(self, monkeypatch):
         """The counting guarantee behind all of the above."""
