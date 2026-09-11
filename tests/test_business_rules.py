@@ -2218,6 +2218,45 @@ class TestCountryColumnBelongsToItsBu:
         ev = self._evidence(monkeypatch, ["IPXL NL", "IPXL BE"])
         assert "Other BUs on this case" not in ev.columns
 
+    def _with_tool_fields(self, monkeypatch, **cols):
+        rule = self._rule()
+        raw = self._raw(["IPXL NL", "IPXL BE"])
+        for c, v in cols.items():
+            raw[c] = [v]
+        monkeypatch.setattr(bl, "_load_scope",
+                            lambda scope: (raw, pd.DataFrame(), [rule]))
+        monkeypatch.setattr(bl, "ALL_RULES", [rule])
+        exp = bl._classify_expanded(bl._expand_baseline(raw, [rule]),
+                                    pd.DataFrame())
+        return bl._evidence_frame(exp, "website", "ICI Paris XL")
+
+    def test_the_field_that_decides_a_testim_row_is_in_the_export(
+            self, monkeypatch):
+        """A TestIM row is attributed by "Testim Country Coverage", NOT by
+        multi_countries — and that field used to be missing from the export.
+        Sixty-six ICI cases read "Automated UAT" beside a Backlog verdict with
+        nothing in the file to explain the gap."""
+        ev = self._with_tool_fields(monkeypatch,
+                                    testim_country_coverage=["IPXL LU"])
+        assert "Testim Country Coverage" in ev.columns
+        assert set(ev["Testim Country Coverage"]) == {"IPXL LU"}
+
+    def test_it_is_shown_raw_and_named_as_TestRail_names_it(self, monkeypatch):
+        """Unlike "Countries counted for this BU" it makes no claim about
+        counting, so it is not filtered: it is the field, and it has to match
+        TestRail character for character to be reconcilable by hand."""
+        ev = self._with_tool_fields(
+            monkeypatch, testim_country_coverage=["IPXL LU", "MRN"])
+        assert set(ev["Testim Country Coverage"]) == {"IPXL LU, MRN"}
+
+    def test_a_tool_this_bu_never_uses_gets_no_column(self, monkeypatch):
+        """An always-empty column claims a check that was never made."""
+        ev = self._with_tool_fields(monkeypatch,
+                                    testim_country_coverage=["IPXL NL"],
+                                    playwright_country_coverage=[])
+        assert "Testim Country Coverage" in ev.columns
+        assert "Playwright Country Coverage" not in ev.columns
+
     def _lu_evidence(self, monkeypatch, priority):
         """ICI's real rule, LU included — the conditional token lives there."""
         rule = self._rule()

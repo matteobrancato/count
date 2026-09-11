@@ -1023,9 +1023,20 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
     if expanded is None or expanded.empty:
         return pd.DataFrame()
 
+    # The PER-TOOL country fields belong here, and their absence was the single
+    # biggest blind spot in this export.  A row is automated only once a rule
+    # can attribute it to a country, and each tool reads its OWN field —
+    # TestIM "Testim Country Coverage", Marionnaud's Java and Playwright their
+    # own — while the export showed only `multi_countries` (which no TestIM
+    # rule reads) and `custom_country_coverage` (which only Microservices
+    # does).  So the one field that decided the row was the one field nobody
+    # could see: reviewing ICI, sixty-six cases read "Automated UAT" next to a
+    # Backlog verdict and the export offered nothing to explain it.
     base_cols = ["case_id", "title", "url", "section_path", "priority_label",
                  "type_label", "device", "automation_tool", "labels",
-                 "multi_countries", "country_coverage"]
+                 "multi_countries", "country_coverage",
+                 "testim_country_coverage", "java_country_coverage",
+                 "playwright_country_coverage"]
     meta_by_case: dict[int, dict] = {}
     meta = pd.DataFrame(columns=["case_id"])
     try:
@@ -1095,14 +1106,30 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
         other = [o for _, o in split]
         if any(other):
             out["Other BUs on this case"] = other
-    for col in ("labels", "multi_countries", "country_coverage"):
+    _TOOL_COUNTRY = {
+        "testim_country_coverage":     "Testim Country Coverage",
+        "java_country_coverage":       "Java Country Coverage",
+        "playwright_country_coverage": "Playwright Country Coverage",
+    }
+    for col in ("labels", "multi_countries", "country_coverage",
+                *_TOOL_COUNTRY):
         if col in out.columns:
             out[col] = out[col].map(
                 lambda v: ", ".join(v) if isinstance(v, list) else (v or ""))
+    # A tool this BU does not use leaves its column empty on every single row,
+    # and an always-empty column is a label that lies about what was checked —
+    # so it is dropped rather than shipped blank.  These are shown RAW and
+    # named exactly as TestRail names them: unlike "Countries counted for this
+    # BU" they make no claim about counting, they are the field, and a QA lead
+    # reconciling against TestRail needs them to match it character for
+    # character.
+    out = out.drop(columns=[c for c in _TOOL_COUNTRY
+                            if c in out.columns and not out[c].any()])
     out = out.rename(columns={"labels": "Labels",
                               "multi_countries": "Countries counted for this BU",
                               "country_coverage": "Country Coverage",
-                              "device_field": "Device (TestRail field)"})
+                              "device_field": "Device (TestRail field)",
+                              **_TOOL_COUNTRY})
 
     lead = ["Case ID", "Title", "Country", "Device", "Category",
             "Decided By", "Deciding Value"]
