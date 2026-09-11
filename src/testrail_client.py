@@ -76,11 +76,31 @@ _DEFAULT_LIMIT = 5
 # clock and TestRail's disagree by more than enough to 429 anyway.
 _HEADROOM = 0.85
 
+
+def _paced_per_account(limit: int) -> float:
+    """Requests/minute to actually issue on ONE account.
+
+    A PERCENTAGE of headroom is the wrong shape once the cap is small.  15% of
+    180 is twenty-seven requests of slack; 15% of 5 is three quarters of ONE.
+    At a cap of 5 the pacer therefore ran each account at 4.25 req/min with
+    less than a single request left to absorb every source of jitter — our
+    clock against TestRail's, the window boundary, the unpaced pool probe — and
+    the 2026-09-11 cold start 429'd on essentially every request for seventeen
+    minutes without ever finishing.
+
+    So the slack is now whichever is SMALLER: the old percentage, or one whole
+    request.  At 5/min that paces 4 and keeps a full request in reserve; at
+    180/min the percentage still dominates and the behaviour is unchanged.
+    The floor at half the cap stops a cap of 1 from pacing to zero.
+    """
+    return max(limit * 0.5, min(limit * _HEADROOM, limit - 1.0))
+
+
 _LIMIT_LOCK = threading.Lock()
 _limit_declared = _DEFAULT_LIMIT      # from the secrets, or the default
 _limit_observed: int | None = None    # what a 429 told us; wins when lower
 _pool_size = 1                        # working accounts; set by `_get_client`
-_PACE_INTERVAL = 60.0 / (_DEFAULT_LIMIT * _HEADROOM)
+_PACE_INTERVAL = 60.0 / _paced_per_account(_DEFAULT_LIMIT)
 
 # "API Rate Limit Exceeded - 5 per minute maximum allowed. Retry after 57s."
 _LIMIT_RE = re.compile(r"(\d+)\s+per\s+minute\s+maximum\s+allowed", re.I)
@@ -96,7 +116,8 @@ def _effective_limit() -> int:
 def _repace() -> None:
     """Recompute the slot interval from (per-account limit × working accounts)."""
     global _PACE_INTERVAL
-    _PACE_INTERVAL = 60.0 / max(0.1, _effective_limit() * _pool_size * _HEADROOM)
+    _PACE_INTERVAL = 60.0 / max(
+        0.1, _paced_per_account(_effective_limit()) * _pool_size)
 
 
 def _learn_limit(body: str) -> None:
@@ -581,6 +602,14 @@ def _get_client() -> TestRailClient:
         _pool_size = len(working)
         _limit_declared = _configured_limit()
         _repace()
+        # The probe above spent ONE request on EVERY account, deliberately
+        # outside the pacer.  That was free at 180/min; at 5/min it is a fifth
+        # of an account's whole minute, and the download then started into the
+        # very same window — the account saw its probe plus a full minute of
+        # paced traffic and 429'd immediately.  Holding the first paced slot
+        # back by one account-interval pays for the probe out of the window it
+        # actually used.  15s at a cap of 5; under half a second at 180.
+        _pace_cooldown(60.0 / _paced_per_account(_effective_limit()))
         logging.getLogger(__name__).warning(
             "TestRail: %d/%d account(s) usable, cap %d req/min each%s → "
             "%.0f requests/min total (slot every %.1fs)",
@@ -790,6 +819,14 @@ _WARM_INTERVAL = 21300.0   # data TTL (6h) minus 5 min — re-warm just before e
 # serial fetches — which is exactly how a single 429 storm used to become a
 # dashboard that stayed broken long after TestRail had recovered.
 _WARM_RETRY_AFTER = 120.0
+# ...and it DOUBLES while the failures keep coming.  A FIXED 120s was the right
+# answer to one bad window and the wrong answer to a bad afternoon: during a
+# sustained storm every session threw the same 25 parallel tasks back at a
+# window that had not reopened, so the retry was part of what held it shut.
+# Capped far below the warm interval, so a recovered TestRail is never locked
+# out for more than half an hour.
+_WARM_RETRY_MAX = 1800.0
+_warm_failures = 0     # consecutive failed prefetches; a clean one resets it
 
 # How often the download reports in.  Suite completions are ~80s apart at the
 # current cap; this ticks the counter in between so the box always moves.
@@ -807,7 +844,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
     every couple of seconds — from THIS thread, never from a worker, so the UI
     call is always made where Streamlit expects it.
     """
-    global _WARMED_AT
+    global _WARMED_AT, _warm_failures
     if time.time() - _WARMED_AT < _WARM_INTERVAL:
         return
     _WARMED_AT = time.time()   # claimed upfront so concurrent sessions don't re-warm
@@ -877,7 +914,13 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
                 tick(n_done, n_total)
     finally:
         if failures:
-            _WARMED_AT = time.time() - _WARM_INTERVAL + _WARM_RETRY_AFTER
+            _warm_failures += 1
+            backoff = min(_WARM_RETRY_AFTER * 2 ** (_warm_failures - 1),
+                          _WARM_RETRY_MAX)
+            _WARMED_AT = time.time() - _WARM_INTERVAL + backoff
             logging.getLogger(__name__).warning(
-                "prefetch: %d task(s) failed — re-warm allowed again in %.0fs",
-                failures, _WARM_RETRY_AFTER)
+                "prefetch: %d task(s) failed (%d warm-up(s) in a row) — "
+                "re-warm allowed again in %.0fs",
+                failures, _warm_failures, backoff)
+        else:
+            _warm_failures = 0

@@ -2138,6 +2138,30 @@ class TestRateLimitPolicy:
         from src import testrail_client as trc
         assert trc._DEFAULT_LIMIT <= 5
 
+    def test_a_small_cap_keeps_a_whole_request_in_reserve(self):
+        """15% of 5 is three quarters of a request — less slack than the single
+        unpaced pool probe spends, which is how the 2026-09-11 cold start 429'd
+        on every request for seventeen minutes.  Below ~7/min the reserve has
+        to be a whole request, not a percentage."""
+        from src import testrail_client as trc
+        assert trc._paced_per_account(5) <= 4.0
+        assert trc._paced_per_account(5) * 4 <= 5 * 4 - 4   # 4 accounts, 4 spare
+
+    def test_a_large_cap_is_left_exactly_as_it_was(self):
+        """The reserve must not become a tax once the cap is restored — at
+        180/min the old percentage is still the binding constraint."""
+        from src import testrail_client as trc
+        assert trc._paced_per_account(180) == pytest.approx(180 * trc._HEADROOM)
+        assert trc._paced_per_account(50) == pytest.approx(50 * trc._HEADROOM)
+
+    def test_the_paced_rate_is_always_positive_and_under_the_cap(self):
+        """Including the degenerate caps: 1/min must still pace something, and
+        nothing may ever pace AT the cap."""
+        from src import testrail_client as trc
+        for cap in (1, 2, 3, 5, 7, 10, 50, 180, 1000):
+            paced = trc._paced_per_account(cap)
+            assert 0 < paced < cap, cap
+
     def test_the_cap_is_read_out_of_the_429_body(self, monkeypatch):
         """TestRail states the real number in the error it sends back."""
         from src import testrail_client as trc
@@ -2351,6 +2375,10 @@ class TestPrewarmSurvivesABadWindow:
         monkeypatch.setattr(trc, "fetch_sections", lambda p, s: [])
         monkeypatch.setattr(trc, "fetch_labels", lambda p: {})
         monkeypatch.setattr(trc, "_WARMED_AT", 0.0)
+        # The backoff counter is module state: without this the tests in this
+        # class would inherit each other's failure streak and the hold times
+        # would depend on execution order.
+        monkeypatch.setattr(trc, "_warm_failures", 0)
 
     def test_a_failed_warmup_lets_the_next_one_retry_soon(self, monkeypatch):
         from src import testrail_client as trc
@@ -2369,6 +2397,46 @@ class TestPrewarmSurvivesABadWindow:
         trc.prefetch_all_suites([1, 2])
         held = trc._WARM_INTERVAL - (trc.time.time() - trc._WARMED_AT)
         assert held > trc._WARM_RETRY_AFTER
+
+    def test_repeated_failures_back_off_instead_of_retrying_on_a_timer(
+            self, monkeypatch):
+        """A FIXED retry was part of what held the window shut: during a
+        sustained storm every session threw the same 25 parallel tasks back at
+        a cap that had not reopened.  Right for one bad window, wrong for a bad
+        afternoon — so the hold doubles while the failures keep coming."""
+        from src import testrail_client as trc
+
+        def _boom(pid, sid):
+            raise trc.TestRailError("429: rate limited")
+
+        self._stub(monkeypatch, trc, _boom)
+        held = []
+        for _ in range(4):
+            monkeypatch.setattr(trc, "_WARMED_AT", 0.0)
+            trc.prefetch_all_suites([1, 2])
+            held.append(trc._WARM_INTERVAL - (trc.time.time() - trc._WARMED_AT))
+
+        assert held == sorted(held), held              # never shrinks
+        assert held[1] > held[0] * 1.5, held           # actually doubles
+        assert held[-1] <= trc._WARM_RETRY_MAX + 5     # and stays capped
+        # A recovered TestRail must never be locked out for a whole TTL.
+        assert trc._WARM_RETRY_MAX < trc._WARM_INTERVAL
+
+    def test_a_clean_warmup_clears_the_backoff(self, monkeypatch):
+        """Otherwise one bad afternoon would keep punishing the next morning."""
+        from src import testrail_client as trc
+
+        def _boom(pid, sid):
+            raise trc.TestRailError("429: rate limited")
+
+        self._stub(monkeypatch, trc, _boom)
+        trc.prefetch_all_suites([1, 2])
+        assert trc._warm_failures == 1
+
+        monkeypatch.setattr(trc, "_WARMED_AT", 0.0)
+        monkeypatch.setattr(trc, "fetch_cases", lambda p, s: [])
+        trc.prefetch_all_suites([1, 2])
+        assert trc._warm_failures == 0
 
     def test_progress_keeps_reporting_while_a_download_runs(self, monkeypatch):
         import threading
@@ -2519,11 +2587,14 @@ class TestMultiAccountPool:
 
         Round-robin is what makes this hold: consecutive slots land on
         consecutive accounts, so the aggregate rate divides cleanly by the
-        pool size instead of piling onto one user."""
+        pool size instead of piling onto one user.
+
+        Asks the real pacer rather than a copy of its formula: the copy went
+        stale the moment the headroom stopped being a flat percentage."""
         from src import testrail_client as trc
         cap = trc._effective_limit()
         for n in (1, 2, 3, 5, 8):
-            interval = 60.0 / (cap * n * trc._HEADROOM)
+            interval = 60.0 / (trc._paced_per_account(cap) * n)
             per_account = (60 / interval) / n
             assert per_account <= cap, n
 
