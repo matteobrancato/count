@@ -375,6 +375,12 @@ def build_rules() -> list[Rule]:
         automated_values=list(AUTOMATED_JAVA),
         countries_filter=TPS_TOKENS,
         country_labels=TPS_LABELS,
+        # No type restriction, like ICI.  The Rule default is Regression-only,
+        # but the baseline admits a case by its big_regr label whatever its
+        # Type — so a Configuration case sat in the denominator with no way to
+        # reach the numerator.  C3022045 (Configuration, Automation Status
+        # Automated) was exactly that: two rows no status could ever automate.
+        type_filter=[],
     ))
     rules += _testim_pair("The Perfume Shop", "TPS", TPS_SUITE, TPS_TOKENS,
                           country_labels=TPS_LABELS)

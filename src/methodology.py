@@ -40,7 +40,7 @@ shown: the big number is rows, the small caption is unique cases.
 |---|---|
 | **Automated** | status is Automated / Automated DEV / UAT / Prod *and* the row is in the automated set |
 | **To update** | status "To be updated" — was automated, needs maintenance |
-| **Not Applicable** | status "Automation not applicable" |
+| **Not Applicable** | status "Automation not applicable". A Testim Desktop or Testim Mobile field decides only its own device: its N/A never makes the other device's row N/A |
 | **Backlog** | a non-automated status **and** the case is automated nowhere — a script to write from scratch |
 | **Partially Automated** | the case IS automated in another country or on the other device — only the missing country/device is left. Also covers rows whose status field cannot describe them: the status is per case, the coverage per country, so a case automated in 3 of its 5 countries leaves 2 rows the field says nothing about |
 | **Unknown** | no automation status filled in, so we can't say — shown only when it happens, and it means a field is missing in TestRail |
@@ -142,7 +142,8 @@ METHODOLOGY_FOR_LLM = """
   Each (case × country × device) baseline row is classified as one of:
     · Automated     — status Automated / Automated DEV / UAT / Prod
     · To be updated — status "To be updated" (was automated, needs maintenance)
-    · N/A           — status "Automation not applicable"
+    · N/A           — status "Automation not applicable" (generic field: every
+                      device; a Testim Desktop/Mobile field: its own device only)
     · Backlog       — any OTHER non-automated status AND the case is automated
                       nowhere (no automated row in any country / device)
     · Partially automated — same statuses, but the case IS automated in another

@@ -281,10 +281,24 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     na_mask      = pd.Series(False, index=raw.index)
     tbu_mask     = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
+    # A device's own TestIM field speaks for THAT device only.  Its N/A used to
+    # enter the case-wide mask below, so "Testim Desktop = Automation not
+    # applicable" made the MOBILE row N/A as well — even with the Mobile field
+    # empty and the generic status reading "Ready to be automated" (TPS
+    # C4556257, found reconciling against a TestRail export in 2026-09).  An N/A
+    # written for one device is a decision about that device; the device pass
+    # further down applies it to its own row, and the other row is left to the
+    # fields that actually describe it.
+    #
+    # Deliberately N/A only.  The same inheritance exists for Backlog, but
+    # removing it would turn those rows Unknown rather than correct them, and
+    # "To be updated" is read from ANY field by design.  Both left as they are.
+    device_cols = set(_DEVICE_STATUS_COL.values())
     for col in status_cols:
         s      = raw[col]
         is_tbu = _is_to_update(s)
-        na_mask      |= s.isin(_STATUS_NA)
+        if col not in device_cols:
+            na_mask  |= s.isin(_STATUS_NA)
         tbu_mask     |= is_tbu
         # Backlog excludes the auto / N/A / to-be-updated values.
         backlog_mask |= s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "") & ~is_tbu

@@ -398,6 +398,93 @@ class TestBacklogSplit:
         assert s["partially_automated"] == 1
 
 
+# ── one device's N/A must not decide the other device's row ──────────────────
+class TestDeviceNaStaysOnItsDevice:
+    """TPS C4556257, reconciled against a TestRail export in 2026-09: Testim
+    Desktop = Automation not applicable, Testim Mobile empty, generic status
+    Ready to be automated — and BOTH rows came out N/A, because the Desktop
+    field's verdict went into the case-wide mask.  An N/A written for one
+    device is a decision about that device only."""
+
+    @staticmethod
+    def _rules():
+        common = {"bu": "The Perfume Shop", "scope": "website", "suite_id": 1,
+                  "countries_filter": ["TPSGB"],
+                  "country_labels": {"TPSGB": "UK"}, "type_filter": []}
+        return [
+            SimpleNamespace(framework="java", status_field_label="Automation Status",
+                            country_field_label="multi_countries", **common),
+            SimpleNamespace(framework="testim_desktop",
+                            status_field_label="Automation Status Testim Desktop",
+                            country_field_label="Testim Country Coverage", **common),
+            SimpleNamespace(framework="testim_mobile",
+                            status_field_label="Automation Status Testim Mobile View",
+                            country_field_label="Testim Country Coverage", **common),
+        ]
+
+    def _cats(self, generic, desktop, mobile):
+        raw = pd.DataFrame([_case(
+            case_id=1, multi_countries=["TPSGB"],
+            labels=["big_regr_desktop", "big_regr_mobile"],
+            **{"status_Automation Status": generic,
+               "status_Automation Status Testim Desktop": desktop,
+               "status_Automation Status Testim Mobile View": mobile})])
+        out = bl._expand_baseline(raw, self._rules())
+        return dict(zip(out["device"], out["_cat_base"]))
+
+    def test_a_desktop_na_no_longer_makes_the_mobile_row_na(self):
+        cats = self._cats("Ready to be automated", "Automation not applicable", "")
+        assert cats == {"Desktop": "not_applicable", "Mobile": "backlog"}
+
+    def test_a_mobile_na_no_longer_makes_the_desktop_row_na(self):
+        cats = self._cats("Ready to be automated", "", "Automation not applicable")
+        assert cats == {"Desktop": "backlog", "Mobile": "not_applicable"}
+
+    def test_na_on_both_devices_is_still_na_on_both(self):
+        cats = self._cats("", "Automation not applicable", "Automation not applicable")
+        assert cats == {"Desktop": "not_applicable", "Mobile": "not_applicable"}
+
+    def test_a_generic_na_still_covers_every_device(self):
+        """The generic field describes the whole case, so its N/A still does."""
+        cats = self._cats("Automation not applicable", "", "")
+        assert cats == {"Desktop": "not_applicable", "Mobile": "not_applicable"}
+
+    def test_to_be_updated_is_still_read_from_any_field(self):
+        """Out of scope on purpose: "To be updated" beats Automated from ANY
+        status field — the settled rule — so it still reaches both rows."""
+        cats = self._cats("", "To be updated", "")
+        assert cats == {"Desktop": "to_be_updated", "Mobile": "to_be_updated"}
+
+
+class TestTpsJavaHasNoTypeFilter:
+    """The baseline admits a case by its big_regr label whatever its Type, so a
+    Type filter on the rule left non-Regression cases in the denominator with
+    no way into the numerator.  TPS C3022045 (Configuration, Automated) was two
+    rows no status could ever automate.  ICI already had none."""
+
+    def test_tps_java_reads_every_type(self):
+        rule = next(r for r in br.ALL_RULES if r.name == "TPS JAVA")
+        assert rule.type_filter == []
+
+    def test_a_configuration_case_now_matches(self, monkeypatch):
+        monkeypatch.setattr(eng, "_is_deprecated", lambda case, reg: False)
+        monkeypatch.setattr(eng, "_get_country_tokens",
+                            lambda case, reg, fld, pid=None: case.get("mc", []))
+        reg = SimpleNamespace(
+            field=lambda lbl: (SimpleNamespace(system_name="custom_auto",
+                                               values_by_id={1: "Automated"})
+                               if lbl == "Automation Status" else None),
+            status_value_ids=lambda lbl, vals: {1},
+            type_id=lambda t: {"Regression": 10, "Configuration": 20}.get(t),
+            priority_id_to_label={},
+        )
+        rule = next(r for r in br.ALL_RULES if r.name == "TPS JAVA")
+        ok, tokens = eng._rule_matches(
+            {"custom_auto": 1, "type_id": 20, "mc": ["TPSGB"]}, rule, reg,
+            project_id=1)
+        assert ok and tokens == ["TPSGB"]
+
+
 # ── a script that exists but is pointed at no country ────────────────────────
 class TestToolAutomatedWithoutACountry:
     """Found reviewing ICI with its QA lead on 2026-09-11: 57 Backlog rows over
