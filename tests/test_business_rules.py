@@ -1091,6 +1091,83 @@ class TestDeferredTileDownloads:
         assert writer()                          # must still produce the file
 
 
+class TestWtrTestimCountryFallback:
+    """Reconciling Watsons Turkey against a TestRail export (2026-09): eight
+    cases read Automated UAT on Testim with "Testim Country Coverage" left
+    blank, and the matcher — which reads countries from that field only —
+    returned no row for any of them.  Fourteen rows out of the count.
+
+    WTR is the one BU where falling back to multi_countries is safe: it has a
+    single country, so a blank field cannot mean anything but TR.  Marionnaud
+    and ICI deliberately have no fallback, and must keep not having one."""
+
+    @staticmethod
+    def _reg():
+        return SimpleNamespace(
+            field=lambda lbl: (SimpleNamespace(system_name="custom_td",
+                                               values_by_id={1: "Automated UAT"})
+                               if lbl == "Automation Status Testim Desktop" else None),
+            status_value_ids=lambda lbl, vals: {1},
+            type_id=lambda t: None,
+            priority_id_to_label={},
+        )
+
+    @pytest.fixture(autouse=True)
+    def _fields(self, monkeypatch):
+        monkeypatch.setattr(eng, "_is_deprecated", lambda case, reg: False)
+        # Each field returns what the case holds under that field's label.
+        monkeypatch.setattr(eng, "_get_country_tokens",
+                            lambda case, reg, fld, pid=None: case.get(fld, []))
+
+    @staticmethod
+    def _rule(name="WTR TESTIM DESKTOP"):
+        return next(r for r in br.ALL_RULES if r.name == name)
+
+    def _match(self, tcc, mc, name="WTR TESTIM DESKTOP"):
+        case = {"custom_td": 1, "Testim Country Coverage": tcc,
+                "multi_countries": mc}
+        return eng._rule_matches(case, self._rule(name), self._reg(),
+                                 project_id=1)
+
+    def test_a_blank_coverage_field_falls_back_to_multi_countries(self):
+        ok, tokens = self._match([], ["WTR", "WTR_SPR"])
+        assert ok and set(tokens) == {"WTR", "WTR_SPR"}
+
+    def test_a_filled_coverage_field_is_taken_at_its_word(self):
+        """The fallback is for a BLANK field only.  Whatever is written there
+        is the statement of coverage, even when it names no WTR token."""
+        ok, _ = self._match(["LT", "LV"], ["WTR"])
+        assert not ok
+
+    def test_the_normal_path_is_unchanged(self):
+        ok, tokens = self._match(["WTR"], ["WTR", "WTR_SPR"])
+        assert ok and tokens == ["WTR"]
+
+    def test_a_shared_case_naming_another_bus_country_fails_closed(self):
+        """7544 is shared.  A blank Testim field on a WTR + LT/LV case is as
+        likely to be Drogas' script as Turkey's — crediting it to WTR would
+        count work this BU may not own."""
+        ok, _ = self._match([], ["WTR", "LT", "LV"])
+        assert not ok
+
+    def test_both_devices_get_the_fallback(self):
+        rule = self._rule("WTR TESTIM MOBILE")
+        assert rule.country_fallback_field_label == "multi_countries"
+
+    def test_multi_country_bus_still_have_no_fallback(self):
+        """Where a coverage field says WHICH of several countries a script
+        covers, the baseline's list must never stand in for it."""
+        for r in br.ALL_RULES:
+            if r.bu in ("Marionnaud", "ICI Paris XL", "The Perfume Shop",
+                        "Kruidvat", "Trekpleister", "Drogas"):
+                assert r.country_fallback_field_label is None, r.name
+
+    def test_no_other_bu_gained_a_fallback(self):
+        with_fallback = {r.bu for r in br.ALL_RULES
+                         if r.country_fallback_field_label}
+        assert with_fallback == {"Watsons Turkey"}
+
+
 class TestPlaywrightLabelGate:
     """Four BUs (Kruidvat, Trekpleister, Marionnaud, Watsons) do NOT read the
     generic "Automation Status" — their automation lives in BU-specific fields.

@@ -29,6 +29,7 @@ import streamlit as st
 
 from . import testrail_client as tr
 from .bu_rules import (
+    ALL_COUNTRY_TOKENS,
     ALL_RULES,
     PLAYWRIGHT_LABEL,
     PROD_SANITY_LABEL,
@@ -420,7 +421,19 @@ def _rule_matches(
     if rule.countries_filter:
         tokens = set(_get_country_tokens(case, reg, rule.country_field_label, project_id))
         if not tokens and rule.country_fallback_field_label:
-            tokens = set(_get_country_tokens(case, reg, rule.country_fallback_field_label, project_id))
+            fallback = set(_get_country_tokens(
+                case, reg, rule.country_fallback_field_label, project_id))
+            # Fails CLOSED on a shared case.  The fallback reads the baseline's
+            # country list as the automation's, which only holds when that list
+            # cannot belong to anyone else: if it also names another BU's
+            # country, a blank tool field is as likely to be THEIR script, and
+            # counting it here would credit this BU with work it may not own.
+            # Under-counting one ambiguous case is visible and fixable in
+            # TestRail; over-counting it is neither.
+            foreign = {t for t in fallback
+                       if t in ALL_COUNTRY_TOKENS and t not in rule.countries_filter}
+            if not foreign:
+                tokens = fallback
         # Conditional tokens (e.g. ICI's LU counts only for Highest priority).
         prio = reg.priority_id_to_label.get(int(case.get("priority_id") or 0))
         tokens = set(filter_conditional_tokens(list(tokens), prio))

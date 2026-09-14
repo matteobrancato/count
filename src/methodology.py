@@ -91,6 +91,13 @@ Playwright case from an older one with the same field filled, so a case missing
 it is not counted. Mobile App uses its own tooling (the "Automation MAPP Tool"
 field).
 
+**Which countries a Testim script covers** — read from "Testim Country
+Coverage", not from `multi_countries`: a script can cover fewer countries than
+the case is scoped to, and only the countries it names count as automated. One
+exception: **Watsons Turkey** has a single country, so when that field is left
+blank the case's own `multi_countries` is used instead — unless it also names
+another Business Unit's country, in which case the row is not counted.
+
 **Freshness** — numbers refresh automatically every few hours; the "Updated …"
 label next to the tabs shows their real age, and the ↻ next to it forces an
 immediate refresh (it re-reads TestRail, so it takes a minute).
@@ -155,4 +162,11 @@ METHODOLOGY_FOR_LLM = """
   own tooling.
 - A Playwright case needs BOTH "Automation Status" = automated AND the
   `playwright` label.  The label alone never makes a case automated.
+- Testim rows take their countries from "Testim Country Coverage", NOT from
+  multi_countries: only the countries named there count as automated.  Sole
+  exception, Watsons Turkey (one country): a BLANK Testim Country Coverage falls
+  back to multi_countries, unless multi_countries also names another BU's
+  country — then the row is not counted.  On Watsons Turkey the generic
+  "Automation Status" automates nothing on its own (only with the playwright
+  label); a "To be updated" in it still beats Automated, as everywhere.
 """.strip()

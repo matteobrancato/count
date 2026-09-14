@@ -1257,10 +1257,17 @@ def _filter_recipe(bu: str, scope: str, category: str,
                       # and pull in every legacy case sharing that field.
                       + (f"   AND label: {', '.join(gate)}" if gate else ""),
         })
+        fb = getattr(r, "country_fallback_field_label", None)
         rows.append({
             "Field": f"{r.country_field_label}  (for {r.framework})",
-            "Filter": "one of: " + ", ".join(r.countries_filter)
-                      if r.countries_filter else "any",
+            "Filter": ("one of: " + ", ".join(r.countries_filter)
+                       if r.countries_filter else "any")
+                      # Without this a lead filtering on the coverage field
+                      # alone misses the cases counted through the fallback,
+                      # and the two counts differ for no visible reason.
+                      + (f"   — or, if empty, {fb} one of the same "
+                         f"(only when {fb} names no other BU's country)"
+                         if fb and r.countries_filter else ""),
         })
     if any("IPXL LU" in r.countries_filter for r in rules):
         rows.append({"Field": "Conditional country",

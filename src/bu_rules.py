@@ -389,9 +389,22 @@ def build_rules() -> list[Rule]:
     WTR_SUITE  = 7544
     WTR_TOKENS = ["WTR", "WTR_SPR"]
     WTR_LABELS = {"WTR": "TR", "WTR_SPR": "TR"}
+    # Fallback to `multi_countries` when Testim Country Coverage is EMPTY —
+    # the one BU where that is safe, and the opposite of the call made for
+    # Marionnaud and ICI.  There the coverage field states WHICH of several
+    # countries a script covers, and letting the baseline's list stand in for
+    # it would report countries nobody verified.  Watsons Turkey has ONE
+    # country: an empty field cannot mean anything but TR.  Reconciling the
+    # TestRail export in 2026-09, eight cases read Automated UAT on Testim with
+    # the field left blank — fourteen rows the dashboard showed as not
+    # automated.  It fires only on a blank field (anything written there is
+    # taken at its word), and `_rule_matches` refuses it outright when
+    # multi_countries also names another BU's country: 7544 is shared, and a
+    # blank field on a WTR+LT/LV case could be Drogas' script.
     rules += _testim_pair("Watsons Turkey", "WTR", WTR_SUITE, WTR_TOKENS,
                           country_labels=WTR_LABELS,
-                          implicit_country="TR")
+                          implicit_country="TR",
+                          country_fallback_field_label="multi_countries")
 
     # ============================================================ Watsons Ukraine
     # A BU in its own right, NOT a country of Watsons Turkey: it has its own
