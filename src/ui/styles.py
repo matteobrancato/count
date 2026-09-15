@@ -165,17 +165,38 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 .stButton > button:active, [data-testid="stFormSubmitButton"] button:active {{
     transform: translateY(0);
 }}
-/* Primary-kind buttons keep the brand fill */
-.stButton > button[kind="primary"] {{
+/* Primary-kind buttons keep the brand fill — a form's primary submit included:
+   the rule above gives every form submit a white surface, and it used to win
+   over `type="primary"`, leaving AI Test Design's one call to action looking
+   like a secondary button. */
+.stButton > button[kind="primary"],
+[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"] {{
     background: {c['brand']};
     border-color: {c['brand']};
     color: #fff;
 }}
-.stButton > button[kind="primary"]:hover {{
+.stButton > button[kind="primary"]:hover,
+[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"]:hover {{
     background: {c['brand_strong']};
     border-color: {c['brand_strong']};
     color: #fff;
 }}
+/* The label is a <p>, which the global paragraph colour reaches first: slate
+   text on the brand fill.  Same fix the chat submit arrow needed. */
+.stButton > button[kind="primary"] p,
+[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"] p {{
+    color: #fff !important;
+}}
+/* Tertiary buttons read as quiet text actions ("Clear result"), not as boxes. */
+.stButton > button[kind="tertiary"],
+.stButton > button[kind="tertiary"]:hover {{
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    transform: none;
+}}
+.stButton > button[kind="tertiary"] p {{ color: {c['muted']} !important; }}
+.stButton > button[kind="tertiary"]:hover p {{ color: {c['brand']} !important; }}
 
 /* Chat input submit arrow — Dexter red (matches the FAB), the panel's primary
    action. */

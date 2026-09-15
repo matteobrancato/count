@@ -8,7 +8,7 @@ from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
 from src.ui import (
     backlog_tab, chat_assistant, coverage_tab, data_quality, global_filter,
-    kpi_strip, overview_tab, report_tab, styles,
+    kpi_strip, overview_tab, report_tab, styles, test_design_tab,
 )
 # TEMPORARILY DISABLED — Runs & Stability.  See the tab bar in main(): both tabs
 # fire a 30-50s background TestRail load on EVERY script run (Streamlit executes
@@ -358,9 +358,9 @@ def main() -> None:
         # the two names back in the tuple, then uncomment the two `_render_tab`
         # calls and the import at the top of this file — nothing else changed.
         (tab_backlog, tab_coverage, tab_overview,
-         tab_report) = st.tabs(
+         tab_report, tab_test_design) = st.tabs(
             ["📋 Backlog", "📐 Coverage",
-             "🧭 Overview", "📄 Report"]
+             "🧭 Overview", "📄 Report", "✨ AI Test Design"]
         )
         # (tab_backlog, tab_coverage, tab_runs, tab_stability, tab_overview,
         #  tab_report) = st.tabs(
@@ -444,6 +444,9 @@ def main() -> None:
     _render_tab(tab_coverage, coverage_tab.render, "Coverage")
     _render_tab(tab_overview, overview_tab.render, "Overview", "overview_anim")
     _render_tab(tab_report,   report_tab.render,   "Report",   "report_anim")
+    # Beta.  Costs nothing on a normal run: it is one fragment that draws a
+    # form, and calls Jira, Confluence or Gemini only when "Generate" is pressed.
+    _render_tab(tab_test_design, test_design_tab.render, "AI Test Design")
     # TEMPORARILY DISABLED — Runs & Stability.
     #
     # These are the only two tabs that query TestRail live.  Rendering either

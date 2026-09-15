@@ -29,6 +29,7 @@ using the same cached data the dashboard renders.
 | **📈 Stability** | How dependable the tests are — always-pass / always-fail / flaky classification over the last N runs — plus a deep-dive on a single case's execution history |
 | **🧭 Overview** | Cross-BU totals — Smoke Suite, All Automated Cases and Production Sanity — broken down by country and device, over any subset of BUs. These are *automated* counts, not baseline coverage: for that, read the Backlog tab |
 | **📄 Report** | Presentation-ready Altair charts (per BU × country × device, plus a coverage leaderboard), suitable for copy-pasting into slides |
+| **✨ AI Test Design** *(Beta)* | Jira stories, Confluence pages, documents and images in; the fewest TestRail-style test cases that cover every acceptance criterion out — step by step, traced AC → test, with open questions for the PO. One Gemini call, Pro first |
 
 A floating chat button (bottom-left, every tab) opens **Dexter**.
 
@@ -72,7 +73,11 @@ app.py                      Streamlit entry point: header, credential gate,
 │   │                       framework precedence, cache warm-up
 │   ├── metrics.py          Aggregation helpers (smoke, totals, prod sanity)
 │   ├── methodology.py      Canonical description of how every number is computed
-│   ├── jira_client.py      Read-only Jira enrichment (best-effort)
+│   ├── jira_client.py      Read-only Jira enrichment (best-effort) and story reading
+│   ├── confluence_client.py Read-only Confluence pages (AI Test Design context)
+│   ├── gemini_client.py    Gemini client + the model fallback policy, shared by
+│   │                       Dexter and AI Test Design
+│   ├── test_design.py      AI Test Design: sources, prompt, schema, validation
 │   └── ui/
 │       ├── global_filter.py  Scope + BU selector, shareable via URL
 │       ├── kpi_strip.py      Executive KPI row under the header
@@ -84,6 +89,7 @@ app.py                      Streamlit entry point: header, credential gate,
 │       ├── report_tab.py     Report tab
 │       ├── data_quality.py   TestRail hygiene checklist
 │       ├── chat_assistant.py Dexter — the Gemini assistant
+│       ├── test_design_tab.py AI Test Design tab (Beta)
 │       └── styles.py         Design system (colours, CSS, health thresholds)
 │
 └── tests/                  Pure-Python regression suite (no API calls)
@@ -237,6 +243,9 @@ GEMINI_MODEL     = "gemini-2.5-flash"   # omit to use the built-in fallback chai
 JIRA_URL           = "https://your-site.atlassian.net"
 ATLASSIAN_USER     = "your.email@example.com"
 ATLASSIAN_API_KEY  = "your_atlassian_token"
+# Optional — Confluence pages in AI Test Design (same Atlassian token);
+# derived from JIRA_URL's host when absent
+CONFLUENCE_URL     = "https://your-site.atlassian.net/wiki"
 ```
 
 Only the three `TESTRAIL_*` values are required. Without `GEMINI_API_KEY` the

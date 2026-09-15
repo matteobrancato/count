@@ -20,6 +20,7 @@ Secrets (Streamlit Cloud):
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -270,3 +271,147 @@ def search_issues(jql: str, limit: int = 50) -> list[dict]:
     except Exception:                                                   # noqa: BLE001
         logger.exception("Jira search failed for %s", jql)
         return []
+
+
+# ── user stories (AI Test Design) ─────────────────────────────────────────────
+# Read-only like everything above: the story is fetched to be READ by the AI,
+# never written back.
+
+_ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9_]+-\d+)\b")
+
+
+def extract_issue_keys(text: str) -> list[str]:
+    """Issue keys found in free text: bare keys and browse / board URLs alike.
+
+    Case-insensitive on input ("ipxl20-15740" is still a key), de-duplicated,
+    in the order they were written.
+    """
+    seen: dict[str, None] = {}
+    for key in _ISSUE_KEY_RE.findall((text or "").upper()):
+        seen.setdefault(key, None)
+    return list(seen)
+
+
+def adf_to_text(node) -> str:
+    """Atlassian Document Format (Jira Cloud's rich text) → readable plain text.
+
+    Keeps what matters to someone reading acceptance criteria: paragraphs,
+    headings, bullet and numbered lists (nested ones indented), tables as
+    `a | b` rows, links and mentions by their visible text.
+    """
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return "".join(adf_to_text(n) for n in node)
+    if not isinstance(node, dict):
+        return ""
+
+    kind    = node.get("type")
+    attrs   = node.get("attrs") or {}
+    content = node.get("content") or []
+
+    if kind == "text":
+        return node.get("text", "")
+    if kind == "hardBreak":
+        return "\n"
+    if kind == "mention":
+        return attrs.get("text", "")
+    if kind == "emoji":
+        return attrs.get("text") or attrs.get("shortName", "")
+    if kind in ("inlineCard", "blockCard", "embedCard"):
+        return attrs.get("url", "")
+    if kind == "rule":
+        return "\n"
+    if kind in ("bulletList", "orderedList"):
+        lines = []
+        for i, item in enumerate(content, 1):
+            body = adf_to_text(item.get("content") or []).strip("\n")
+            marker = f"{i}. " if kind == "orderedList" else "- "
+            first, *rest = body.split("\n") if body else [""]
+            lines.append(marker + first)
+            lines.extend("  " + r for r in rest)
+        return "\n".join(lines) + "\n"
+    if kind == "table":
+        rows = []
+        for row in content:
+            cells = [adf_to_text(c.get("content") or []).strip().replace("\n", " ")
+                     for c in (row.get("content") or [])]
+            rows.append(" | ".join(cells))
+        return "\n".join(rows) + "\n"
+    inner = adf_to_text(content)
+    if kind in ("paragraph", "heading", "codeBlock", "blockquote", "panel"):
+        return inner.rstrip("\n") + "\n"
+    return inner
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _acceptance_field_ids() -> tuple[str, ...]:
+    """Custom fields whose NAME says acceptance criteria.
+
+    Every Jira site names and numbers this field its own way
+    ("Acceptance Criteria", "Acceptance criteria (AC)", customfield_10034 …),
+    so it is found by name rather than hardcoded; many teams use none at all
+    and write the AC in the description, which is read anyway.
+    """
+    conf = _conf()
+    if not conf:
+        return ()
+    base, user, token = conf
+    try:
+        resp = requests.get(f"{base}/rest/api/3/field",
+                            auth=HTTPBasicAuth(user, token), timeout=_TIMEOUT)
+        if not resp.ok:
+            return ()
+        return tuple(f["id"] for f in resp.json()
+                     if "acceptance" in str(f.get("name", "")).lower())
+    except Exception:
+        logger.exception("Jira field list failed")
+        return ()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_story(key: str) -> dict:
+    """One story's text for the AI: summary, description, acceptance criteria.
+
+    Always returns a dict; `error` is set instead of raising, so one missing
+    or forbidden key is reported next to the others rather than aborting them.
+    """
+    out = {"key": key, "summary": "", "type": "", "status": "",
+           "description": "", "acceptance_criteria": "", "attachments": 0,
+           "error": None}
+    conf = _conf()
+    if not conf:
+        out["error"] = "Jira is not configured"
+        return out
+    base, user, token = conf
+    ac_ids = _acceptance_field_ids()
+    fields = ",".join(["summary", "description", "issuetype", "status",
+                       "attachment", *ac_ids])
+    try:
+        resp = requests.get(f"{base}/rest/api/3/issue/{key}",
+                            params={"fields": fields},
+                            auth=HTTPBasicAuth(user, token), timeout=_TIMEOUT)
+    except Exception as exc:                                            # noqa: BLE001
+        out["error"] = f"could not reach Jira ({type(exc).__name__})"
+        return out
+    if resp.status_code in (401, 403):
+        out["error"] = "no permission to read it"
+        return out
+    if resp.status_code == 404:
+        out["error"] = "not found (or no permission)"
+        return out
+    if not resp.ok:
+        out["error"] = f"Jira answered {resp.status_code}"
+        return out
+
+    f = resp.json().get("fields") or {}
+    out["summary"]     = f.get("summary") or ""
+    out["type"]        = (f.get("issuetype") or {}).get("name") or ""
+    out["status"]      = (f.get("status") or {}).get("name") or ""
+    out["description"] = adf_to_text(f.get("description")).strip()
+    out["attachments"] = len(f.get("attachment") or [])
+    ac = [adf_to_text(f.get(fid)).strip() for fid in ac_ids if f.get(fid)]
+    out["acceptance_criteria"] = "\n\n".join(a for a in ac if a)
+    return out
