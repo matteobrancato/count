@@ -45,12 +45,11 @@ https://aistudio.google.com/apikey.
 from __future__ import annotations
 
 import logging
-import re
-import time
 from typing import Any
 
 import streamlit as st
 
+from .. import gemini_client
 from .. import testrail_client as tr
 from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
 from ..methodology import METHODOLOGY_FOR_LLM
@@ -61,13 +60,9 @@ from .styles import COLORS
 logger = logging.getLogger(__name__)
 
 
-# ── Lazy Gemini import — the app must boot even without the dep installed ────
-try:
-    from google import genai
-    from google.genai import types
-    _GEMINI_AVAILABLE = True
-except ImportError:
-    _GEMINI_AVAILABLE = False
+# ── Gemini — imported lazily in `gemini_client`, so the app boots without it ──
+_GEMINI_AVAILABLE = gemini_client.AVAILABLE
+types = gemini_client.types
 
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
@@ -120,21 +115,9 @@ def _display_model() -> str:
     return _configured_model() or _FALLBACK_CHAIN[0]
 
 
-_RETRY_DELAY_RE = re.compile(
-    r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s",
-    re.IGNORECASE,
-)
-
-
-def _parse_retry_delay(err_str: str, default: float = 60.0) -> float:
-    """Pull a `retryDelay: 16s` value out of a Gemini RESOURCE_EXHAUSTED error.
-
-    The SDK exposes the original Google API error payload as the exception
-    string, so a regex over the string body is the easiest way to grab the
-    `RetryInfo` hint without depending on private SDK internals.
-    """
-    m = _RETRY_DELAY_RE.search(err_str)
-    return float(m.group(1)) if m else default
+# The retry policy moved to `src/gemini_client.py` so AI Test Design walks the
+# exact same one; the old name stays for anything still importing it.
+_parse_retry_delay = gemini_client.parse_retry_delay
 
 _SYSTEM_INSTRUCTION_TEMPLATE = """
 You are Dexter, the automation-coverage assistant for AS Watson's testing
@@ -811,24 +794,8 @@ def _build_coverage_brief() -> str:
 
 
 # ── Gemini client / session ──────────────────────────────────────────────────
-def _get_api_key() -> str | None:
-    try:
-        return st.secrets["GEMINI_API_KEY"]
-    except (KeyError, FileNotFoundError):
-        return None
-
-
-@st.cache_resource(show_spinner=False)
-def _get_gemini_client(api_key: str):
-    """One Gemini Client per app process — its underlying HTTP pool is shared.
-
-    Using `@st.cache_resource` instead of `st.session_state` avoids the
-    "Cannot send a request, as the client has been closed" error: Streamlit
-    serialises session_state values on each rerun, which closes the client's
-    httpx pool.  `cache_resource` is the documented escape hatch for stateful
-    objects that must outlive a rerun.
-    """
-    return genai.Client(api_key=api_key)
+_get_api_key       = gemini_client.api_key
+_get_gemini_client = gemini_client.client
 
 
 def _gemini_ready() -> bool:
@@ -922,91 +889,16 @@ def _generate_pending_response() -> None:
         top_p=0.9,
     )
 
-    candidates = _models_to_try()
-    cooling: dict[str, float] = st.session_state.setdefault("ai_exhausted_models", {})
-    now = time.time()
-
-    reply: str | None = None
-    used_model: str | None = None
-    last_err: str = ""
-
-    for model in candidates:
-        # Skip models still in cooldown (rate-limit or 404 hit recently).
-        if cooling.get(model, 0.0) > now:
-            continue
-        try:
-            client = _get_gemini_client(api_key)
-            response = client.models.generate_content(
-                model=model, contents=contents, config=config,
-            )
-            reply = (response.text or "").strip() or "(empty response)"
-            used_model = model
-            break
-        except Exception as exc:                                        # noqa: BLE001
-            err_str = str(exc)
-            last_err = err_str
-            if "limit: 0" in err_str:
-                # Account-level (no free tier on this model) — long cooldown:
-                # nothing we can do server-side, retry tomorrow.
-                cooling[model] = now + 24 * 3600
-                logger.info("Model %s has no quota (limit: 0) — trying next", model)
-                continue
-            if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
-                # Transient rate limit — honour Gemini's suggested retryDelay.
-                cooling[model] = now + _parse_retry_delay(err_str, default=60.0)
-                logger.info("Model %s rate-limited — trying next", model)
-                continue
-            if ("503" in err_str or "UNAVAILABLE" in err_str
-                    or "overload" in err_str.lower()):
-                # Server-side overload (e.g. Gemini's flash model under heavy
-                # demand).  Transient — short cooldown, fallback to next model.
-                cooling[model] = now + 30.0
-                logger.info("Model %s overloaded (503) — trying next", model)
-                continue
-            if "404" in err_str or "NOT_FOUND" in err_str:
-                # Model doesn't exist — never retry within this session.
-                cooling[model] = now + 9_999_999
-                logger.info("Model %s not found — trying next", model)
-                continue
-            # Different error → don't waste fallbacks, break out.
-            logger.exception("Unexpected Gemini error from %s", model)
-            break
-
-    if reply is None:
-        # Every candidate failed.  Compose the most useful message we can.
-        if "limit: 0" in last_err:
-            reply = (
-                "⚠️ **Your Google AI Studio account has no free-tier quota** "
-                "for the available models (`limit: 0` on every fallback).  "
-                "Common for new EU/UK accounts: the free tier exists, but "
-                "needs billing enabled on the Google Cloud project to be "
-                "unlocked.  Linking a card does **NOT** charge you under "
-                "the free tier — it just unlocks the quota.\n\n"
-                "Fix: [console.cloud.google.com/billing]"
-                "(https://console.cloud.google.com/billing)."
-            )
-        elif "RESOURCE_EXHAUSTED" in last_err or "429" in last_err:
-            reply = (
-                "⚠️ **All fallback models hit their rate limit.**  Wait "
-                "a minute and try again — RPM resets every 60 seconds, "
-                "RPD resets at midnight UTC."
-            )
-        elif ("503" in last_err or "UNAVAILABLE" in last_err
-              or "overload" in last_err.lower()):
-            reply = (
-                "⚠️ **Gemini is temporarily overloaded.**  All fallback "
-                "models reported high demand on the free tier.  Wait "
-                "30-60 seconds and try again — this is server-side and "
-                "usually clears in under a minute."
-            )
-        elif "404" in last_err or "NOT_FOUND" in last_err:
-            reply = (
-                "⚠️ **No usable Gemini model found.**  Set `GEMINI_MODEL` "
-                "in `secrets.toml` to a valid one (e.g. `gemini-2.5-flash`)."
-            )
-        else:
-            short = (last_err or "no error captured").split("\n", 1)[0][:240]
-            reply = f"⚠️ Error from Gemini: `{short}`"
+    # The fallback walk and its cooldowns live in `gemini_client` — shared with
+    # AI Test Design, so a model one feature exhausted is skipped by the other.
+    cooling: dict[str, float] = st.session_state.setdefault(
+        gemini_client.COOLDOWN_KEY, {})
+    result = gemini_client.generate(contents, config, _models_to_try(), cooling)
+    used_model = result.model
+    if used_model is not None:
+        reply = result.text or "(empty response)"
+    else:
+        reply = gemini_client.failure_message(result.error)
 
     st.session_state["ai_last_used_model"] = used_model
     msgs.append({"role": "assistant", "content": reply})
