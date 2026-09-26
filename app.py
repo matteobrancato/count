@@ -277,18 +277,20 @@ _SECTIONS = [
 def _warm_up(cold: bool, kpi_slot) -> None:
     """Make sure the day's data is loaded, showing the loader if it is not.
 
-    Warm: all cache hits, no UI.  Cold: a step-by-step status that lives in an
+    Warm: nothing at all.  Each section asks for the data it uses and gets a
+    cache hit; calling the warm-up anyway cost 0.13-0.17 s on EVERY click,
+    because st.cache_data hands back a copy (an unpickle) of the big frames on
+    every hit — measured live, 45% of a Backlog rerun.
+    Cold: a step-by-step status that lives in an
     st.empty slot and is REMOVED when done (a CSS-hidden box stayed in the DOM
     and replayed its animation on every tab switch), then a transient toast.
     A failure never blanks the tab — worst case each section fetches lazily
     and surfaces its own error.
     """
+    if not cold:
+        return
     from src.rules_engine import warmup_cache
     try:
-        if not cold:
-            with _timed("Warm-up (cache hits)"):
-                warmup_cache()
-            return
         slot = st.empty()
         t0 = time.time()
         with _timed("Warm-up (loading)"), slot.container(), \
@@ -306,7 +308,11 @@ def _warm_up(cold: bool, kpi_slot) -> None:
             status.update(label="✅ Dashboard ready", state="complete",
                           expanded=False)
         slot.empty()
-        st.toast(f"Dashboard loaded in {time.time() - t0:.0f} sec.", icon="✅")
+        elapsed = time.time() - t0
+        # Only when there was a load to speak of: a new visitor on data that is
+        # already warm used to be told "Dashboard loaded in 0 sec."
+        if elapsed >= 2:
+            st.toast(f"Dashboard loaded in {elapsed:.0f} sec.", icon="✅")
         _mark_warm()
     except Exception:  # noqa: BLE001
         logger.exception("Warm-up failed")
@@ -418,6 +424,20 @@ def main() -> None:
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
 
+    # Pre-builds, only on the run that just loaded the data: on a warm session
+    # everything below is already built, and even cache hits cost a little.
+    if cold:
+        _prebuild()
+
+    _report_timings(time.perf_counter() - _t_main)
+
+
+def _prebuild() -> None:
+    """Build what the first interactions would otherwise wait for.
+
+    Runs after the page is on screen.  NO TestRail calls: it reads the
+    expansion the warm-up just cached.
+    """
     # Dexter's snapshot builds OFF the critical path: everything above has
     # already rendered; this line only costs time when its cache is cold
     # (~30s on Cloud, once per TTL) and Dexter's first reply stays instant.
@@ -444,8 +464,6 @@ def main() -> None:
                 _tile_evidence(_bu, _scope)
     except Exception:  # noqa: BLE001 — each tile builds its own on demand
         logger.exception("Pre-building the Backlog tile evidence failed")
-
-    _report_timings(time.perf_counter() - _t_main)
 
 
 if __name__ == "__main__":
