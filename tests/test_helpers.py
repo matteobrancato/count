@@ -175,6 +175,22 @@ class TestRegressionFlag:
             lambda: (pd.DataFrame(), {("X", "website"): base.assign(category="automated")}, {}),
         )
 
+    def test_a_failed_baseline_load_raises_instead_of_zeroing_regression(
+            self, monkeypatch):
+        """The fallback used to be an empty baseline, which flagged every
+        automated row as NOT regression: a slide-ready chart reading zero
+        regression on every BU.  An error in its place is the honest outcome."""
+        from src.ui import backlog_tab as bl
+
+        def _boom():
+            raise RuntimeError("backlog unavailable")
+
+        monkeypatch.setattr(bl, "_backlog_data", _boom)
+        auto = pd.DataFrame([{"case_id": 1, "country_label": "NL",
+                              "device": "Desktop", "bu": "X"}])
+        with pytest.raises(RuntimeError):
+            rt._add_regression_flag(auto, pd.DataFrame(), "website")
+
     def test_exact_match_flags_regression(self, monkeypatch):
         base = pd.DataFrame([{"case_id": 1, "country_label": "NL", "device": "Desktop"}])
         self._stub_backlog(monkeypatch, base)

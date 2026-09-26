@@ -51,11 +51,14 @@ Scopes
 from __future__ import annotations
 
 import html
+import logging
 import re
 
 import pandas as pd
 import streamlit as st
 
+from .. import automation_save
+from .. import testrail_client as tr
 from ..bu_rules import (
     ALL_RULES,
     MOBILE_APP_BUS,
@@ -63,8 +66,6 @@ from ..bu_rules import (
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
-from .. import automation_save
-from .. import testrail_client as tr
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import (
@@ -74,6 +75,8 @@ from .styles import (
     section_title,
     stat_card,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── constants ─────────────────────────────────────────────────────────────────
 # Baseline labels (website regression: desktop / mobile BROWSER view).
@@ -776,6 +779,7 @@ def _small_nr_cases(scope: str) -> set[int]:
     try:
         raw, _auto, _rules = _load_scope(scope)
     except Exception:                                                   # noqa: BLE001
+        logger.exception("Small NR membership unavailable for %s", scope)
         return set()
     if raw.empty or "small_nr" not in raw.columns:
         return set()
@@ -1064,7 +1068,8 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
         # `device` here is the TestRail field, not the expanded row's device.
         meta = meta.rename(columns={"device": "device_field"})
     except Exception:                                                   # noqa: BLE001
-        pass
+        # The export still ships its rows, just without the case metadata.
+        logger.exception("Evidence export: case metadata join failed (%s)", scope)
 
     out = expanded[["case_id", "country_label", "device", "category"]].copy()
     out["case_id"] = out["case_id"].astype(int)
@@ -1157,14 +1162,24 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
         ["Category", "Case ID", "Country", "Device"])
 
 
+def _rows_for_category(evidence: pd.DataFrame, category: str) -> pd.DataFrame:
+    """The rows behind one tile, from an already-built evidence frame — the
+    whole frame for "total".
+
+    The ONE implementation of the tile filter.  The download used to carry its
+    own inline copy while the tests exercised this one, so the tests could pass
+    against a filter the export never ran.
+    """
+    if evidence.empty:
+        return evidence.drop(columns=["_cat"], errors="ignore")
+    sub = evidence if category == "total" else evidence[evidence["_cat"] == category]
+    return sub.drop(columns=["_cat"])
+
+
 def _category_rows(expanded: pd.DataFrame, category: str,
                    scope: str) -> pd.DataFrame:
-    """The rows behind one tile — the whole frame for "total"."""
-    ev = _evidence_frame(expanded, scope)
-    if ev.empty:
-        return ev
-    sub = ev if category == "total" else ev[ev["_cat"] == category]
-    return sub.drop(columns=["_cat"])
+    """The rows behind one tile, straight from an expanded baseline."""
+    return _rows_for_category(_evidence_frame(expanded, scope), category)
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -1187,6 +1202,7 @@ def _tile_evidence(bu: str, scope: str,
     try:
         _summary, expanded_by_bu, _auto_by_bu = loader()
     except Exception:                                                   # noqa: BLE001
+        logger.exception("Tile evidence unavailable for %s (%s)", bu, scope)
         return pd.DataFrame()
     return _evidence_frame(expanded_by_bu.get((bu, scope)), scope, bu)
 
@@ -1294,7 +1310,8 @@ def _filter_recipe(bu: str, scope: str, category: str,
             rows.append({"Field": f"Open suite {sid}",
                          "Filter": f"{base}/index.php?/suites/view/{sid}"})
     except Exception:                                                   # noqa: BLE001
-        pass
+        # A convenience row; the recipe is complete without it.
+        logger.exception("Filter recipe: suite links unavailable")
 
     rows += [
         {"Field": "", "Filter": ""},
@@ -1324,9 +1341,7 @@ def _csv_writer(evidence: pd.DataFrame, category: str,
     11-BU pipeline as the response to a download click.
     """
     def _build() -> bytes:
-        sub = (evidence if category == "total"
-               else evidence[evidence["_cat"] == category])
-        sub = sub.drop(columns=["_cat"])
+        sub = _rows_for_category(evidence, category)
         n_cases = (sub["Case ID"].nunique() if "Case ID" in sub.columns
                    else len(sub))
         recipe = _filter_recipe(bu, scope, category, len(sub), n_cases,

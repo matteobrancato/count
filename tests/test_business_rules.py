@@ -732,6 +732,7 @@ class TestCoverageSectionLinks:
     @staticmethod
     def _patch_base(monkeypatch):
         from types import SimpleNamespace
+
         from src import testrail_client as tr
         monkeypatch.setattr(
             tr.TestRailCredentials, "from_secrets",
@@ -2856,6 +2857,7 @@ class TestPrewarmSurvivesABadWindow:
 
     def test_progress_keeps_reporting_while_a_download_runs(self, monkeypatch):
         import threading
+
         from src import testrail_client as trc
         monkeypatch.setattr(trc, "_PROGRESS_TICK", 0.05)
         blocked = threading.Event()
@@ -2883,6 +2885,7 @@ class TestPrewarmSurvivesABadWindow:
     def test_successful_requests_are_counted(self, monkeypatch):
         """The counter the loader uses as its heartbeat."""
         import itertools
+
         from src import testrail_client as trc
         monkeypatch.setattr(trc, "_pace", lambda: None)
 
@@ -2911,6 +2914,7 @@ class TestDexterKnowsTheRuns:
 
     def test_prod_sanity_is_row_based(self):
         import inspect
+
         from src.ui import chat_assistant as ca
         src = inspect.getsource(ca.get_bu_coverage)
         assert "_regression_stats(exp_ps)" in src
@@ -2918,6 +2922,7 @@ class TestDexterKnowsTheRuns:
 
     def test_small_nr_is_filtered_not_re_expanded(self):
         import inspect
+
         from src.ui import chat_assistant as ca
         src = inspect.getsource(ca.get_bu_coverage)
         assert "_small_nr_cases(scope)" in src
@@ -2925,6 +2930,7 @@ class TestDexterKnowsTheRuns:
 
     def test_both_runs_reach_the_brief(self):
         import inspect
+
         from src.ui import chat_assistant as ca
         src = inspect.getsource(ca)
         assert '"small_no_regression":' in src
@@ -2935,6 +2941,7 @@ class TestDexterKnowsTheRuns:
         """A subset and a separate baseline summed together is the one arithmetic
         error the snapshot invites if it stays silent."""
         import inspect
+
         from src.ui import chat_assistant as ca
         src = inspect.getsource(ca)
         assert "Never sum two runs" in src
@@ -2991,6 +2998,7 @@ class TestMultiAccountPool:
 
     def test_requests_alternate_across_the_accounts(self):
         import itertools
+
         from src import testrail_client as trc
         client = trc.TestRailClient.__new__(trc.TestRailClient)
         client._sessions = ["s0", "s1", "s2"]
@@ -3024,6 +3032,7 @@ class TestWorkerPoolIsBuiltOnce:
 
     def test_concurrent_callers_build_one_pool(self, monkeypatch):
         import threading
+
         from src import testrail_client as trc
 
         builds: list[int] = []
@@ -3114,3 +3123,57 @@ class TestRejectedAccountsAreVisible:
         trc._get_client()
         assert (60 / trc._PACE_INTERVAL) / trc.n_workers() <= trc._effective_limit()
         trc._SESSION_CACHE.clear()
+
+
+class TestNoImportCanRotInsideATry:
+    """On 2026-07-30 `_tile_exports` was deleted while app.py still imported it
+    — inside a function, inside a `try` whose handler was `pass`.  The import
+    failed on every run for two months and nothing said so.  Linters cannot see
+    a function-level import; this test resolves every one of them."""
+
+    @staticmethod
+    def _imports(path):
+        import ast
+        tree = ast.parse(open(path).read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                for alias in node.names:
+                    yield node.lineno, node.module, alias.name
+
+    def test_every_from_import_resolves(self):
+        import importlib
+        import pathlib
+        files = [pathlib.Path("app.py"), *pathlib.Path("src").rglob("*.py")]
+        broken = []
+        for f in files:
+            for line, module, name in self._imports(f):
+                if not module.startswith("src"):
+                    continue
+                mod = importlib.import_module(module)
+                if name != "*" and not hasattr(mod, name):
+                    try:
+                        importlib.import_module(f"{module}.{name}")
+                    except ImportError:
+                        broken.append(f"{f}:{line} from {module} import {name}")
+        assert not broken, broken
+
+
+class TestOneTileFilter:
+    """The download filtered its rows with an inline copy of the tile filter
+    while the tests exercised `_category_rows`, so the tests could pass against
+    a filter the export never ran.  Both now go through one function."""
+
+    def test_the_download_uses_the_shared_filter(self):
+        import inspect
+        src = inspect.getsource(bl._csv_writer)
+        assert "_rows_for_category(" in src
+        assert '["_cat"] == category' not in src
+
+    def test_the_filter_selects_and_drops_the_marker(self):
+        ev = pd.DataFrame({"Case ID": [1, 2, 3],
+                           "_cat": ["automated", "backlog", "automated"]})
+        assert list(bl._rows_for_category(ev, "automated")["Case ID"]) == [1, 3]
+        assert len(bl._rows_for_category(ev, "total")) == 3
+        assert "_cat" not in bl._rows_for_category(ev, "backlog").columns
+        assert bl._rows_for_category(pd.DataFrame(), "backlog").empty
+

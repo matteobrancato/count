@@ -25,7 +25,10 @@ import logging
 import streamlit as st
 
 from .styles import (
-    BACKLOG_OK_PCT, COVERAGE_TARGET, backlog_health, coverage_health,
+    BACKLOG_OK_PCT,
+    COVERAGE_TARGET,
+    backlog_health,
+    coverage_health,
 )
 
 logger = logging.getLogger(__name__)

@@ -80,7 +80,7 @@ def _publish_to_url(scope: str, bu: str) -> None:
             if bu:
                 params["bu"] = bu
     except Exception:                                                   # noqa: BLE001
-        pass
+        pass                      # the URL is a convenience; the selection stands
 
 
 def render() -> tuple[str, str]:

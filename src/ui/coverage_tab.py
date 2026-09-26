@@ -36,15 +36,19 @@ Layout per view
 """
 from __future__ import annotations
 
+import logging
+
 import altair as alt
 import pandas as pd
 import streamlit as st
 
-from ..bu_rules import ALL_RULES, filter_conditional_tokens
 from .. import testrail_client as tr
+from ..bu_rules import ALL_RULES, filter_conditional_tokens
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, section_title
+
+logger = logging.getLogger(__name__)
 
 # ── categorical palette for area breakdowns (sourced from design tokens) ──────
 # Repeated so very granular BUs (>12 areas) still get a colour for every slice.
@@ -270,7 +274,8 @@ def _section_urls(grouped: pd.DataFrame) -> pd.Series:
     try:
         base = tr.TestRailCredentials.from_secrets().base_url.rstrip("/")
     except Exception:                                                   # noqa: BLE001
-        return blank
+        logger.exception("Coverage: TestRail base URL unavailable, links omitted")
+        return blank          # no link beats a wrong one
     single = grouped.get("_n_sections", pd.Series(1, index=grouped.index)) == 1
     urls = (base + "/index.php?/suites/view/"
             + grouped["_suite_id"].astype("Int64").astype(str)

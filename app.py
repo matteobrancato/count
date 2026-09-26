@@ -1,16 +1,30 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import traceback
+
 import streamlit as st
+
 from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
 from src.ui import (
-    backlog_tab, chat_assistant, coverage_tab, data_quality, global_filter,
-    kpi_strip, leakage_tab, overview_tab, report_tab, styles, test_design_tab,
+    backlog_tab,
+    chat_assistant,
+    coverage_tab,
+    data_quality,
+    global_filter,
+    kpi_strip,
+    leakage_tab,
+    overview_tab,
+    report_tab,
+    styles,
+    test_design_tab,
 )
 from src.ui.styles import COLORS
+
+logger = logging.getLogger(__name__)
 
 
 st.set_page_config(
@@ -179,6 +193,8 @@ def _freshness_label(scope: str = "website") -> None:
             _rate = tr.rate_summary()
             _cap, _learned = int(_rate["limit_per_account"]), bool(_rate["learned"])
         except Exception:                                               # noqa: BLE001
+            # The label is a convenience; losing it must not cost the bar.
+            logger.exception("Worker count unavailable for the freshness bar")
             _workers = _configured = _cap = 0
             _learned = False
         _short = _configured > _workers
@@ -273,26 +289,30 @@ def _creds_ok() -> bool:
         return False
 
 
-def _render_tab(tab, render_fn, label: str, anim_key: str = "") -> None:
-    """Render one tab in ISOLATION.
+def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
+    """Run one section's renderer so that its failure stays in its own place.
 
-    All tabs execute in the same script run, so a single shared try/except meant
-    one failing tab aborted every tab after it (five blank tabs from one error).
-    Here each tab catches its own failure and shows it in place, leaving the
-    rest of the dashboard fully usable.
+    All tabs execute in the same script run, so one shared try/except meant a
+    single failing tab blanked every tab after it.  Here each section catches
+    its own failure, logs it with the traceback, and shows it where it
+    happened — the rest of the dashboard stays usable.
     """
-    with tab:
-        try:
-            if anim_key:
-                with st.container(key=anim_key):
-                    render_fn()
-            else:
+    try:
+        if anim_key:
+            with st.container(key=anim_key):
                 render_fn()
-        except Exception as exc:  # noqa: BLE001 — isolate, never cascade
-            traceback.print_exc()
-            st.error(f"⚠️ {label} could not be rendered: {exc}")
-            with st.expander("Technical details"):
-                st.code(traceback.format_exc())
+        else:
+            render_fn()
+    except Exception as exc:  # noqa: BLE001 — isolate, never cascade
+        logger.exception("%s failed to render", label)
+        st.error(f"⚠️ {label} could not be rendered: {exc}")
+        with st.expander("Technical details"):
+            st.code(traceback.format_exc())
+
+
+def _render_tab(tab, render_fn, label: str, anim_key: str = "") -> None:
+    with tab:
+        _render_isolated(render_fn, label, anim_key)
 
 
 # -------------------------------------------------------------------- main
@@ -311,7 +331,7 @@ def main() -> None:
     try:
         tr.ensure_pool()
     except Exception:  # noqa: BLE001 — the fetches surface credential errors
-        traceback.print_exc()
+        logger.exception("Could not build the TestRail account pool")
 
     # Render the floating chat FIRST — Streamlit renders incrementally, so
     # placing it here makes the FAB appear immediately, before the (slow) data
@@ -320,7 +340,7 @@ def main() -> None:
     try:
         chat_assistant.render_floating_button()
     except Exception:  # noqa: BLE001 — never let the chat break the app
-        traceback.print_exc()
+        logger.exception("Dexter's button failed to render")
 
     # NOTE on load UX: we create the tab bar FIRST (instant skeleton), then warm
     # the whole cache inside the active tab below (not in a blocking pre-fetch
@@ -342,7 +362,7 @@ def main() -> None:
             with kpi_slot.container():
                 kpi_strip.render_skeleton()
     except Exception:  # noqa: BLE001
-        traceback.print_exc()
+        logger.exception("KPI strip failed to render")
 
     # Global scope + BU selector — the single control bar every tab reads from
     # (detail views follow it; all-BU overviews intentionally ignore the BU).
@@ -398,10 +418,8 @@ def main() -> None:
                     st.toast(f"Dashboard loaded in {_elapsed:.0f} sec.",
                              icon="✅")
                     st.session_state["_warmed_ui"] = True
-            except ImportError:
-                pass
             except Exception:  # noqa: BLE001
-                traceback.print_exc()
+                logger.exception("Warm-up failed")
                 st.warning(
                     "⚠️ Part of the data pre-load failed — sections will load "
                     "lazily and may be slower on first view."
@@ -413,20 +431,14 @@ def main() -> None:
                     with kpi_slot.container():
                         kpi_strip.render()
                 except Exception:  # noqa: BLE001
-                    traceback.print_exc()
+                    logger.exception("KPI strip failed to fill in after warm-up")
             st.session_state["_kpi_filled"] = True
 
             # `*_anim` containers opt each tab into the scroll-reveal animation
             # (styles.py) — Coverage wraps itself internally.
-            try:
-                with st.container(key="backlog_anim"):
-                    backlog_tab.render()
-            except Exception as exc:  # noqa: BLE001 — isolate, never cascade
-                traceback.print_exc()
-                st.error(f"⚠️ Backlog could not be rendered: {exc}")
-                with st.expander("Technical details"):
-                    st.code(traceback.format_exc())
-    except Exception as exc:  # global safety net — never crash the whole app
+            _render_isolated(backlog_tab.render, "Backlog", "backlog_anim")
+    except Exception as exc:  # noqa: BLE001 — global safety net, never crash the app
+        logger.exception("Unexpected failure in the Backlog tab")
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
@@ -449,21 +461,24 @@ def main() -> None:
     try:
         from src.ui.chat_assistant import _build_coverage_brief
         _build_coverage_brief()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001 — Dexter rebuilds it on first question
+        logger.exception("Pre-building Dexter's coverage snapshot failed")
 
-    # Same idea for the Backlog tile exports: building one BU's evidence frame
-    # costs ~250ms, and it is the only thing left that a BU switch waits for.
-    # Doing it here — after the page is on screen, from frames that are already
-    # cached — trades a few seconds of invisible work for instant tile
-    # rendering on every BU.  NO TestRail calls: it reads the same cached
-    # expansion the tab just rendered.
+    # Same idea for the Backlog tiles: building one BU's evidence frame costs
+    # ~250ms, and it is the only thing left that a BU switch waits for.  Doing
+    # it here — after the page is on screen, from frames that are already
+    # cached — trades a few seconds of invisible work for instant tiles on
+    # every BU.  NO TestRail calls: it reads the cached expansion.
+    #
+    # This called `_tile_exports`, which was deleted on 2026-07-30.  The import
+    # failed on every run from then on and a bare `pass` swallowed it, so the
+    # pre-build silently did nothing for two months.  Hence the log line.
     try:
-        from src.ui.backlog_tab import _scoped_bus, _tile_exports
+        from src.ui.backlog_tab import _scoped_bus, _tile_evidence
         for _bu, _scope in _scoped_bus():
-            _tile_exports(_bu, _scope)
-    except Exception:  # noqa: BLE001
-        pass
+            _tile_evidence(_bu, _scope)
+    except Exception:  # noqa: BLE001 — each tile builds its own on demand
+        logger.exception("Pre-building the Backlog tile evidence failed")
 
     # Invisible: pre-expiry background re-warm while the app has viewers.
     _background_refresh()

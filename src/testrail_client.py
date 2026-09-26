@@ -20,7 +20,14 @@ import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter
 from requests.auth import HTTPBasicAuth
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class TestRailError(RuntimeError):
@@ -154,7 +161,7 @@ def _start_probe_window() -> None:
         _probe_target = min(_limit_declared, max(base * 2, base + 5))
         _limit_observed = None
         _repace()
-    logging.getLogger(__name__).warning(
+    logger.warning(
         "TestRail pacing: probing %d requests/minute per account this download "
         "(last known %d, ceiling %d)", _probe_target, base, _limit_declared)
 
@@ -184,7 +191,7 @@ def _learn_limit(body: str) -> None:
             told = max(1, _effective_limit() // 2)
         _limit_observed = told
         _repace()
-    logging.getLogger(__name__).warning(
+    logger.warning(
         "TestRail says the cap is %d requests/minute per account%s — re-pacing "
         "to %.0f/min across %d worker(s) (slot every %.1fs)",
         told, "" if match else " (unreadable 429: halved)",
@@ -564,7 +571,7 @@ def _account_works(creds: TestRailCredentials) -> bool:
         reason = f"{resp.status_code}: {resp.text[:120]}"
     except Exception as exc:                                            # noqa: BLE001
         reason = str(exc)[:120]
-    logging.getLogger(__name__).warning(
+    logger.warning(
         "TestRail account %s unusable, skipping: %s", creds.user, reason)
     return False
 
@@ -613,7 +620,7 @@ def _get_client() -> TestRailClient:
         # back by one account-interval pays for the probe out of the window it
         # actually used.  15s at a cap of 5; under half a second at 180.
         _pace_cooldown(60.0 / _paced_per_account(_effective_limit()))
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "TestRail: %d/%d account(s) usable, cap %d req/min each%s, "
             "ceiling %d%s → %.0f requests/min total (slot every %.1fs)",
             len(working), len(candidates), _effective_limit(),
@@ -778,7 +785,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
                 suite_to_project[sid] = fut.result()
             except Exception as exc:                                    # noqa: BLE001
                 failures += 1
-                logging.getLogger(__name__).warning(
+                logger.warning(
                     "prefetch: could not resolve suite %s — skipping (%s)",
                     sid, str(exc)[:200])
 
@@ -815,7 +822,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
                         # One line, not a traceback: a rate-limited fetch is an
                         # expected outcome with a self-explanatory message, and
                         # nine 60-line stacks buried the one line that mattered.
-                        logging.getLogger(__name__).warning(
+                        logger.warning(
                             "prefetch: %s failed — will retry on first use (%s)",
                             labels[fut], str(exc)[:200])
                 tick(n_done, n_total)
@@ -825,7 +832,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
             backoff = min(_WARM_RETRY_AFTER * 2 ** (_warm_failures - 1),
                           _WARM_RETRY_MAX)
             _WARMED_AT = time.time() - _WARM_INTERVAL + backoff
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "prefetch: %d task(s) failed (%d warm-up(s) in a row) — "
                 "re-warm allowed again in %.0fs",
                 failures, _warm_failures, backoff)

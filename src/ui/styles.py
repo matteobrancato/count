@@ -1023,7 +1023,7 @@ def stat_card(col, label: str, n: int, u: int | None = None, *,
     Report aggregates several BUs, and a case shared between two of them must
     not be counted twice).
     """
-    import streamlit as _st                                          # noqa: F401
+    import streamlit as _st  # noqa: F401
     col.markdown(
         f"<div class='stat-card' style='background:{COLORS['surface']};"
         f"border:1px solid {COLORS['border']};border-radius:14px;padding:16px 18px;"

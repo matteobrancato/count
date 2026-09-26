@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -16,6 +18,8 @@ from .styles import (
     stat_card,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _scope_summary(scope: str) -> pd.DataFrame:
     """Per-BU baseline summary for the leaderboard, filtered to *scope* — the
@@ -29,6 +33,7 @@ def _scope_summary(scope: str) -> pd.DataFrame:
         want = {"next_gen": "Microservices"}.get(scope, "Website")
         return summary[summary["Scope"] == want]
     except Exception:                                                   # noqa: BLE001
+        logger.exception("Report: the Backlog summary could not be loaded")
         return pd.DataFrame()
 
 # ── palette (sourced from the global design tokens) ─────────────────────────────
@@ -65,8 +70,13 @@ def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame,
         frames = [f[f["category"] == "automated"] for f in expanded_by_bu.values()]
         base = (pd.concat(frames, ignore_index=True) if frames
                 else pd.DataFrame(columns=["case_id", "country_label", "device"]))
-    except Exception:                                                   # noqa: BLE001
-        base = pd.DataFrame(columns=["case_id", "country_label", "device"])
+    except Exception:
+        # NOT swallowed.  This used to fall back to an empty baseline, which
+        # marked every automated row as not-regression: a slide-ready chart
+        # showing zero regression on every BU, plausible and false.  Failing
+        # here puts the error where the chart would have been instead.
+        logger.exception("Report: the regression baseline could not be loaded")
+        raise
     if base.empty:
         return auto.assign(is_regression=False)
 
@@ -336,7 +346,8 @@ def _framework_line(summary, all_auto, scope: str, a_tot: dict) -> None:
     try:
         smoke = int(metrics.totals(metrics.select_smoke(all_auto))["total"])
     except Exception:                                                   # noqa: BLE001
-        smoke = 0
+        logger.exception("Report: smoke-suite total unavailable")
+        smoke = 0          # the line is omitted below, never shown as 0
     extra = [f"{int(a_tot['total']):,} automated rows in total"]
     if smoke:
         extra.append(f"{smoke:,} in the smoke suite (Highest priority)")

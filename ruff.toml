@@ -1,0 +1,4 @@
+[lint]
+# Defaults (E, F) plus sorted imports.  Import order was never enforced and
+# had drifted in six modules; a linter rule is the only thing that keeps it.
+extend-select = ["I"]
