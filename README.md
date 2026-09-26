@@ -2,8 +2,8 @@
 
 A Streamlit dashboard that connects to **TestRail** and gives a live,
 multi-dimensional view of test automation coverage across Business Units,
-countries, devices and frameworks — plus run health, flakiness and release
-readiness.
+countries, devices and frameworks — plus production leakage from Jira and an
+AI assistant that turns acceptance criteria into test cases.
 
 ---
 
@@ -11,11 +11,12 @@ readiness.
 
 The app pulls test case data directly from the TestRail API and processes it
 through a rule engine that understands each BU's specific field names, country
-tokens and automation frameworks. Everything is cached (6 h for case data) and
-pre-warmed at startup, so after the first load every interaction is instant.
+tokens and automation frameworks. The data is loaded once a day, by the first
+visit, and served from cache for the rest of it — so after that first load every
+visit and every interaction is instant.
 
 Optional integrations enrich the picture and degrade silently when not
-configured: **Jira** (bug status and fix versions on the Runs tab) and
+configured: **Jira** (the Leakage tab and AI Test Design) and
 **Dexter**, a Gemini-powered assistant that answers questions about the numbers
 using the same cached data the dashboard renders.
 
@@ -25,8 +26,6 @@ using the same cached data the dashboard renders.
 |---|---|
 | **📋 Backlog** | The regression baseline for the selected BU: every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports, followed by the all-BU summary table |
 | **📐 Coverage** | Coverage per functional area (TestRail section), as a pie + bar pair, with drill-down links back into TestRail |
-| **🏃 Runs** | Active runs with a stacked result bar and pass %, bugs enriched live from Jira, and a release-readiness card joining the latest completed run with a Jira fix version |
-| **📈 Stability** | How dependable the tests are — always-pass / always-fail / flaky classification over the last N runs — plus a deep-dive on a single case's execution history |
 | **🧭 Overview** | Cross-BU totals — Smoke Suite, All Automated Cases and Production Sanity — broken down by country and device, over any subset of BUs. These are *automated* counts, not baseline coverage: for that, read the Backlog tab |
 | **📄 Report** | Presentation-ready Altair charts (per BU × country × device, plus a coverage leaderboard), suitable for copy-pasting into slides |
 | **🐞 Leakage** | Every Jira "Production Incident" per Business Unit (by Jira project; EE20 and SD20 shown as multi-BU groups): count vs the previous period, Highest & High, web vs app, a 6-month trend, and how many hit an area an automated TestRail test covers. Jira only — no TestRail request |
@@ -61,7 +60,6 @@ comparisons by design and intentionally ignore the BU part of the selection.
 ```
 app.py                      Streamlit entry point: header, credential gate,
                             KPI strip, global filter, 6 tabs, cache warm-up
-                            and the background refresh watchdog
 │
 ├── src/
 │   ├── testrail_client.py  TestRail API wrapper — pagination, retries, pacing,
@@ -69,7 +67,9 @@ app.py                      Streamlit entry point: header, credential gate,
 │   ├── field_resolver.py   Custom field labels → system names and value ids,
 │   │                       with per-project configs
 │   ├── bu_rules.py         Rule definitions: one Rule per (BU, framework, scope),
-│   │                       country tokens, run-name aliases
+│   │                       country tokens, BU aliases (Dexter)
+│   ├── freshness.py        Once-a-day reload: the "fetched at" stamp, the daily
+│   │                       rollover and the one function that clears every cache
 │   ├── rules_engine.py     Evaluates rules → raw_cases + automated DataFrames,
 │   │                       framework precedence, cache warm-up
 │   ├── metrics.py          Aggregation helpers (smoke, totals, prod sanity)
@@ -86,8 +86,6 @@ app.py                      Streamlit entry point: header, credential gate,
 │       ├── kpi_strip.py      Executive KPI row under the header
 │       ├── backlog_tab.py    Backlog tab
 │       ├── coverage_tab.py   Coverage tab
-│       ├── runs_tab.py       Runs tab + the Stability renderers
-│       ├── stability_tab.py  Stability tab composition
 │       ├── overview_tab.py   Overview tab
 │       ├── report_tab.py     Report tab
 │       ├── data_quality.py   TestRail hygiene checklist
@@ -164,10 +162,12 @@ case can carry traces of more than one, so every row is attributed to the
 Automated, with no row counted twice.
 
 Playwright has no status field of its own: a Playwright case sets the generic
-`Automation Status` **and** carries the `playwright` label. On the four BUs whose
-rules don't read that generic field (Kruidvat, Trekpleister, Marionnaud,
-Watsons) a dedicated rule gates on the label, and it fails *closed* — a case
-whose labels can't be resolved is rejected rather than counted.
+`Automation Status` **and** carries the `playwright` label. On the BUs whose
+other rules don't read that generic field (Kruidvat, Trekpleister, Watsons Turkey,
+Watsons Ukraine) a dedicated rule gates on the label; Marionnaud reads the generic
+field for both of its frameworks and tells them apart by the `java` and
+`playwright` labels, each with its own country-coverage field. Every label gate
+fails *closed* — a case whose labels can't be resolved is rejected, not counted.
 
 **Production Sanity**
 Cases carrying the `prod_sanity` label, executed only in production. It is a
@@ -184,21 +184,27 @@ workbook for the clean-up work. It lives behind the **🧹 Data quality** popove
 in the utility bar above the tabs, which carries the current finding count.
 
 **Caching and freshness**
-Case data, sections, labels and the rule evaluation are cached for **6 hours**;
-runs, plans and results for **10 minutes**; the custom-field registry for
-**15 minutes**; Jira lookups for 5 to 30 minutes depending on the endpoint. On
-startup `warmup_cache()` fetches every suite in parallel and then pre-computes
-the expansion per scope, so switching tabs is instant. The Mobile App scope is
-deferred — it loads the first time someone selects it.
+The numbers are loaded **once per business day** (Europe/Rome), then kept all
+day. The first run of a new day finds numbers stamped on an earlier one, clears
+every cache and reloads; every other run that day is a cache hit
+(`src/freshness.py`). There is no timed refresh. The **↻** next to the
+"Updated …" label forces a reload at any time, for everyone.
 
-While anyone has the app open, an invisible fragment re-warms the data about
-30 minutes before the 6 h TTL expires (single-flight across sessions), so no one
-lands on an expired cache and pays the reload interactively. The **↻** next to
-the "Updated …" label forces an immediate refresh.
+The TestRail payloads are persisted to disk, so a restart does not cost a
+reload; derived frames are cached in memory for the day. The only exception is
+AI Test Design, whose Jira and Confluence reads stay short-lived — it reads
+stories people are editing while they generate. On startup `warmup_cache()`
+fetches every suite in parallel and pre-computes the expansion per scope, so
+switching tabs is instant. The Mobile App scope is deferred — it loads the first
+time someone selects it.
 
-A cold start takes roughly a minute: TestRail Cloud rate-limits at ~180
-requests/minute and the full case set paginates into about that many requests.
-That ceiling is TestRail's, not the app's.
+**The reload is bounded by TestRail's API limit, not by the app.** The limit is
+per user and has moved a lot (about 180 requests/minute until August 2026, 5
+from mid-August, rising again since late September). The client learns the
+current figure from TestRail's own 429 responses, pools several accounts
+(`TESTRAIL_USER_1` … `_8`) to multiply it, and paces every request so a reload
+never turns into a storm of rejections. `TESTRAIL_RATE_LIMIT` in the secrets is
+a **ceiling**, not the rate.
 
 **Methodology as a single source**
 `src/methodology.py` holds the canonical explanation of every number. It feeds
@@ -243,7 +249,7 @@ TESTRAIL_API_KEY = "your_api_key"
 GEMINI_API_KEY   = "your_gemini_key"
 GEMINI_MODEL     = "gemini-2.5-flash"   # omit to use the built-in fallback chain
 
-# Optional — Jira: Leakage tab, AI Test Design, Runs tab enrichment
+# Optional — Jira: Leakage tab and AI Test Design
 JIRA_URL           = "https://your-site.atlassian.net"
 ATLASSIAN_USER     = "your.email@example.com"
 ATLASSIAN_API_KEY  = "your_atlassian_token"
@@ -330,17 +336,23 @@ test, then re-pin.
    single `Rule` with `framework="java"`
 2. **Add its country tokens** to `ALL_COUNTRY_TOKENS` if they are new — this is
    what lets Microservices pick them up without a per-rule change
-3. **Add its run-name aliases** to `BU_RUN_ALIASES`, so the Runs and Stability
-   tabs can associate TestRail runs with the BU
-4. Refresh the app — the BU appears automatically in the global filter and in
-   every tab (`WEBSITE_BUS` / `MOBILE_APP_BUS` are derived from the rule set)
+3. **Set `country_field_label` explicitly.** `_testim_pair()` defaults to
+   "Testim Country Coverage", which is wrong for a BU that keeps its country in
+   `multi_countries` — and the failure is silent: every TestIM case comes out
+   un-automated
+4. **Add the BU to both display orders** — `_BU_ORDER` in
+   `src/ui/global_filter.py` and in `src/ui/report_tab.py` — and give it its
+   short codes in `BU_ALIASES`, which Dexter reads to understand "SD" or "WTR".
+   Guard tests fail if any of the three is missed
+5. Refresh the app — the BU appears in the global filter and in every tab
+   (`WEBSITE_BUS` / `MOBILE_APP_BUS` are derived from the rule set)
 
 ---
 
 ## Project structure notes
 
 - **Shared suites**: some TestRail suites contain cases for multiple BUs. Each BU
-  is identified by its own country token (e.g. `WTR_SPR` for Watsons). Cases
+  is identified by its own country token (e.g. `WTR_SPR` for Watsons Turkey). Cases
   without a matching token are excluded from that BU's counts — and show up in
   the Data-Quality panel, since a case nobody counts is usually a mistake.
 - **Per-project field configs**: the same integer id means different things in

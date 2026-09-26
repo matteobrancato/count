@@ -38,6 +38,7 @@ from .bu_rules import (
     filter_conditional_tokens,
 )
 from .field_resolver import FieldRegistry, get_registry
+from .freshness import DAY_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -655,7 +656,7 @@ _PROGRESS_HOOK = None
 # No built-in spinner: the startup warm-up (warmup_cache) drives its own verbose
 # status, and after warm-up every call is a cache hit — so a spinner here would
 # only ever double up with the warm-up status.
-@st.cache_data(show_spinner=False, ttl=21600)
+@st.cache_data(show_spinner=False, ttl=DAY_TTL)
 def _evaluate_rules_cached(rule_names: tuple[str, ...]) -> ExpansionResult:
     # Clear the label memo HERE, not in the single-flight wrapper above: that
     # wrapper runs on every call, cache hits included, so clearing there wiped

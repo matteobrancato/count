@@ -24,6 +24,8 @@ import requests
 import streamlit as st
 from requests.auth import HTTPBasicAuth
 
+from .freshness import DAY_TTL
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10
@@ -195,7 +197,7 @@ def fetch_story(key: str) -> dict:
 
 
 # ── production incidents (Leakage tab) ────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def field_ids_by_name(names: tuple[str, ...]) -> dict[str, str]:
     """{field name: field id} for the named fields that exist on this site.
 

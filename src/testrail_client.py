@@ -27,6 +27,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from .freshness import DAY_TTL
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,11 +42,11 @@ class TestRailError(RuntimeError):
 # it away and paid it again, which is what "the dashboard stopped loading"
 # actually was.  The payloads are lists of dicts, so they pickle cleanly.
 #
-# CAVEAT worth knowing: Streamlit drops `ttl` on persisted caches (it says so in
-# the log on every boot), so these entries do NOT expire on their own.  The 6h
-# refresh is driven instead by `app.py`'s watchdog, which clears them explicitly
-# — see `_numbers_fetched_at`, which is persisted for the same reason so the
-# "Updated Xm ago" label ages with the data rather than with the process.
+# These caches take no `ttl`: Streamlit ignores it on persisted caches (and
+# logged a warning per cache on every boot saying so).  They are cleared
+# explicitly instead — once per business day, or by ↻ — see `src/freshness.py`,
+# which persists the "fetched at" stamp for the same reason, so the "Updated"
+# label ages with the data rather than with the process.
 
 # ── global request pacer ──────────────────────────────────────────────────────
 # The limiter is the whole performance story, and its number MOVES.  The 429
@@ -632,27 +634,27 @@ def _get_client() -> TestRailClient:
         return _SESSION_CACHE[key]
 
 
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+@st.cache_data(show_spinner=False, persist="disk")
 def fetch_case_fields() -> list[dict]:
     return _get_client().get_case_fields()
 
 
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+@st.cache_data(show_spinner=False, persist="disk")
 def fetch_case_types() -> list[dict]:
     return _get_client().get_case_types()
 
 
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+@st.cache_data(show_spinner=False, persist="disk")
 def fetch_priorities() -> list[dict]:
     return _get_client().get_priorities()
 
 
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+@st.cache_data(show_spinner=False, persist="disk")
 def fetch_suite(suite_id: int) -> dict:
     return _get_client().get_suite(suite_id)
 
 
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+@st.cache_data(show_spinner=False, persist="disk")
 def _fetch_sections_cached(project_id: int, suite_id: int) -> list[dict]:
     return _get_client().get_sections(project_id, suite_id)
 
@@ -681,7 +683,7 @@ def _slim_case(case: dict) -> dict:
     return case
 
 
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+@st.cache_data(show_spinner=False, persist="disk")
 def _fetch_cases_cached(project_id: int, suite_id: int) -> list[dict]:
     return [_slim_case(c) for c in _get_client().get_cases(project_id, suite_id)]
 
@@ -691,7 +693,7 @@ def fetch_cases(project_id: int, suite_id: int) -> list[dict]:
         return _fetch_cases_cached(project_id, suite_id)
 
 
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
+@st.cache_data(show_spinner=False, persist="disk")
 def _fetch_labels_cached(project_id: int) -> dict[int, str]:
     """Return {label_id: label_name} for the given project."""
     raw = _get_client().get_labels(project_id)
@@ -717,11 +719,12 @@ def clear_all_caches() -> None:
 
 
 # ----------------------------------------------------------------- startup pre-warm
-# Wall-clock of the last pre-warm.  Slightly shorter than the data TTL (6h)
-# so the parallel pre-warm kicks in again just before the cache entries lapse —
-# the old boolean flag never reset, leaving every post-TTL refresh un-warmed.
+# Wall-clock of the last pre-warm, and how long it holds.  A day: the numbers
+# are reloaded once per business day (`freshness.roll_over_if_new_day`), which
+# calls `reset_warm_state()` so the next run pre-warms at once.  Nothing
+# re-warms on a timer any more.
 _WARMED_AT = 0.0
-_WARM_INTERVAL = 21300.0   # data TTL (6h) minus 5 min — re-warm just before expiry
+_WARM_INTERVAL = float(DAY_TTL)
 
 
 # How long a failed warm-up holds the lock before another session may retry.
@@ -742,6 +745,17 @@ _warm_failures = 0     # consecutive failed prefetches; a clean one resets it
 # How often the download reports in.  Suite completions are ~80s apart at the
 # current cap; this ticks the counter in between so the box always moves.
 _PROGRESS_TICK = 2.0
+
+
+def reset_warm_state() -> None:
+    """Let the next run pre-warm immediately, with a clean failure streak.
+
+    Called after the caches are cleared.  Public so callers stop reaching into
+    `_WARMED_AT` from outside, which is how the refresh paths used to do it.
+    """
+    global _WARMED_AT, _warm_failures
+    _WARMED_AT = 0.0
+    _warm_failures = 0
 
 
 def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:

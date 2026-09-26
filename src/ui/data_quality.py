@@ -29,6 +29,8 @@ import re
 import pandas as pd
 import streamlit as st
 
+from ..freshness import DAY_TTL
+
 logger = logging.getLogger(__name__)
 
 # Section names that should not hold active cases.
@@ -42,7 +44,7 @@ def _tokens(mc) -> set[str]:
     return set(mc) if isinstance(mc, list) else set()
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _scan(scope: str = "website") -> dict[str, pd.DataFrame]:
     """All applicable checks for *scope*.  Raises on failure so st.cache_data
     never caches an error (retried next rerun).

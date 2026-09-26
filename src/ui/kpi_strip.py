@@ -24,6 +24,7 @@ import logging
 
 import streamlit as st
 
+from ..freshness import DAY_TTL
 from .styles import (
     BACKLOG_OK_PCT,
     COVERAGE_TARGET,
@@ -34,7 +35,7 @@ from .styles import (
 logger = logging.getLogger(__name__)
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _kpis() -> dict:
     """Cross-BU regression-baseline aggregates (cached with the data's TTL).
 

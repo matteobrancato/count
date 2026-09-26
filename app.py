@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
 import traceback
 
 import streamlit as st
 
+from src import freshness
 from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
 from src.ui import (
@@ -35,74 +35,21 @@ st.set_page_config(
 )
 
 
+# -------------------------------------------------------------------- freshness
+# The numbers load once per business day and then stay cached all day — see
+# src/freshness.py.  A session counts as warm only for the stamp it warmed up
+# on, so a clear (the daily rollover, or ↻ pressed by anyone) sends EVERY open
+# session back through the visible loader, instead of leaving a tab opened
+# yesterday to reload silently behind a page that looks frozen.
+def _is_warm() -> bool:
+    return st.session_state.get("_warmed_for") == freshness.stamp()
+
+
+def _mark_warm() -> None:
+    st.session_state["_warmed_for"] = freshness.stamp()
+
+
 # -------------------------------------------------------------------- header
-@st.cache_data(ttl=21600, show_spinner=False, persist="disk")
-def _numbers_fetched_at() -> float:
-    """Wall-clock time the current cached numbers were fetched.
-
-    Cached cross-session, so it represents the real age of the data (not when
-    *this* browser tab opened) and survives page reloads.  Cleared by "Refresh
-    Numbers" alongside the data caches, so it resets to 'now' on a refresh.
-
-    PERSISTED, and that is the whole point.  The TestRail payloads it describes
-    are persisted to disk, and Streamlit drops `ttl` on persisted caches — so
-    they outlive the process while this stamp, held only in memory, did not.
-    A restart therefore re-stamped day-old numbers as "Updated just now", and
-    the watchdog below then saw an age of zero and left them alone.  Ageing the
-    label with the data is what makes both of those tell the truth again.
-    """
-    return time.time()
-
-
-_DATA_TTL = 21600          # keep in sync with the ttl= on the data caches (6h)
-_AUTOREFRESH_LOCK = threading.Lock()
-
-
-@st.fragment(run_every="900s")
-def _background_refresh() -> None:
-    """Invisible watchdog (renders nothing, ticks every 15 min per session).
-
-    While ANYONE has the app open, it re-warms the data ~30 min BEFORE the 6h
-    TTL expires — so during active use no human ever lands on an expired cache
-    and pays the 1-2 min reload interactively.  Single-flight across sessions
-    via a module lock: one session does the work, the others skip."""
-    try:
-        age = time.time() - _numbers_fetched_at()
-        if age < _DATA_TTL - 1800:
-            return
-        if not _AUTOREFRESH_LOCK.acquire(blocking=False):
-            return                     # another session is already refreshing
-        try:
-            from src.rules_engine import warmup_cache
-            tr.clear_all_caches()
-            try:
-                from src.rules_engine import evaluate_rules
-                evaluate_rules.clear()
-            except Exception:  # noqa: BLE001
-                pass
-            for _mod, _fn in (("src.ui.backlog_tab", "_backlog_data"),
-                              ("src.ui.chat_assistant", "_build_coverage_brief"),
-                              ("src.ui.kpi_strip", "_kpis")):
-                try:
-                    import importlib
-                    getattr(importlib.import_module(_mod), _fn).clear()
-                except Exception:  # noqa: BLE001
-                    pass
-            _numbers_fetched_at.clear()
-            tr._WARMED_AT = 0.0
-            warmup_cache()             # silent — blocks only this fragment
-            try:
-                from src.ui.chat_assistant import _build_coverage_brief
-                _build_coverage_brief()   # keep Dexter warm across refreshes
-            except Exception:  # noqa: BLE001
-                pass
-            _numbers_fetched_at()      # stamp the new freshness
-        finally:
-            _AUTOREFRESH_LOCK.release()
-    except Exception:  # noqa: BLE001
-        traceback.print_exc()
-
-
 def _relative_time(ts: float) -> str:
     """Human 'time ago' for the data-freshness caption."""
     delta = max(0.0, time.time() - ts)
@@ -144,7 +91,7 @@ def _freshness_label(scope: str = "website") -> None:
     full-width expanders competing with the KPI strip.  Hovering the bar reveals
     the tiny ↻ that refreshes ONLY the numbers.
     """
-    updated_at = _numbers_fetched_at()
+    updated_at = freshness.stamp()
     # Native horizontal flex row (Streamlit ≥1.46): the items are centred on one
     # optical line by the framework, so no hand-rolled flex/line-height CSS is
     # needed — that was what left the labels sitting at different heights.
@@ -161,7 +108,7 @@ def _freshness_label(scope: str = "website") -> None:
         # The scan derives from already-loaded frames, but on a cold start those
         # frames don't exist yet — computing here would run the heavy load
         # BEFORE the warm-up status box.  So it only engages once warm.
-        warm = bool(st.session_state.get("_warmed_ui"))
+        warm = _is_warm()
         n_findings = data_quality.finding_count(scope) if warm else None
         dq_label = ("🧹 Data quality" if not n_findings
                     else f"🧹 Data quality · {n_findings}")
@@ -236,39 +183,7 @@ def _freshness_label(scope: str = "website") -> None:
         # No help tooltip: it rendered a large card covering the label.  The ↻
         # glyph + hover rotation are self-explanatory.
         if st.button("↻", key="refresh_mini"):
-            tr.clear_all_caches()
-            try:
-                from src.rules_engine import evaluate_rules
-                evaluate_rules.clear()
-            except Exception:
-                pass
-            try:
-                from src.ui.backlog_tab import _backlog_data, _mapp_backlog_data
-                _backlog_data.clear()
-                _mapp_backlog_data.clear()
-            except Exception:
-                pass
-            try:
-                from src.ui.chat_assistant import _build_coverage_brief
-                _build_coverage_brief.clear()
-            except Exception:
-                pass
-            try:
-                from src.ui.kpi_strip import _kpis
-                _kpis.clear()
-            except Exception:
-                pass
-            try:
-                from src.ui.data_quality import _scan
-                from src.ui.report_tab import _load as _report_load
-                _report_load.clear()
-                _scan.clear()
-            except Exception:
-                pass
-            _numbers_fetched_at.clear()
-            tr._WARMED_AT = 0.0                       # re-run the parallel pre-warm
-            st.session_state["_warmed_ui"] = False    # show the verbose status
-            st.session_state["_kpi_filled"] = False   # re-swap skeleton -> strip
+            freshness.clear_everything()
             st.rerun()
 
 
@@ -322,6 +237,15 @@ def main() -> None:
     if not _creds_ok():
         st.stop()
 
+    # The first run of a new business day clears yesterday's numbers; every
+    # other run of the day is a cache hit.  Decided before anything is drawn,
+    # so the freshness bar, the KPI strip and the loader all agree on it.
+    try:
+        freshness.roll_over_if_new_day()
+    except Exception:  # noqa: BLE001 — yesterday's numbers beat a blank page
+        logger.exception("Daily rollover failed; serving the cached numbers")
+    cold = not _is_warm()
+
     # Build the account pool BEFORE anything reports on it.  It was built
     # lazily by the first fetch — which happens inside the tab, well after the
     # freshness bar has already been drawn — so on a cold start the bar showed
@@ -355,12 +279,11 @@ def main() -> None:
     # the strip visually merge with the filter bar).
     kpi_slot = st.empty()
     try:
-        if st.session_state.get("_warmed_ui"):
-            with kpi_slot.container():
-                kpi_strip.render()
-        else:
-            with kpi_slot.container():
+        with kpi_slot.container():
+            if cold:
                 kpi_strip.render_skeleton()
+            else:
+                kpi_strip.render()
     except Exception:  # noqa: BLE001
         logger.exception("KPI strip failed to render")
 
@@ -392,8 +315,8 @@ def main() -> None:
             # fetch their own data lazily (each surfacing its own error).
             try:
                 from src.rules_engine import warmup_cache
-                if st.session_state.get("_warmed_ui"):
-                    warmup_cache()
+                if not cold:
+                    warmup_cache()          # all cache hits: no UI needed
                 else:
                     # The status lives in an st.empty slot: it streams the
                     # verbose steps WHILE loading, then is REMOVED from the DOM
@@ -417,7 +340,7 @@ def main() -> None:
                     _elapsed = time.time() - _t0
                     st.toast(f"Dashboard loaded in {_elapsed:.0f} sec.",
                              icon="✅")
-                    st.session_state["_warmed_ui"] = True
+                    _mark_warm()
             except Exception:  # noqa: BLE001
                 logger.exception("Warm-up failed")
                 st.warning(
@@ -426,13 +349,12 @@ def main() -> None:
                 )
             # Cold start: swap the skeleton for the real strip now that the
             # data is warm — best-effort, the strip hides itself on failure.
-            if not st.session_state.get("_kpi_filled"):
+            if cold:
                 try:
                     with kpi_slot.container():
                         kpi_strip.render()
                 except Exception:  # noqa: BLE001
                     logger.exception("KPI strip failed to fill in after warm-up")
-            st.session_state["_kpi_filled"] = True
 
             # `*_anim` containers opt each tab into the scroll-reveal animation
             # (styles.py) — Coverage wraps itself internally.
@@ -479,9 +401,6 @@ def main() -> None:
             _tile_evidence(_bu, _scope)
     except Exception:  # noqa: BLE001 — each tile builds its own on demand
         logger.exception("Pre-building the Backlog tile evidence failed")
-
-    # Invisible: pre-expiry background re-warm while the app has viewers.
-    _background_refresh()
 
 
 if __name__ == "__main__":

@@ -112,9 +112,11 @@ Europe) and SD20 (Superdrug & Savers) each serve several BUs and cannot be
 split, so they are shown as groups. "On an automated test" means a TestRail
 case citing the incident in its References is automated.
 
-**Freshness** — numbers refresh automatically every few hours; the "Updated …"
-label next to the tabs shows their real age, and the ↻ next to it forces an
-immediate refresh (it re-reads TestRail, so it takes a minute).
+**Freshness** — the numbers are loaded from TestRail once a day, by the first
+visit of the day, and then served from cache for the rest of it, so every
+other visit is instant.  The "Updated …" label next to the tabs shows their
+real age; the ↻ next to it forces a reload at any time (it re-reads TestRail,
+so it takes a few minutes while TestRail limits its API).
 """.strip()
 
 

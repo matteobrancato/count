@@ -66,6 +66,7 @@ from ..bu_rules import (
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
+from ..freshness import DAY_TTL
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import (
@@ -720,7 +721,7 @@ def _build_summary(
     return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                              dict[tuple[str, str], pd.DataFrame]]:
     """The heavy 11-BU baseline pipeline (expand + classify + stats), computed
@@ -825,7 +826,7 @@ def _run_data(run: str, scope: str):
     return pd.DataFrame(rows), small, auto_by_bu
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                  dict[tuple[str, str], pd.DataFrame]]:
     """The Production Sanity baseline, kept SEPARATE from `_backlog_data`.
@@ -848,7 +849,7 @@ def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFram
                           member_label=_LABEL_PROD_SANITY)
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _mapp_backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                   dict[tuple[str, str], pd.DataFrame]]:
     """The Mobile-App baseline pipeline, kept SEPARATE from `_backlog_data` so the
@@ -1182,7 +1183,7 @@ def _category_rows(expanded: pd.DataFrame, category: str,
     return _rows_for_category(_evidence_frame(expanded, scope), category)
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _tile_evidence(bu: str, scope: str,
                    baseline: str = "regression") -> pd.DataFrame:
     """The evidence behind a BU's tiles, built once per BU and refresh.

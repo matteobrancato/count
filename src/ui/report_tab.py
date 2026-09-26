@@ -8,6 +8,7 @@ import streamlit as st
 
 from .. import metrics
 from ..bu_rules import ALL_RULES
+from ..freshness import DAY_TTL
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import (
@@ -109,7 +110,7 @@ def _add_regression_flag(auto: pd.DataFrame, raw: pd.DataFrame,
     return out
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _load(scope: str) -> pd.DataFrame:
     """Automated rows for ONE scope, deduped on (bu, country, device, case_id),
     each carrying an `is_regression` flag so the chart can stack regression vs

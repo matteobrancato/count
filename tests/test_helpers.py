@@ -231,3 +231,117 @@ class TestRegressionFlag:
 
 # ── release readiness: "how long until it ships" ─────────────────────────────
 # ── stability controls: the default must always be selectable ────────────────
+
+
+# ── Daily freshness ──────────────────────────────────────────────────────────
+class TestTheNumbersLoadOncePerDay:
+    """Asked for on 2026-09-26: load once, keep it all day.  No timed refresh;
+    the first run of a new business day reloads, every other run is instant."""
+
+    def _clock(self, monkeypatch, fr, stamps: list[float]):
+        """`stamp()` returns the current entry; a clear pops it, the way
+        clearing the real cache makes the next call re-stamp."""
+        monkeypatch.setattr(fr, "stamp", lambda: stamps[0])
+        cleared: list[int] = []
+
+        def _clear():
+            cleared.append(1)
+            if len(stamps) > 1:
+                stamps.pop(0)
+
+        monkeypatch.setattr(fr, "clear_everything", _clear)
+        return cleared
+
+    def test_the_day_turns_over_in_italy_not_in_utc(self):
+        """Streamlit Cloud runs on UTC; the team does not.  23:30 UTC on the
+        26th is already the 27th in Rome."""
+        from datetime import date, datetime, timezone
+
+        from src import freshness as fr
+        ts = datetime(2026, 9, 26, 23, 30, tzinfo=timezone.utc).timestamp()
+        assert fr.business_day(ts) == date(2026, 9, 27)
+
+    def test_numbers_from_an_earlier_day_are_cleared_once(self, monkeypatch):
+        import time
+
+        from src import freshness as fr
+        yesterday, now = time.time() - 86400 * 2, time.time()
+        cleared = self._clock(monkeypatch, fr, [yesterday, now])
+        assert fr.roll_over_if_new_day() is True
+        assert fr.roll_over_if_new_day() is False     # restamped: today now
+        assert cleared == [1]
+
+    def test_todays_numbers_are_left_alone(self, monkeypatch):
+        import time
+
+        from src import freshness as fr
+        cleared = self._clock(monkeypatch, fr, [time.time()])
+        assert fr.roll_over_if_new_day() is False
+        assert cleared == []
+
+    def test_a_morning_rush_clears_exactly_once(self, monkeypatch):
+        """A second clear would throw away the download the first one started,
+        at a rate limit that makes every request count."""
+        import threading
+        import time
+
+        from src import freshness as fr
+        cleared = self._clock(monkeypatch, fr, [time.time() - 86400 * 2, time.time()])
+        threads = [threading.Thread(target=fr.roll_over_if_new_day) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert cleared == [1]
+
+    def test_clearing_means_every_cache_and_a_fresh_warm_up(self, monkeypatch):
+        """Not a hand-kept list: two of those had drifted and missed the
+        Production Sanity run and the tile downloads."""
+        from src import freshness as fr
+        from src import testrail_client as tr
+        calls: list[str] = []
+        monkeypatch.setattr(fr.st.cache_data, "clear", lambda: calls.append("caches"))
+        monkeypatch.setattr(tr, "reset_warm_state", lambda: calls.append("warm"))
+        fr.clear_everything()
+        assert calls == ["caches", "warm"]
+
+    def test_reset_warm_state_lets_the_next_run_prefetch(self, monkeypatch):
+        from src import testrail_client as tr
+        monkeypatch.setattr(tr, "_WARMED_AT", 12345.0)
+        monkeypatch.setattr(tr, "_warm_failures", 3)
+        tr.reset_warm_state()
+        assert tr._WARMED_AT == 0.0 and tr._warm_failures == 0
+
+    def test_nothing_refreshes_on_a_timer(self):
+        """The 15-minute watchdog is gone; nothing may bring it back quietly."""
+        import pathlib
+        assert "run_every" not in pathlib.Path("app.py").read_text()
+
+    def test_no_dashboard_cache_expires_within_the_day(self):
+        """A cache that lapses mid-day turns one fast visit into a slow one.
+        Only AI Test Design may be shorter: it reads stories people are
+        editing while they generate."""
+        import ast
+        import pathlib
+
+        from src.freshness import DAY_TTL
+        allowed_short = {"fetch_story", "_acceptance_field_ids", "fetch_page"}
+        offenders = []
+        for f in [pathlib.Path("app.py"), *pathlib.Path("src").rglob("*.py")]:
+            for node in ast.walk(ast.parse(f.read_text())):
+                if not isinstance(node, ast.FunctionDef):
+                    continue
+                for dec in node.decorator_list:
+                    if not (isinstance(dec, ast.Call) and "cache_data" in ast.unparse(dec.func)):
+                        continue
+                    kw = {k.arg: k.value for k in dec.keywords}
+                    persisted = "persist" in kw
+                    if persisted and "ttl" in kw:
+                        offenders.append(f"{f}:{node.name} passes a ttl Streamlit ignores")
+                    ttl = kw.get("ttl")
+                    if (isinstance(ttl, ast.Constant) and ttl.value < DAY_TTL
+                            and node.name not in allowed_short):
+                        offenders.append(f"{f}:{node.name} ttl={ttl.value}")
+                    if ttl is None and not persisted:
+                        offenders.append(f"{f}:{node.name} has no ttl and no persist")
+        assert not offenders, offenders

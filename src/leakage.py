@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 import streamlit as st
 
 from . import jira_client
+from .freshness import DAY_TTL
 
 ISSUE_TYPE = "Production Incident"
 # One year: enough for a 6-month period AND the 6 months before it.
@@ -115,7 +116,7 @@ def normalise(issue: dict, base_url: str, env_field: str | None) -> dict | None:
     }
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def fetch() -> tuple[list[dict], bool]:
     """Every Production Incident of the last year, normalised; plus whether
     the page guard cut the list short (so the tab can say so)."""
