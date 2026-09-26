@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 import traceback
+from contextlib import contextmanager
 
 import streamlit as st
 
@@ -33,6 +34,36 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+
+# -------------------------------------------------------------------- timings
+# Where one run's time goes, section by section.  Module-level on purpose:
+# Streamlit re-executes this script from scratch for every run, so the list
+# starts empty each time and belongs to exactly one run — the same property
+# that made a lock here useless makes this list correct.  Shown at the bottom
+# of the page with ?debug=1; logged whenever a run is slow.
+_TIMINGS: list[tuple[str, float]] = []
+_SLOW_RUN_SECONDS = 5.0
+
+
+@contextmanager
+def _timed(label: str):
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        _TIMINGS.append((label, time.perf_counter() - t0))
+
+
+def _report_timings(total: float) -> None:
+    ranked = sorted(_TIMINGS, key=lambda item: -item[1])
+    if total >= _SLOW_RUN_SECONDS:
+        logger.warning("Slow run: %.1fs — %s", total,
+                       ", ".join(f"{label} {secs:.2f}s" for label, secs in ranked[:6]))
+    if st.query_params.get("debug") == "1":
+        rows = "".join(f"| {label} | {secs:.3f} |\n" for label, secs in ranked)
+        st.markdown(f"**Run timings** — {total:.2f}s total\n\n"
+                    f"| section | seconds |\n|---|---:|\n{rows}")
 
 
 # -------------------------------------------------------------------- freshness
@@ -213,11 +244,12 @@ def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
     happened — the rest of the dashboard stays usable.
     """
     try:
-        if anim_key:
-            with st.container(key=anim_key):
+        with _timed(label):
+            if anim_key:
+                with st.container(key=anim_key):
+                    render_fn()
+            else:
                 render_fn()
-        else:
-            render_fn()
     except Exception as exc:  # noqa: BLE001 — isolate, never cascade
         logger.exception("%s failed to render", label)
         st.error(f"⚠️ {label} could not be rendered: {exc}")
@@ -232,8 +264,10 @@ def _render_tab(tab, render_fn, label: str, anim_key: str = "") -> None:
 
 # -------------------------------------------------------------------- main
 def main() -> None:
-    styles.inject()   # global design system — purely cosmetic, must run first.
-    _header()
+    _t_main = time.perf_counter()
+    with _timed("Styles + header"):
+        styles.inject()   # global design system — purely cosmetic, must run first.
+        _header()
     if not _creds_ok():
         st.stop()
 
@@ -241,7 +275,8 @@ def main() -> None:
     # other run of the day is a cache hit.  Decided before anything is drawn,
     # so the freshness bar, the KPI strip and the loader all agree on it.
     try:
-        freshness.roll_over_if_new_day()
+        with _timed("Daily rollover check"):
+            freshness.roll_over_if_new_day()
     except Exception:  # noqa: BLE001 — yesterday's numbers beat a blank page
         logger.exception("Daily rollover failed; serving the cached numbers")
     cold = not _is_warm()
@@ -253,7 +288,8 @@ def main() -> None:
     # the whole of "cambia solo dopo refresh".  One parallel, unpaced round
     # trip, so the cost is a fraction of a second.
     try:
-        tr.ensure_pool()
+        with _timed("Account pool"):
+            tr.ensure_pool()
     except Exception:  # noqa: BLE001 — the fetches surface credential errors
         logger.exception("Could not build the TestRail account pool")
 
@@ -262,7 +298,8 @@ def main() -> None:
     # fetches in the tab renders below.  `position: fixed` in the CSS handles the
     # visual placement, so DOM order doesn't matter.
     try:
-        chat_assistant.render_floating_button()
+        with _timed("Dexter button"):
+            chat_assistant.render_floating_button()
     except Exception:  # noqa: BLE001 — never let the chat break the app
         logger.exception("Dexter's button failed to render")
 
@@ -279,7 +316,7 @@ def main() -> None:
     # the strip visually merge with the filter bar).
     kpi_slot = st.empty()
     try:
-        with kpi_slot.container():
+        with kpi_slot.container(), _timed("KPI strip"):
             if cold:
                 kpi_strip.render_skeleton()
             else:
@@ -289,12 +326,13 @@ def main() -> None:
 
     # Global scope + BU selector — the single control bar every tab reads from
     # (detail views follow it; all-BU overviews intentionally ignore the BU).
-    global_filter.render()
+    with _timed("Global filter"):
+        global_filter.render()
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
     _scope_now, _ = global_filter.current()
-    with st.container(key="tabs_zone"):
+    with st.container(key="tabs_zone"), _timed("Freshness bar + tab bar"):
         _freshness_label(_scope_now)
         (tab_backlog, tab_coverage, tab_overview,
          tab_report, tab_leakage, tab_test_design) = st.tabs(
@@ -316,7 +354,8 @@ def main() -> None:
             try:
                 from src.rules_engine import warmup_cache
                 if not cold:
-                    warmup_cache()          # all cache hits: no UI needed
+                    with _timed("Warm-up (cache hits)"):
+                        warmup_cache()      # all cache hits: no UI needed
                 else:
                     # The status lives in an st.empty slot: it streams the
                     # verbose steps WHILE loading, then is REMOVED from the DOM
@@ -390,7 +429,8 @@ def main() -> None:
     # (~30s on Cloud, once per TTL) and Dexter's first reply stays instant.
     try:
         from src.ui.chat_assistant import _build_coverage_brief
-        _build_coverage_brief()
+        with _timed("Dexter snapshot pre-build"):
+            _build_coverage_brief()
     except Exception:  # noqa: BLE001 — Dexter rebuilds it on first question
         logger.exception("Pre-building Dexter's coverage snapshot failed")
 
@@ -405,10 +445,13 @@ def main() -> None:
     # pre-build silently did nothing for two months.  Hence the log line.
     try:
         from src.ui.backlog_tab import _scoped_bus, _tile_evidence
-        for _bu, _scope in _scoped_bus():
-            _tile_evidence(_bu, _scope)
+        with _timed("Tile evidence pre-build"):
+            for _bu, _scope in _scoped_bus():
+                _tile_evidence(_bu, _scope)
     except Exception:  # noqa: BLE001 — each tile builds its own on demand
         logger.exception("Pre-building the Backlog tile evidence failed")
+
+    _report_timings(time.perf_counter() - _t_main)
 
 
 if __name__ == "__main__":
