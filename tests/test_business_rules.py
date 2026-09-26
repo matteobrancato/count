@@ -3244,6 +3244,31 @@ class TestASecondVisitorSeesTheDownload:
         assert time.time() - t0 < 0.1
 
 
+class TestARateLimitPauseIsNamed:
+    """Live on 2026-09-26 the loader's request counter stood still for ~50 s
+    at a time while the pool waited out TestRail's Retry-After.  A counter that
+    stops reads as a hang; the same wait labelled reads as what it is."""
+
+    def test_the_pause_is_reported_while_it_lasts(self, monkeypatch):
+        from src import rules_engine as eng
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_COOLDOWN_UNTIL", 0.0)
+        monkeypatch.setattr(trc, "_PACE_NEXT", 0.0)
+        monkeypatch.setattr(trc, "_PACE_EPOCH", trc._PACE_EPOCH)
+        assert eng._pause_note() == ""
+        trc._pace_cooldown(45)
+        assert "resuming in 4" in eng._pause_note()
+
+    def test_it_disappears_when_the_window_reopens(self, monkeypatch):
+        import time
+
+        from src import rules_engine as eng
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_COOLDOWN_UNTIL", time.time() - 1)
+        assert trc.cooldown_remaining() == 0.0
+        assert eng._pause_note() == ""
+
+
 class TestDexterSeesEveryBU:
     """From 2026-08-14 to 2026-09-26 `get_bu_coverage` raised in its NORMAL
     path — Small NR read `exp_base`, assigned only in the fallback — and the
@@ -3302,3 +3327,73 @@ class TestDexterSeesEveryBU:
         for _ in range(3):
             ca.get_bu_coverage("Drogas", _frames=frames)
         assert sorted(calls) == sorted({(r, "website") for r in runs})
+
+
+class TestPreBuildsNeverBlockAClick:
+    """Measured live: 196 s of pre-building AFTER the dashboard was on screen,
+    during which every click waited.  The pre-builds now run in a thread."""
+
+    def test_it_returns_at_once_and_builds_in_the_background(self, monkeypatch):
+        import threading
+        import time
+
+        from src import rules_engine as eng
+        started, release = threading.Event(), threading.Event()
+
+        def _slow():
+            started.set()
+            release.wait(2)
+
+        monkeypatch.setattr(eng, "_prebuild_derived", _slow)
+        t0 = time.time()
+        assert eng.prebuild_in_background() is True
+        assert time.time() - t0 < 0.2          # the caller did not wait
+        assert started.wait(1)                  # but the work did start
+        release.set()
+
+    def test_only_one_runs_at_a_time(self, monkeypatch):
+        """Sessions finishing a load together must not each start one."""
+        import threading
+
+        from src import rules_engine as eng
+        release = threading.Event()
+        monkeypatch.setattr(eng, "_prebuild_derived", lambda: release.wait(2))
+        assert eng.prebuild_in_background() is True
+        assert eng.prebuild_in_background() is False
+        release.set()
+        for _ in range(50):                     # let the first one finish
+            if eng._PREBUILD_LOCK.acquire(blocking=False):
+                eng._PREBUILD_LOCK.release()
+                break
+            import time
+            time.sleep(0.02)
+        else:
+            raise AssertionError("the pre-build never released its lock")
+
+    def test_nothing_it_calls_needs_a_session(self):
+        """A background thread has no ScriptRunContext: session_state or a
+        widget anywhere under these would fail there, silently."""
+        import ast
+        import pathlib
+
+        def reach(path, root):
+            tree = ast.parse(pathlib.Path(path).read_text())
+            funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+            seen, todo = set(), [root]
+            while todo:
+                f = todo.pop()
+                if f in seen or f not in funcs:
+                    continue
+                seen.add(f)
+                for c in ast.walk(funcs[f]):
+                    if isinstance(c, ast.Call):
+                        name = ast.unparse(c.func)
+                        assert "session_state" not in name, (path, f, name)
+                        assert not name.startswith(("st.columns", "st.markdown",
+                                                    "st.caption", "st.write")), (path, f, name)
+                        if isinstance(c.func, ast.Name):
+                            todo.append(c.func.id)
+            return seen
+
+        assert "get_bu_coverage" in reach("src/ui/chat_assistant.py", "_build_coverage_brief")
+        assert "_evidence_frame" in reach("src/ui/backlog_tab.py", "_tile_evidence")

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
@@ -765,6 +766,66 @@ evaluate_rules.clear = _evaluate_rules_cached.clear   # type: ignore[attr-define
 
 
 # ----------------------------------------------------------------- warmup
+_PREBUILD_LOCK = threading.Lock()
+
+
+def prebuild_in_background() -> bool:
+    """Build, in a thread, what the first clicks after a load would wait for.
+
+    Measured live on 2026-09-26: after the loader had gone and the dashboard
+    was on screen, the run spent another 196 s pre-building Dexter's snapshot
+    (164 s) and the tile evidence (32 s) — and Python that never touches
+    Streamlit cannot be interrupted, so every click in those three minutes
+    waited for it.  In a daemon thread nobody waits; a click that needs one of
+    these frames before it is ready simply builds it.
+
+    Lives here, in an imported module, because the lock must be shared: one
+    pre-build per process, however many sessions finish a load at once.
+    Returns False when one is already running.
+    """
+    if not _PREBUILD_LOCK.acquire(blocking=False):
+        return False
+
+    def run() -> None:
+        try:
+            _prebuild_derived()
+        finally:
+            _PREBUILD_LOCK.release()
+
+    threading.Thread(target=run, name="prebuild-derived", daemon=True).start()
+    return True
+
+
+def _prebuild_derived() -> None:
+    """Dexter's snapshot, then every BU's tile evidence.  No TestRail call:
+    both read the expansion the warm-up just cached."""
+    t0 = time.time()
+    try:
+        from .ui.chat_assistant import _build_coverage_brief
+        _build_coverage_brief()
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("Pre-building Dexter's coverage snapshot failed")
+    t1 = time.time()
+    # This loop used to call `_tile_exports`, deleted on 2026-07-30: the import
+    # failed on every run for two months and a bare `pass` swallowed it.
+    try:
+        from .ui.backlog_tab import _scoped_bus, _tile_evidence
+        for bu, scope in _scoped_bus():
+            _tile_evidence(bu, scope)
+    except Exception:                                                   # noqa: BLE001
+        logger.exception("Pre-building the Backlog tile evidence failed")
+    logger.warning("prebuild: Dexter snapshot %.1fs, tile evidence %.1fs",
+                   t1 - t0, time.time() - t1)
+
+
+def _pause_note() -> str:
+    """" · ⏳ TestRail pause, resuming in 42s" while the pool is cooling down
+    after a 429, else "".  Seen live: the request counter stood still for
+    fifty seconds at a time, and nothing on screen said why."""
+    wait = tr.cooldown_remaining()
+    return f" · ⏳ TestRail pause, resuming in {wait:.0f}s" if wait >= 2 else ""
+
+
 def warmup_cache(on_step=None, on_label=None) -> None:
     """Pre-fetch ALL data and pre-cache ALL rule evaluations at startup.
 
@@ -839,7 +900,7 @@ def warmup_cache(on_step=None, on_label=None) -> None:
         # a whole suite can take a minute, and a counter that stands still for
         # a minute reads as a dead page.
         on_label(f"⚡ Loading dashboard data… · 📥 {done}/{total} downloads "
-                 f"· {requests} requests · {clock}")
+                 f"· {requests} requests · {clock}{_pause_note()}")
 
     tr.prefetch_all_suites(suite_ids, on_progress=_dl_progress)
     if on_label:
@@ -876,7 +937,7 @@ def warmup_cache(on_step=None, on_label=None) -> None:
                 served = f" · {tr.requests_served()} requests"
                 on_label(f"⚡ Loading dashboard data… · 🧮 {lbl} "
                          f"rule {done}/{total}{served} "
-                         f"· {int(_time.time() - t0)}s")
+                         f"· {int(_time.time() - t0)}s{_pause_note()}")
 
             _PROGRESS_HOOK = _exp_progress
             try:

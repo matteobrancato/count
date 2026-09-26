@@ -433,37 +433,13 @@ def main() -> None:
 
 
 def _prebuild() -> None:
-    """Build what the first interactions would otherwise wait for.
-
-    Runs after the page is on screen.  NO TestRail calls: it reads the
-    expansion the warm-up just cached.
-    """
-    # Dexter's snapshot builds OFF the critical path: everything above has
-    # already rendered; this line only costs time when its cache is cold
-    # (~30s on Cloud, once per TTL) and Dexter's first reply stays instant.
+    """Start the background pre-build — never waited on (see rules_engine)."""
     try:
-        from src.ui.chat_assistant import _build_coverage_brief
-        with _timed("Dexter snapshot pre-build"):
-            _build_coverage_brief()
-    except Exception:  # noqa: BLE001 — Dexter rebuilds it on first question
-        logger.exception("Pre-building Dexter's coverage snapshot failed")
-
-    # Same idea for the Backlog tiles: building one BU's evidence frame costs
-    # ~250ms, and it is the only thing left that a BU switch waits for.  Doing
-    # it here — after the page is on screen, from frames that are already
-    # cached — trades a few seconds of invisible work for instant tiles on
-    # every BU.  NO TestRail calls: it reads the cached expansion.
-    #
-    # This called `_tile_exports`, which was deleted on 2026-07-30.  The import
-    # failed on every run from then on and a bare `pass` swallowed it, so the
-    # pre-build silently did nothing for two months.  Hence the log line.
-    try:
-        from src.ui.backlog_tab import _scoped_bus, _tile_evidence
-        with _timed("Tile evidence pre-build"):
-            for _bu, _scope in _scoped_bus():
-                _tile_evidence(_bu, _scope)
-    except Exception:  # noqa: BLE001 — each tile builds its own on demand
-        logger.exception("Pre-building the Backlog tile evidence failed")
+        from src.rules_engine import prebuild_in_background
+        with _timed("Pre-build started (background)"):
+            prebuild_in_background()
+    except Exception:  # noqa: BLE001 — each section builds its own on demand
+        logger.exception("Could not start the background pre-build")
 
 
 if __name__ == "__main__":

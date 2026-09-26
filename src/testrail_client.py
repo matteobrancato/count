@@ -288,10 +288,22 @@ def _pace_cooldown(seconds: float) -> None:
     pacer off together is what turns an avalanche into a pause.  The epoch
     tells the threads already asleep on a slot that it no longer counts.
     """
-    global _PACE_NEXT, _PACE_EPOCH
+    global _PACE_NEXT, _PACE_EPOCH, _COOLDOWN_UNTIL
     with _PACE_LOCK:
         _PACE_NEXT = max(_PACE_NEXT, time.time() + seconds)
         _PACE_EPOCH += 1
+        _COOLDOWN_UNTIL = max(_COOLDOWN_UNTIL, time.time() + seconds)
+
+
+# When the pool may send again after TestRail refused a request.  Read by the
+# loader: a request counter that stops for a minute reads as a hang, the same
+# minute labelled "TestRail asked us to wait" reads as what it is.
+_COOLDOWN_UNTIL = 0.0
+
+
+def cooldown_remaining() -> float:
+    """Seconds until TestRail's rate limit lets the pool send again, else 0."""
+    return max(0.0, _COOLDOWN_UNTIL - time.time())
 
 
 @dataclass(frozen=True)
@@ -806,6 +818,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
         return
 
     failures = 0
+    started, served_at_start = time.time(), _REQUESTS_SERVED
     # The one place a lot of requests go out together: find out whether
     # TestRail has raised the cap since the last download (see the pacer notes).
     _start_probe_window()
@@ -879,3 +892,14 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
         else:
             _warm_failures = 0
         _PREFETCH_IDLE.set()            # release every session following it
+        # What the pool actually achieved, in one line.  Seen live on
+        # 2026-09-26: four accounts, yet ~20 requests a minute IN TOTAL, in
+        # one-minute bursts and stalls — which a per-user cap cannot explain.
+        # This line is how the next log tells whether the accounts still
+        # multiply anything, or whether TestRail now caps the instance.
+        secs = max(1.0, time.time() - started)
+        sent = _REQUESTS_SERVED - served_at_start
+        logger.warning(
+            "prefetch: %d requests in %.0fs = %.1f/min across %d account(s); "
+            "pacer believes %s req/min per account",
+            sent, secs, sent * 60 / secs, _pool_size, _effective_limit())
