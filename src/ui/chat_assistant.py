@@ -196,6 +196,22 @@ def _error_as_dict(fn):
 
 
 # ── Coverage helpers — the snapshot is built from these ─────────────────────
+def _run_frames(run: str, scope: str, frames: dict | None) -> dict:
+    """{(bu, scope): classified rows} for one Backlog run, once per snapshot.
+
+    Every st.cache_data hit hands back a COPY of the whole payload, so reading
+    it once per BU meant a dozen copies of the same frames per build.
+    """
+    key = ("run", run, scope)
+    if frames is not None and key in frames:
+        return frames[key]
+    from . import backlog_tab as bl
+    _summary, by_bu, _auto = bl._run_data(run, scope)
+    if frames is not None:
+        frames[key] = by_bu
+    return by_bu
+
+
 @_error_as_dict
 def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
     """Get automation coverage for a Business Unit.
@@ -263,49 +279,39 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
                 "coverage_pct":   float(row["coverage_pct"]),
             })
 
-    # Regression baseline (FALLBACK field — the brief normally carries the
-    # Backlog tab's own summary).  Look it up from the Backlog pipeline's
-    # CACHED expansion first — identical numbers, zero recompute; only re-run
-    # the per-BU expansion for BUs the backlog doesn't cover (e.g. MAPP-only).
+    # The three runs, read from the Backlog tab's own cached frames — the rows
+    # on screen, not a second expansion of them — so Dexter and the tab cannot
+    # disagree.  This block used to take Small NR from `exp_base`, a variable
+    # assigned only in the fallback below: in the normal path it raised
+    # UnboundLocalError, the decorator turned that into {"error": …}, and the
+    # snapshot silently dropped every BU the Backlog covers — from 2026-08-14
+    # until 2026-09-26.  It also re-expanded Production Sanity per BU, which
+    # is most of why building the snapshot took 164 s on Cloud.
     regression: dict[str, Any] = {}
+    small_nr: dict[str, Any] = {}
+    prod_sanity: dict[str, Any] = {}
     try:
         from . import backlog_tab as bl
-        _summary, expanded_by_bu, _auto_by_bu = bl._backlog_data()
         for scope_key in ("website", "next_gen"):
-            exp = expanded_by_bu.get((canonical, scope_key))
-            if exp is not None and not exp.empty:
-                # ROWS, like every tab and the KPI strip.  This used to
-                # divide unique CASES, so Dexter quoted a percentage no screen
-                # showed (91.9% where the dashboard said 95.2%).
-                regression = _regression_stats(exp)
-                break
+            exp = _run_frames(bl.RUN_BIG, scope_key, _frames).get((canonical, scope_key))
+            if exp is None or exp.empty:
+                continue
+            regression = _regression_stats(exp)
+            sub = _run_frames(bl.RUN_SMALL, scope_key, _frames).get((canonical, scope_key))
+            if sub is not None and not sub.empty:
+                small_nr = _regression_stats(sub)
+            ps = _run_frames(bl.RUN_PS, scope_key, _frames).get((canonical, scope_key))
+            if ps is not None and not ps.empty:
+                prod_sanity = _regression_stats(ps)
+            break
     except Exception:                                                   # noqa: BLE001
-        logger.exception("get_bu_coverage: backlog lookup failed for %s", canonical)
+        logger.exception("get_bu_coverage: run lookup failed for %s", canonical)
     if not regression:
+        # A BU the Backlog does not cover (Mobile-App-only ones): expand here.
         _nd, _ab, _ids, exp_base = coverage_tab._baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
         if not exp_base.empty:
             regression = _regression_stats(exp_base)
-
-    # ROWS, for the same reason the regression figures above are: Production
-    # Sanity became a row-based baseline like the others, and counting its cases
-    # here made Dexter quote a coverage no screen shows.  The classified frame
-    # is already in hand — `_regression_stats` is the one place rows become
-    # numbers, so using it is what keeps Dexter and the tabs on one answer.
-    from .backlog_tab import _LABEL_PROD_SANITY, _small_nr_cases
-    _nd_ps, _ab_ps, _ids_ps, exp_ps = coverage_tab._baseline_like_backlog(
-        non_dep, auto_bu, rules_bu, member_label=_LABEL_PROD_SANITY)
-    prod_sanity = _regression_stats(exp_ps) if not exp_ps.empty else {}
-
-    # Small No-Regression: the `small_nr` subset of the SAME rows, so it is
-    # filtered rather than expanded again — exactly what the Backlog tab does.
-    small_nr: dict[str, Any] = {}
-    if regression and exp_base is not None and not exp_base.empty:
-        ids_small = _small_nr_cases(scope)
-        if ids_small:
-            sub = exp_base[exp_base["case_id"].astype(int).isin(ids_small)]
-            if not sub.empty:
-                small_nr = _regression_stats(sub)
 
     return {
         "business_unit":                     canonical,

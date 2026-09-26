@@ -2913,20 +2913,28 @@ class TestDexterKnowsTheRuns:
     the screen said 95.2%."""
 
     def test_prod_sanity_is_row_based(self):
+        """Taken from the Backlog's own Production Sanity rows and counted by
+        `_regression_stats`, the one place rows become numbers.  The behaviour
+        is pinned by TestDexterSeesEveryBU; this pins the wiring."""
         import inspect
 
         from src.ui import chat_assistant as ca
         src = inspect.getsource(ca.get_bu_coverage)
-        assert "_regression_stats(exp_ps)" in src
-        assert 'nunique())' not in src.split("prod_sanity")[1][:400]
+        assert "_run_frames(bl.RUN_PS" in src
+        assert "_regression_stats(ps)" in src
 
     def test_small_nr_is_filtered_not_re_expanded(self):
+        """The Small NR rows are the Backlog's — which filters the regression
+        payload — and nothing here expands a baseline a second time for a run.
+        (The previous version of this test checked for the string
+        `_small_nr_cases(scope)`: the string was there, and the function raised
+        on every BU the Backlog covers.  Source text is not behaviour.)"""
         import inspect
 
         from src.ui import chat_assistant as ca
         src = inspect.getsource(ca.get_bu_coverage)
-        assert "_small_nr_cases(scope)" in src
-        assert "isin(ids_small)" in src
+        assert "_run_frames(bl.RUN_SMALL" in src
+        assert "member_label=" not in src
 
     def test_both_runs_reach_the_brief(self):
         import inspect
@@ -3234,3 +3242,63 @@ class TestASecondVisitorSeesTheDownload:
         t0 = time.time()
         trc.prefetch_all_suites([1, 2])
         assert time.time() - t0 < 0.1
+
+
+class TestDexterSeesEveryBU:
+    """From 2026-08-14 to 2026-09-26 `get_bu_coverage` raised in its NORMAL
+    path — Small NR read `exp_base`, assigned only in the fallback — and the
+    snapshot silently dropped every BU the Backlog covers.  Every existing test
+    exercised the fallback.  These exercise the path production takes."""
+
+    def _wire(self, monkeypatch, runs, calls=None):
+        from src.ui import backlog_tab as blt
+        from src.ui import chat_assistant as ca
+        from src.ui import coverage_tab as cov
+        raw = pd.DataFrame([{"case_id": c, "suite_id": 16093, "deprecated": False,
+                             "section_path": "Checkout"} for c in (1, 2, 3)])
+        auto = pd.DataFrame([{"case_id": 1, "bu": "Drogas",
+                              "country_label": "LV", "device": "Desktop"}])
+        monkeypatch.setattr(ca, "evaluate_rules",
+                            lambda key: SimpleNamespace(raw_cases=raw, automated=auto))
+        monkeypatch.setattr(cov, "_filter_to_bu_countries", lambda nd, rules: (nd, 0))
+        monkeypatch.setattr(cov, "_coverage_table", lambda *a, **k: (pd.DataFrame(), None))
+
+        def _run_data(run, scope):
+            if calls is not None:
+                calls.append((run, scope))
+            return pd.DataFrame(), runs.get(run, {}), {}
+
+        monkeypatch.setattr(blt, "_run_data", _run_data)
+        return ca, blt
+
+    @staticmethod
+    def _rows(*cats):
+        return pd.DataFrame([{"case_id": i, "country_label": "LV", "device": "Desktop",
+                              "category": c} for i, c in enumerate(cats, 1)])
+
+    def test_the_normal_path_answers_with_all_three_runs(self, monkeypatch):
+        from src.ui import backlog_tab as blt
+        runs = {
+            blt.RUN_BIG:   {("Drogas", "website"): self._rows("automated", "backlog", "automated")},
+            blt.RUN_SMALL: {("Drogas", "website"): self._rows("automated")},
+            blt.RUN_PS:    {("Drogas", "website"): self._rows("automated", "backlog")},
+        }
+        ca, _ = self._wire(monkeypatch, runs)
+        out = ca.get_bu_coverage("Drogas")
+        assert "error" not in out, out
+        assert out["regression_baseline"]["automated_rows"] == 2
+        assert out["regression_baseline"]["total_rows"] == 3
+        assert out["small_no_regression"]["total_rows"] == 1
+        assert out["production_sanity"]["coverage_pct"] == 50.0
+
+    def test_each_run_is_read_once_per_snapshot_not_once_per_bu(self, monkeypatch):
+        """A cache hit is a full copy of the payload; per BU it was a dozen."""
+        from src.ui import backlog_tab as blt
+        rows = self._rows("automated")
+        runs = {r: {("Drogas", "website"): rows} for r in (blt.RUN_BIG, blt.RUN_SMALL, blt.RUN_PS)}
+        calls: list = []
+        ca, _ = self._wire(monkeypatch, runs, calls)
+        frames: dict = {}
+        for _ in range(3):
+            ca.get_bu_coverage("Drogas", _frames=frames)
+        assert sorted(calls) == sorted({(r, "website") for r in runs})
