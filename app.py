@@ -257,9 +257,69 @@ def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
             st.code(traceback.format_exc())
 
 
-def _render_tab(tab, render_fn, label: str, anim_key: str = "") -> None:
-    with tab:
-        _render_isolated(render_fn, label, anim_key)
+# -------------------------------------------------------------------- sections
+# (tab label, renderer, animation container key).  One table instead of six
+# hand-written calls, so adding or reordering a tab is a one-line change.
+_SECTIONS = [
+    ("📋 Backlog",        backlog_tab.render,     "backlog_anim"),
+    ("📐 Coverage",       coverage_tab.render,    ""),          # wraps itself
+    ("🧭 Overview",       overview_tab.render,    "overview_anim"),
+    ("📄 Report",         report_tab.render,      "report_anim"),
+    # Jira only: one read of the last year's incidents, cached for the day and
+    # matched to TestRail through cases already downloaded — no TestRail call.
+    ("🐞 Leakage",        leakage_tab.render,     ""),
+    # Beta.  One fragment that draws a form, and calls Jira, Confluence or
+    # Gemini only when "Generate" is pressed.
+    ("✨ AI Test Design", test_design_tab.render, ""),
+]
+
+
+def _warm_up(cold: bool, kpi_slot) -> None:
+    """Make sure the day's data is loaded, showing the loader if it is not.
+
+    Warm: all cache hits, no UI.  Cold: a step-by-step status that lives in an
+    st.empty slot and is REMOVED when done (a CSS-hidden box stayed in the DOM
+    and replayed its animation on every tab switch), then a transient toast.
+    A failure never blanks the tab — worst case each section fetches lazily
+    and surfaces its own error.
+    """
+    from src.rules_engine import warmup_cache
+    try:
+        if not cold:
+            with _timed("Warm-up (cache hits)"):
+                warmup_cache()
+            return
+        slot = st.empty()
+        t0 = time.time()
+        with _timed("Warm-up (loading)"), slot.container(), \
+                st.container(key="warmup_status"), \
+                st.status("⚡ Loading dashboard data…", expanded=True) as status:
+            warmup_cache(
+                on_step=status.write,
+                # `expanded=True` on EVERY label update.  Without it Streamlit
+                # 1.59 re-sends the block with `expanded` cleared, and the
+                # frontend reads that as closed: the first progress tick
+                # collapsed the box, so the steps were written but never seen.
+                # Verified against a real 1.59.2 server.
+                on_label=lambda lbl: status.update(label=lbl, expanded=True),
+            )
+            status.update(label="✅ Dashboard ready", state="complete",
+                          expanded=False)
+        slot.empty()
+        st.toast(f"Dashboard loaded in {time.time() - t0:.0f} sec.", icon="✅")
+        _mark_warm()
+    except Exception:  # noqa: BLE001
+        logger.exception("Warm-up failed")
+        st.warning("⚠️ Part of the data pre-load failed — sections will load "
+                   "lazily and may be slower on first view.")
+    # Cold start: swap the KPI skeleton for the real strip now that the data
+    # is warm — best-effort, the strip hides itself on failure.
+    if cold:
+        try:
+            with kpi_slot.container():
+                kpi_strip.render()
+        except Exception:  # noqa: BLE001
+            logger.exception("KPI strip failed to fill in after warm-up")
 
 
 # -------------------------------------------------------------------- main
@@ -334,95 +394,29 @@ def main() -> None:
     _scope_now, _ = global_filter.current()
     with st.container(key="tabs_zone"), _timed("Freshness bar + tab bar"):
         _freshness_label(_scope_now)
-        (tab_backlog, tab_coverage, tab_overview,
-         tab_report, tab_leakage, tab_test_design) = st.tabs(
-            ["📋 Backlog", "📐 Coverage",
-             "🧭 Overview", "📄 Report", "🐞 Leakage", "✨ AI Test Design"]
-        )
+        # LAZY tabs: only the selected one executes.  Streamlit otherwise runs
+        # every tab body on every interaction — measured live on 2026-09-26,
+        # 2.15 s per click with all caches warm, 87% of it in tabs nobody was
+        # looking at.  Switching tab now costs a rerun of that one tab instead
+        # of being free; every other click costs one tab instead of all of them.
+        tabs = st.tabs([label for label, _fn, _anim in _SECTIONS],
+                       key="section", on_change="rerun")
 
+    open_index = next((i for i, t in enumerate(tabs) if t.open), 0)
+    label, render_fn, anim_key = _SECTIONS[open_index]
     try:
-        with tab_backlog:
-            # Pre-load every suite ONCE, up-front, so switching tabs is instant
-            # afterwards.  This sits in the FIRST (default-active) tab, so the
-            # tab-bar skeleton is already on screen and the loader shows here in
-            # the active tab — the page is never blank, yet we still warm
-            # everything (not lazy-per-tab).  On the first load we show a verbose
-            # step-by-step status (so the wait feels shorter); once warm, the
-            # call is instant cache hits so we skip the UI entirely.
-            # A warm-up failure must never blank the tab: worst case the tabs
-            # fetch their own data lazily (each surfacing its own error).
-            try:
-                from src.rules_engine import warmup_cache
-                if not cold:
-                    with _timed("Warm-up (cache hits)"):
-                        warmup_cache()      # all cache hits: no UI needed
-                else:
-                    # The status lives in an st.empty slot: it streams the
-                    # verbose steps WHILE loading, then is REMOVED from the DOM
-                    # and replaced by a transient toast.  (The previous
-                    # CSS-hide approach left the box in the DOM, and switching
-                    # tabs re-triggered its animation — "Dashboard ready" kept
-                    # reappearing.)
-                    _warm_slot = st.empty()
-                    _t0 = time.time()
-                    with _warm_slot.container():
-                        with st.container(key="warmup_status"):
-                            with st.status("⚡ Loading dashboard data…",
-                                           expanded=True) as _status:
-                                warmup_cache(
-                                    on_step=_status.write,
-                                    # `expanded=True` on EVERY label update.
-                                    # Without it Streamlit 1.59 re-sends the
-                                    # block with `expanded` cleared, and the
-                                    # frontend reads that as closed: the first
-                                    # progress tick collapsed the box, so the
-                                    # steps were written but never seen.
-                                    # Verified against a real 1.59.2 server.
-                                    on_label=lambda lbl: _status.update(
-                                        label=lbl, expanded=True),
-                                )
-                                _status.update(label="✅ Dashboard ready",
-                                               state="complete", expanded=False)
-                    _warm_slot.empty()                       # gone for good
-                    _elapsed = time.time() - _t0
-                    st.toast(f"Dashboard loaded in {_elapsed:.0f} sec.",
-                             icon="✅")
-                    _mark_warm()
-            except Exception:  # noqa: BLE001
-                logger.exception("Warm-up failed")
-                st.warning(
-                    "⚠️ Part of the data pre-load failed — sections will load "
-                    "lazily and may be slower on first view."
-                )
-            # Cold start: swap the skeleton for the real strip now that the
-            # data is warm — best-effort, the strip hides itself on failure.
-            if cold:
-                try:
-                    with kpi_slot.container():
-                        kpi_strip.render()
-                except Exception:  # noqa: BLE001
-                    logger.exception("KPI strip failed to fill in after warm-up")
-
-            # `*_anim` containers opt each tab into the scroll-reveal animation
-            # (styles.py) — Coverage wraps itself internally.
-            _render_isolated(backlog_tab.render, "Backlog", "backlog_anim")
+        with tabs[open_index]:
+            # The data every tab reads is warmed here, in whichever tab is on
+            # screen, so the loader shows where the user is looking and the
+            # page is never blank.  Data stays shared: switching tab renders,
+            # it does not re-download.
+            _warm_up(cold, kpi_slot)
+            _render_isolated(render_fn, label, anim_key)
     except Exception as exc:  # noqa: BLE001 — global safety net, never crash the app
-        logger.exception("Unexpected failure in the Backlog tab")
+        logger.exception("Unexpected failure in the %s tab", label)
         st.error(f"Unexpected error: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
-
-    # Each remaining tab renders in isolation (see `_render_tab`).
-    _render_tab(tab_coverage, coverage_tab.render, "Coverage")
-    _render_tab(tab_overview, overview_tab.render, "Overview", "overview_anim")
-    _render_tab(tab_report,   report_tab.render,   "Report",   "report_anim")
-    # Jira only (one read of the last year's incidents, cached 30 min and
-    # shared by every session); matched to TestRail through cases already
-    # downloaded, so it adds no TestRail request.
-    _render_tab(tab_leakage, leakage_tab.render, "Leakage")
-    # Beta.  Costs nothing on a normal run: it is one fragment that draws a
-    # form, and calls Jira, Confluence or Gemini only when "Generate" is pressed.
-    _render_tab(tab_test_design, test_design_tab.render, "AI Test Design")
 
     # Dexter's snapshot builds OFF the critical path: everything above has
     # already rendered; this line only costs time when its cache is cold

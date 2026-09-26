@@ -358,11 +358,41 @@ class TestTheLoaderStaysOpen:
         import ast
         import pathlib
         tree = ast.parse(pathlib.Path("app.py").read_text())
+        # Every `.update(...)` on the object `st.status(...)` was bound to.
+        bound = {item.optional_vars.id for n in ast.walk(tree) if isinstance(n, ast.With)
+                 for item in n.items
+                 if isinstance(item.context_expr, ast.Call)
+                 and ast.unparse(item.context_expr.func).endswith("status")
+                 and isinstance(item.optional_vars, ast.Name)}
         updates = [n for n in ast.walk(tree)
                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                    and n.func.attr == "update"
-                   and isinstance(n.func.value, ast.Name) and n.func.value.id == "_status"]
+                   and isinstance(n.func.value, ast.Name) and n.func.value.id in bound]
         assert updates, "the warm-up no longer updates its status box"
         for call in updates:
             kw = {k.arg for k in call.keywords}
             assert "expanded" in kw, ast.unparse(call)
+
+
+class TestOnlyTheOpenTabRuns:
+    """Streamlit executes every tab body on every interaction unless the tabs
+    are stateful.  Measured live on 2026-09-26: 2.15 s per click with every
+    cache warm, 87% of it in tabs nobody was looking at."""
+
+    def test_the_tabs_are_lazy(self):
+        import ast
+        import pathlib
+        tree = ast.parse(pathlib.Path("app.py").read_text())
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and ast.unparse(n.func) == "st.tabs"]
+        assert len(calls) == 1
+        kw = {k.arg: ast.unparse(k.value) for k in calls[0].keywords}
+        assert kw.get("on_change") == "'rerun'", kw
+        assert "key" in kw, "a lazy tab bar needs a key to remember the selection"
+
+    def test_every_section_is_a_tab_and_renders_something(self):
+        import app  # noqa: F401 — importing runs set_page_config harmlessly
+        labels = [label for label, _fn, _anim in app._SECTIONS]
+        assert len(labels) == len(set(labels))
+        assert all(callable(fn) for _l, fn, _a in app._SECTIONS)
+
