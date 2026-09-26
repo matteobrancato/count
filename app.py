@@ -183,10 +183,19 @@ def _freshness_label(scope: str = "website") -> None:
         # invisible.
         try:
             _workers, _configured = tr.n_workers(), tr.n_accounts_configured()
-            _cap = int(tr.rate_summary()["limit_per_account"])
+            _rate = tr.rate_summary()
+            _cap, _learned = int(_rate["limit_per_account"]), bool(_rate["learned"])
         except Exception:                                               # noqa: BLE001
             _workers = _configured = _cap = 0
+            _learned = False
         _short = _configured > _workers
+        # A figure TestRail stated in a 429 is a fact; the rate being tried
+        # because TestRail has not refused it yet is only a lower bound.  The
+        # tooltip says which one it is showing.
+        _cap_words = (f"which TestRail currently limits to {_cap} requests/minute"
+                      if _learned else
+                      f"paced at up to {_cap} requests/minute, which TestRail "
+                      f"has not refused")
         _parts = [
             f"<span style='color:{COLORS['muted']}'>Updated </span>"
             f"<b style='color:{COLORS['text']};font-weight:600'>"
@@ -195,8 +204,8 @@ def _freshness_label(scope: str = "website") -> None:
         if _workers > 1 or (_configured and _short):
             _tip = (
                 f"Requests are spread across {_workers} TestRail account(s), "
-                f"each rate-limited at {_cap} requests/minute on its own — so "
-                f"the data loads about {_workers}x faster than with one."
+                f"each with its own rate limit ({_cap_words}) — so the data "
+                f"loads about {_workers}x faster than with one."
                 + (f"  {_configured - _workers} configured account(s) are NOT "
                    f"answering and were left out; the app log names them."
                    if _short else "")

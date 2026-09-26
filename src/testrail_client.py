@@ -49,13 +49,30 @@ class TestRailError(RuntimeError):
 # constant after each outage is not a fix; the third repeat is what
 # "lentissimo e non carica più" was.
 #
-# So the rate is no longer a constant we maintain.  It is, in order:
-#   1. TESTRAIL_RATE_LIMIT from the secrets, when set (requests/min per user);
-#   2. otherwise the pessimistic default below;
-# and in BOTH cases it is lowered the moment TestRail contradicts us — the 429
-# body carries the real number, so the one authority on the limit is the
-# limiter itself.  We never raise it from a 429: guessing low costs minutes,
-# guessing high costs the entire dashboard.
+# So the rate is no longer a constant we maintain: it is LEARNED, in both
+# directions, from the one authority on it — TestRail's 429 body, which names
+# the cap it enforces.  TestRail sends no rate-limit header on a successful
+# response (checked 2026-09-26), so a refusal is the only place the number
+# appears, and a client that never goes past its current guess never finds out
+# the cap went up.  That is exactly what happened when TestRail began raising
+# it again: the cap was 20 while the dashboard still paced for 5.
+#
+# Hence one probe per download (`_start_probe_window`): pace at TWICE the last
+# cap we know, never above the ceiling (TESTRAIL_RATE_LIMIT, else TestRail's
+# historical 180).  If TestRail refuses, its 429 states the exact cap and the
+# rest of the download paces at it; if it does not, the higher rate stands and
+# the next download tries twice that.  Doubling tracks a cap raised step by
+# step in a handful of downloads.
+#
+# Why overshooting is no longer the disaster it was in August:
+#   * the cap is per MINUTE, so spending the minute's budget in its first
+#     seconds and then waiting delivers the same throughput as spreading it;
+#   * the first 429 re-paces AND backs every queued slot off together
+#     (`_pace_cooldown`), so only the requests already in flight are refused —
+#     a handful, not the eighty-request avalanche of a client with no pacer;
+#   * a 429 whose body cannot be read HALVES the pace, so even a TestRail
+#     wording change converges instead of hammering.
+# Within one download the cap is still only ever lowered by a 429.
 #
 # Why a pacer at all: the warm-up fires up to ~80 concurrent requests.  Against
 # a limiter that is an avalanche — one 429 becomes eighty, a browser refresh
@@ -67,11 +84,17 @@ class TestRailError(RuntimeError):
 # keeps each individual user under its own per-user cap.
 _PACE_LOCK = threading.Lock()
 _PACE_NEXT = 0.0
+_PACE_EPOCH = 0     # bumped by every cooldown; see `_pace`
 
-# What TestRail enforced on 2026-08-17.  Deliberately the pessimistic figure:
-# if the cap is raised again, TESTRAIL_RATE_LIMIT is a one-line secrets edit,
-# whereas a default that is too high takes the dashboard down.
-_DEFAULT_LIMIT = 5
+# The CEILING: the pacer never asks for more than this, whatever it learns.
+# 180 is the level TestRail enforced before August 2026, and the one Support
+# said they would restore and lock.  TESTRAIL_RATE_LIMIT in the secrets
+# overrides it — as a ceiling now, no longer as the rate itself.
+_CEILING_DEFAULT = 180
+# Where learning starts in a fresh process, before any 429 has spoken: the cap
+# TestRail stated on 2026-09-26.  It only seeds the first probe (which asks for
+# twice this), so a stale value costs one extra doubling, never a wrong rate.
+_SEED_LIMIT = 20
 # 15% headroom.  Pacing at exactly the cap sits on the boundary, where our
 # clock and TestRail's disagree by more than enough to 429 anyway.
 _HEADROOM = 0.85
@@ -97,20 +120,43 @@ def _paced_per_account(limit: int) -> float:
 
 
 _LIMIT_LOCK = threading.Lock()
-_limit_declared = _DEFAULT_LIMIT      # from the secrets, or the default
-_limit_observed: int | None = None    # what a 429 told us; wins when lower
+_limit_declared = _CEILING_DEFAULT    # the ceiling: secrets, or the default
+_limit_observed: int | None = None    # what a 429 told us in this window
+_probe_target = _SEED_LIMIT           # what we pace at until a 429 speaks
 _pool_size = 1                        # working accounts; set by `_get_client`
-_PACE_INTERVAL = 60.0 / _paced_per_account(_DEFAULT_LIMIT)
+_PACE_INTERVAL = 60.0 / _paced_per_account(_SEED_LIMIT)
 
 # "API Rate Limit Exceeded - 5 per minute maximum allowed. Retry after 57s."
 _LIMIT_RE = re.compile(r"(\d+)\s+per\s+minute\s+maximum\s+allowed", re.I)
 
 
 def _effective_limit() -> int:
-    """Requests/minute allowed on ONE account, believing the smaller claim."""
-    if _limit_observed is not None:
-        return min(_limit_declared, _limit_observed)
-    return _limit_declared
+    """Requests/minute to pace ONE account at, never above the ceiling.
+
+    What TestRail stated in this window when it has spoken, otherwise the
+    current probe target.
+    """
+    current = _limit_observed if _limit_observed is not None else _probe_target
+    return max(1, min(_limit_declared, current))
+
+
+def _start_probe_window() -> None:
+    """Try twice the last known cap for the download about to start.
+
+    Called once per download (see `prefetch_all_suites`): the one moment a lot
+    of requests go out, so a raised cap is found as soon as it exists, and a
+    cap that has not moved costs only the few requests in flight when TestRail
+    says so.  Between downloads the pace stays where the last one left it.
+    """
+    global _limit_observed, _probe_target
+    with _LIMIT_LOCK:
+        base = _limit_observed if _limit_observed is not None else _probe_target
+        _probe_target = min(_limit_declared, max(base * 2, base + 5))
+        _limit_observed = None
+        _repace()
+    logging.getLogger(__name__).warning(
+        "TestRail pacing: probing %d requests/minute per account this download "
+        "(last known %d, ceiling %d)", _probe_target, base, _limit_declared)
 
 
 def _repace() -> None:
@@ -121,29 +167,36 @@ def _repace() -> None:
 
 
 def _learn_limit(body: str) -> None:
-    """Take TestRail's word for the cap — downwards only."""
+    """Take TestRail's word for the cap — within a window, downwards only.
+
+    A 429 whose body does not name a number still means "too fast": the pace
+    is halved, so a change of wording on TestRail's side converges instead of
+    leaving the pacer asking for the same refused rate over and over.
+    """
     global _limit_observed
     match = _LIMIT_RE.search(body or "")
-    if not match:
-        return
-    told = max(1, int(match.group(1)))
     with _LIMIT_LOCK:
-        if _limit_observed is not None and told >= _limit_observed:
-            return
+        if match:
+            told = max(1, int(match.group(1)))
+            if _limit_observed is not None and told >= _limit_observed:
+                return
+        else:
+            told = max(1, _effective_limit() // 2)
         _limit_observed = told
         _repace()
     logging.getLogger(__name__).warning(
-        "TestRail says the cap is %d requests/minute per account — re-pacing to "
-        "%.0f/min across %d worker(s) (slot every %.1fs)",
-        told, 60 / _PACE_INTERVAL, _pool_size, _PACE_INTERVAL)
+        "TestRail says the cap is %d requests/minute per account%s — re-pacing "
+        "to %.0f/min across %d worker(s) (slot every %.1fs)",
+        told, "" if match else " (unreadable 429: halved)",
+        60 / _PACE_INTERVAL, _pool_size, _PACE_INTERVAL)
 
 
 def _configured_limit() -> int:
-    """TESTRAIL_RATE_LIMIT from the secrets, else the default."""
+    """The ceiling: TESTRAIL_RATE_LIMIT from the secrets, else TestRail's 180."""
     try:
         return max(1, int(st.secrets["TESTRAIL_RATE_LIMIT"]))
     except Exception:                                                   # noqa: BLE001
-        return _DEFAULT_LIMIT
+        return _CEILING_DEFAULT
 
 
 _STATS_LOCK = threading.Lock()
@@ -161,10 +214,11 @@ def requests_served() -> int:
 
 
 def rate_summary() -> dict[str, float | int | bool]:
-    """What the pacer is actually doing — surfaced in the log and the loader.
+    """What the pacer is actually doing — for the log and the worker tooltip.
 
-    A wait nobody can explain reads as a hang; the same wait with "TestRail
-    allows 5 requests/minute per account" next to it reads as a queue.
+    `learned` says whether `limit_per_account` is a figure TestRail stated in
+    a 429 during this window, or only the rate being tried because TestRail
+    has not refused it (yet): the tooltip words the two differently.
     """
     return {
         "limit_per_account": _effective_limit(),
@@ -172,6 +226,7 @@ def rate_summary() -> dict[str, float | int | bool]:
         "per_minute": 60.0 / _PACE_INTERVAL,
         "slot_seconds": _PACE_INTERVAL,
         "learned": _limit_observed is not None,
+        "ceiling": _limit_declared,
     }
 
 
@@ -192,14 +247,27 @@ def _sf_lock(key: tuple) -> threading.Lock:
 
 
 def _pace() -> None:
-    """Block until this thread's reserved request slot arrives."""
+    """Block until this thread's reserved request slot arrives.
+
+    A slot reserved BEFORE a cooldown is not honoured after it: the cooldown
+    means TestRail has just closed the window that slot fell in.  Pushing
+    `_PACE_NEXT` only moved the slots handed out afterwards, so every thread
+    already asleep on an earlier one still fired into the closed window — in a
+    simulated cold download at a 20/min cap that was 16 refusals out of the 16
+    worker threads.  Such a thread now takes a fresh slot instead.
+    """
     global _PACE_NEXT
-    with _PACE_LOCK:
-        now = time.time()
-        wait = _PACE_NEXT - now
-        _PACE_NEXT = max(now, _PACE_NEXT) + _PACE_INTERVAL
-    if wait > 0:
-        time.sleep(wait)
+    while True:
+        with _PACE_LOCK:
+            now = time.time()
+            wait = _PACE_NEXT - now
+            _PACE_NEXT = max(now, _PACE_NEXT) + _PACE_INTERVAL
+            epoch = _PACE_EPOCH
+        if wait > 0:
+            time.sleep(wait)
+        with _PACE_LOCK:
+            if _PACE_EPOCH == epoch:
+                return
 
 
 def _pace_cooldown(seconds: float) -> None:
@@ -208,11 +276,13 @@ def _pace_cooldown(seconds: float) -> None:
     The thread that collected the 429 always waited politely.  The other
     seventy-nine kept firing into the same closed window — so one 429 became
     eighty, and the retries were what held the window shut.  Backing the whole
-    pacer off together is what turns an avalanche into a pause.
+    pacer off together is what turns an avalanche into a pause.  The epoch
+    tells the threads already asleep on a slot that it no longer counts.
     """
-    global _PACE_NEXT
+    global _PACE_NEXT, _PACE_EPOCH
     with _PACE_LOCK:
         _PACE_NEXT = max(_PACE_NEXT, time.time() + seconds)
+        _PACE_EPOCH += 1
 
 
 @dataclass(frozen=True)
@@ -611,10 +681,12 @@ def _get_client() -> TestRailClient:
         # actually used.  15s at a cap of 5; under half a second at 180.
         _pace_cooldown(60.0 / _paced_per_account(_effective_limit()))
         logging.getLogger(__name__).warning(
-            "TestRail: %d/%d account(s) usable, cap %d req/min each%s → "
-            "%.0f requests/min total (slot every %.1fs)",
+            "TestRail: %d/%d account(s) usable, cap %d req/min each%s, "
+            "ceiling %d%s → %.0f requests/min total (slot every %.1fs)",
             len(working), len(candidates), _effective_limit(),
             " (observed from a 429)" if _limit_observed is not None else "",
+            _limit_declared,
+            " (TESTRAIL_RATE_LIMIT)" if _limit_declared != _CEILING_DEFAULT else "",
             60 / _PACE_INTERVAL, _PACE_INTERVAL)
         _SESSION_CACHE[key] = TestRailClient(working[0], extra=working[1:])
         return _SESSION_CACHE[key]
@@ -849,6 +921,9 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
         return
     _WARMED_AT = time.time()   # claimed upfront so concurrent sessions don't re-warm
     failures = 0
+    # The one place a lot of requests go out together: find out whether
+    # TestRail has raised the cap since the last download (see the pacer notes).
+    _start_probe_window()
 
     def tick(done: int, total: int) -> None:
         if not on_progress:

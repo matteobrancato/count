@@ -808,24 +808,19 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     # (longest) blocking call, so the accurate "Downloading…" line is what shows
     # while it runs.  The ceiling here is TestRail's, not ours: ~44k cases
     # paginate into ~200 requests, and TestRail's per-user cap decides how long
-    # that takes.  We say the cap out loud — a ten-minute wait nobody can
-    # explain reads as a frozen dashboard, the same wait with the arithmetic
-    # next to it reads as a queue.
+    # that takes.  The cap is no longer quoted here: it moves (the pacer learns
+    # it during the download), a figure printed before the download starts
+    # would be a guess, and the live counter in the label is what tells a queue
+    # from a frozen page.  The real pacing is in the server log.
     step("🔌 Connecting to TestRail…")
     try:
-        tr.ensure_pool()      # so the pacing quoted below is the real one
+        tr.ensure_pool()
     except Exception:                                                   # noqa: BLE001
         # Credential failures surface through the fetches themselves, with the
         # error the user can act on; this step must not become a second one.
         logger.exception("warmup: could not build the TestRail account pool")
-    _rate = tr.rate_summary()
-    _pace_note = (
-        f" — TestRail allows {_rate['limit_per_account']:.0f} requests/min per "
-        f"account, so ~{_rate['per_minute']:.0f}/min across "
-        f"{_rate['workers']:.0f} worker(s)"
-    )
     step(f"📥 Downloading {len(suite_ids)} test suites across {n_bu} "
-         f"Business Units{_pace_note}…")
+         f"Business Units…")
     # Live counter in the status LABEL while the (rate-limit-bound) download
     # runs — the user must always see it moving, never a frozen spinner.
     _t_dl = _time.time()

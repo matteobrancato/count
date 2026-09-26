@@ -2472,9 +2472,10 @@ class TestCountryColumnBelongsToItsBu:
 
 class TestRateLimitPolicy:
     """The cap MOVES — the 429 body has said 180, then 50 (2026-08-14), then 5
-    (2026-08-17) requests/minute — and each time we were still pacing for the
-    old number the dashboard stopped loading entirely.  So the number is no
-    longer ours to maintain: we start pessimistic and believe the limiter.
+    (2026-08-17), then 20 (2026-09-26) requests/minute — and each time we
+    paced for an old number the dashboard either stopped loading or crawled.
+    So the number is no longer ours to maintain: it is learned from the
+    limiter, downwards from every 429 and upwards by one probe per download.
 
     A 429 must also be waited out rather than given up on: TestRail asks for
     41-57s when the window is full, and the old 30s cap failed the load before
@@ -2487,10 +2488,92 @@ class TestRateLimitPolicy:
         trc._repace()
         assert (60 / trc._PACE_INTERVAL) / trc._pool_size <= trc._effective_limit()
 
-    def test_the_default_is_the_pessimistic_one(self):
-        """Guessing low costs minutes; guessing high costs the dashboard."""
+    def test_the_ceiling_is_testrails_historical_level(self):
+        """The pacer may learn upwards now, so what bounds it is a CEILING —
+        the 180/min TestRail enforced before August 2026 and said it would
+        restore — not a pessimistic default it can never leave."""
         from src import testrail_client as trc
-        assert trc._DEFAULT_LIMIT <= 5
+        assert trc._CEILING_DEFAULT == 180
+        assert trc._SEED_LIMIT < trc._CEILING_DEFAULT
+
+    def test_a_download_probes_twice_the_last_known_cap(self, monkeypatch):
+        """TestRail sends no rate-limit header on a success, so a raised cap
+        is only discovered by asking for more.  2026-09-26: the cap was 20
+        while the dashboard still paced for 5."""
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_declared", 180)
+        monkeypatch.setattr(trc, "_limit_observed", 20)     # TestRail said 20
+        monkeypatch.setattr(trc, "_probe_target", 40)
+        trc._start_probe_window()
+        assert trc._effective_limit() == 40                  # 2 × 20
+        assert trc._limit_observed is None                   # listening again
+
+    def test_an_unrefused_probe_doubles_again_next_time(self, monkeypatch):
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_declared", 180)
+        monkeypatch.setattr(trc, "_limit_observed", None)    # nobody refused 40
+        monkeypatch.setattr(trc, "_probe_target", 40)
+        trc._start_probe_window()
+        assert trc._effective_limit() == 80
+
+    def test_the_probe_never_passes_the_ceiling(self, monkeypatch):
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_declared", 180)
+        monkeypatch.setattr(trc, "_limit_observed", None)
+        monkeypatch.setattr(trc, "_probe_target", 160)
+        trc._start_probe_window()
+        assert trc._effective_limit() == 180
+        trc._start_probe_window()
+        assert trc._effective_limit() == 180
+
+    def test_a_refused_probe_paces_at_exactly_what_testrail_said(self, monkeypatch):
+        """Overshooting costs one refusal, and the refusal names the answer."""
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_declared", 180)
+        monkeypatch.setattr(trc, "_limit_observed", None)
+        monkeypatch.setattr(trc, "_probe_target", 40)
+        trc._learn_limit('{"error":"API Rate Limit Exceeded - 20 per minute '
+                         'maximum allowed. Retry after 34 seconds."}')
+        assert trc._effective_limit() == 20
+        assert trc.rate_summary()["learned"] is True
+
+    def test_an_unreadable_429_halves_the_pace_instead_of_repeating_it(
+            self, monkeypatch):
+        """If TestRail ever changes the wording, a 429 must still slow us
+        down — otherwise the probe would ask for the refused rate forever."""
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_declared", 180)
+        monkeypatch.setattr(trc, "_limit_observed", None)
+        monkeypatch.setattr(trc, "_probe_target", 80)
+        trc._learn_limit("Too Many Requests")
+        assert trc._effective_limit() == 40
+        trc._learn_limit("Too Many Requests")
+        assert trc._effective_limit() == 20
+
+    def test_a_ceiling_from_the_secrets_is_respected(self, monkeypatch):
+        """TESTRAIL_RATE_LIMIT is a ceiling now: learning can never exceed it."""
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc, "_limit_declared", 30)
+        monkeypatch.setattr(trc, "_limit_observed", None)
+        monkeypatch.setattr(trc, "_probe_target", 20)
+        trc._start_probe_window()
+        assert trc._effective_limit() == 30
+
+    def test_every_download_opens_a_probe_window(self, monkeypatch):
+        """The probe rides on the download — the one moment enough requests go
+        out to exceed the old cap — and nowhere else."""
+        from src import testrail_client as trc
+        calls = []
+        monkeypatch.setattr(trc, "_start_probe_window", lambda: calls.append(1))
+        monkeypatch.setattr(trc, "_WARMED_AT", 0.0)
+        monkeypatch.setattr(trc, "_warm_failures", 0)
+        monkeypatch.setattr(trc, "resolve_project_id", lambda sid: 1)
+        monkeypatch.setattr(trc, "fetch_cases", lambda p, s: [])
+        monkeypatch.setattr(trc, "fetch_sections", lambda p, s: [])
+        monkeypatch.setattr(trc, "fetch_labels", lambda p: {})
+        trc.prefetch_all_suites([1])
+        trc.prefetch_all_suites([1])           # inside the interval: no download
+        assert calls == [1]
 
     def test_a_small_cap_keeps_a_whole_request_in_reserve(self):
         """15% of 5 is three quarters of a request — less slack than the single
@@ -2533,6 +2616,35 @@ class TestRateLimitPolicy:
         monkeypatch.setattr(trc, "_limit_declared", 50)
         trc._learn_limit("API Rate Limit Exceeded - 200 per minute maximum allowed.")
         assert trc._effective_limit() == 5
+
+    def test_a_slot_reserved_before_a_cooldown_is_not_used(self, monkeypatch):
+        """Pushing the pacer back only moved slots handed out afterwards: a
+        thread already asleep on an earlier slot still fired into the window
+        TestRail had just closed — 16 refusals from 16 threads in a simulated
+        cold download.  It must take a fresh slot after the cooldown instead."""
+        from src import testrail_client as trc
+        sleeps: list[float] = []
+
+        def _sleep(s):
+            sleeps.append(s)
+            if len(sleeps) == 1:
+                trc._pace_cooldown(30)      # another thread got a 429 meanwhile
+
+        monkeypatch.setattr(trc.time, "sleep", _sleep)
+        monkeypatch.setattr(trc, "_PACE_INTERVAL", 1.0)
+        monkeypatch.setattr(trc, "_PACE_NEXT", trc.time.time() + 1.0)
+        monkeypatch.setattr(trc, "_PACE_EPOCH", 0)
+        trc._pace()
+        assert len(sleeps) == 2 and sleeps[1] >= 28
+
+    def test_without_a_cooldown_a_slot_is_used_as_reserved(self, monkeypatch):
+        from src import testrail_client as trc
+        sleeps: list[float] = []
+        monkeypatch.setattr(trc.time, "sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr(trc, "_PACE_INTERVAL", 1.0)
+        monkeypatch.setattr(trc, "_PACE_NEXT", trc.time.time() + 1.0)
+        trc._pace()
+        assert len(sleeps) == 1
 
     def test_a_429_backs_the_WHOLE_pacer_off(self, monkeypatch):
         """The avalanche: the thread that got the 429 always waited politely,
