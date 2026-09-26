@@ -3397,3 +3397,17 @@ class TestPreBuildsNeverBlockAClick:
 
         assert "get_bu_coverage" in reach("src/ui/chat_assistant.py", "_build_coverage_brief")
         assert "_evidence_frame" in reach("src/ui/backlog_tab.py", "_tile_evidence")
+
+
+class TestDexterPromisesOnlyWhatItCanDo:
+    """After the run tools went, the welcome text still offered "runs, bugs or
+    flaky tests" and suggested "Open bugs in Watsons Turkey" — an invitation
+    to a question it can only decline."""
+
+    def test_the_welcome_text_does_not_offer_removed_capabilities(self):
+        import inspect
+
+        from src.ui import chat_assistant as ca
+        src = inspect.getsource(ca._render_chat_panel).lower()
+        for word in ("runs, bugs", "flaky", "open bugs"):
+            assert word not in src, word
