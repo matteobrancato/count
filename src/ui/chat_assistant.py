@@ -7,34 +7,20 @@ top failing tests in Drogas?".
 
 Architecture
 ────────────
-Reliability-first, two-layer design so we stay inside the free Gemini tier:
+Reliability-first, so we stay inside the free Gemini tier: a compact "LIVE
+COVERAGE SNAPSHOT" of EVERY BU (coverage %, regression baseline, production
+sanity, weakest areas, ranking) is pre-built from the same cached rule
+evaluation the dashboard uses and injected into the system instruction.  Every
+question is answered from that context in a SINGLE API call — no function
+calling, so no question can fan out into TestRail or Jira requests.
 
-  1. A compact "LIVE COVERAGE SNAPSHOT" of EVERY BU (coverage %, regression
-     baseline, production sanity, weakest areas, ranking) is pre-built from the
-     same cached rule-evaluation the dashboard uses and injected into the system
-     instruction.  Coverage / comparison / gap questions are therefore answered
-     from context in a SINGLE API call — no multi-hop function calling.
-
-  2. A small set of on-demand tools covers only the live detail that is too
-     heavy to pre-compute for every BU.  The model calls at most one, and only
-     when the question clearly needs it.
-
-This keeps metrics exact (no hallucinated numbers) while cutting API calls ~5×
-versus pure function calling — the previous design burned the daily quota fast.
-
-On-demand tools exposed to Gemini
-─────────────────────────────────
-    get_active_runs(bu)        — open runs with pass/fail/completion
-    get_open_bugs(bu)          — unique JIRA keys with the test that generated them
-    get_test_stability(bu, …)  — always-pass / always-fail / flaky counts + top
-
-Internal helpers (NOT exposed — used to build the snapshot)
-──────────────────────────────────────────────────────────
-    list_bus() · get_bu_coverage(bu)
+The live-run tools (active runs, open bugs, test stability) were removed with
+the Runs and Stability tabs: at the current TestRail rate limit one such
+question could queue dozens of requests behind the dashboard's own download.
 
 Privacy
 ───────
-Only the user question + tool results travel to the Gemini API.  Raw test-case
+Only the user question and the coverage snapshot travel to the Gemini API.  Raw test-case
 content and PII never leave the app.
 
 Setup
@@ -50,11 +36,10 @@ from typing import Any
 import streamlit as st
 
 from .. import gemini_client
-from .. import testrail_client as tr
-from ..bu_rules import ALL_RULES, BU_RUN_ALIASES
+from ..bu_rules import ALL_RULES, BU_ALIASES
 from ..methodology import METHODOLOGY_FOR_LLM
 from ..rules_engine import evaluate_rules
-from . import coverage_tab, runs_tab
+from . import coverage_tab
 from .styles import COLORS
 
 logger = logging.getLogger(__name__)
@@ -64,8 +49,6 @@ logger = logging.getLogger(__name__)
 _GEMINI_AVAILABLE = gemini_client.AVAILABLE
 types = gemini_client.types
 
-
-_DEFAULT_MODEL = "gemini-2.5-flash"
 
 # Only the most recent turns are sent to the model — the snapshot (rebuilt fresh
 # on every request) is the source of truth, so old turns add noise, tokens and
@@ -115,10 +98,6 @@ def _display_model() -> str:
     return _configured_model() or _FALLBACK_CHAIN[0]
 
 
-# The retry policy moved to `src/gemini_client.py` so AI Test Design walks the
-# exact same one; the old name stays for anything still importing it.
-_parse_retry_delay = gemini_client.parse_retry_delay
-
 _SYSTEM_INSTRUCTION_TEMPLATE = """
 You are Dexter, the automation-coverage assistant for AS Watson's testing
 platform.  You help managers and QA leads understand the state of test
@@ -129,14 +108,13 @@ The VALID Business Units are EXACTLY the ones listed in the "LIVE COVERAGE
 SNAPSHOT" below — use those exact names and do NOT invent any others.  Note that
 "Superdrug / Savers" is a real, separate entry (the suite of tests shared between
 Superdrug and Savers); it is distinct from "Superdrug" and from "Savers".
-Common aliases to map: SD=Superdrug, KV=Kruidvat, WTR=Watsons Turkey, WUA=Watsons Ukraine,
-TPS=The Perfume Shop, ICI=ICI Paris XL, MRN=Marionnaud, DRO=Drogas.
+Common aliases to map: {ALIASES}.
 
 # WHERE YOUR DATA COMES FROM
 Everything in the "LIVE COVERAGE SNAPSHOT" below is LIVE from TestRail — the exact
 same pipeline the dashboard uses, so your numbers ALWAYS match the dashboard.
 The numbers are exact: never round or estimate beyond what is given.  If a
-specific number is NOT in the snapshot and no tool provides it, say so plainly
+specific number is NOT in the snapshot, say so plainly
 ("I don't have that exact number") instead of guessing.
 
 # HOW TO ANSWER
@@ -144,8 +122,7 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
     strip / Backlog convention) unless the user EXPLICITLY asks about the
     overall case universe.  For best/worst/ranking questions, quote the
     "PRIMARY RANKING" line from the snapshot VERBATIM — do not re-rank.
-  • NEVER state a number that is not literally present in the snapshot or in a
-    tool result.  If the exact figure is not there, say you don't have it —
+  • NEVER state a number that is not literally present in the snapshot.  If the exact figure is not there, say you don't have it —
     a made-up percentage is the worst possible answer.
   • Mobile-App-only entries (e.g. "Superdrug / Savers") have NO regression
     baseline: never name them best/worst for coverage; bring them up only for
@@ -153,22 +130,15 @@ specific number is NOT in the snapshot and no tool provides it, say so plainly
   • Coverage, totals, automated counts, comparisons, rankings, gaps, the
     No-Regression baseline, the backlog breakdown (Backlog / To be Updated / N/A),
     frameworks (Java / Testim / Playwright) → answer DIRECTLY from the snapshot.
-    Do NOT call
-    a tool — the data is already in front of you.  This is fast and reliable.
-  • Call a tool ONLY for live detail NOT in the snapshot (at most one):
-      - get_active_runs(bu)    → currently open/running runs + pass rates
-      - get_open_bugs(bu)      → open JIRA bugs and the tests that raised them
-        (each bug includes live Jira status / resolution / fix versions
-        when the Jira integration is configured)
-      - get_test_stability(bu) → flaky / always-fail analysis over recent runs
-    All three accept scope="mobile_app" when the user asks about the mobile
-    app / MAPP; the default covers website + Microservices.
+  • You have NO data on test runs, run pass rates, open bugs or test stability.
+    If asked, say plainly that the dashboard does not currently show runs or
+    stability — never estimate them from the coverage figures.
 
 # HOW THE METRICS ARE CALCULATED  (use this to answer "how / why / what does X mean")
 {METHODOLOGY}
 Rules
 ─────
-1. NEVER invent or estimate a number.  Use the snapshot or a tool — nothing else.
+1. NEVER invent or estimate a number.  Use the snapshot — nothing else.
    If you genuinely don't have it, say so rather than guessing.
 2. **Reply in the user's language** (Italian → Italian, English → English), match tone.
 3. Be concise and conversational.  Lead with the headline number in **bold**, then
@@ -177,7 +147,6 @@ Rules
 5. Always give context ("1,116 of 3,949 cases", "28.3% covered").
 6. Be proactive: add a one-line comparison or call out the weakest area when useful.
 7. Don't ask to clarify when a BU is identifiable (name or alias) — just answer.
-   If a tool returns `{"error": "..."}`, share the actual error, don't invent one.
 8. Cross-BU math (totals, averages, "overall"): use the precomputed GROUP TOTALS
    in the snapshot — do NOT re-add per-BU numbers yourself.  For any OTHER derived
    number (a difference, a ratio not provided), show the calculation inline
@@ -196,87 +165,37 @@ Answer shape (example for "how is X doing")
 
 # Methodology comes from the shared module so the assistant explains the
 # metrics exactly the way the in-app glossary does (one source of truth).
-_SYSTEM_INSTRUCTION = _SYSTEM_INSTRUCTION_TEMPLATE.replace(
-    "{METHODOLOGY}", METHODOLOGY_FOR_LLM)
+_SYSTEM_INSTRUCTION = (
+    _SYSTEM_INSTRUCTION_TEMPLATE
+    .replace("{METHODOLOGY}", METHODOLOGY_FOR_LLM)
+    .replace("{ALIASES}", ", ".join(
+        f"{alias}={bu}" for bu, aliases in BU_ALIASES.items() for alias in aliases))
+)
 
 
 # ── BU resolution ────────────────────────────────────────────────────────────
-def _safe_tool(fn):
-    """Decorator: catch any exception in a tool function and return a dict the
-    LLM can read, AND expose a signature with *resolved* type annotations.
+def _error_as_dict(fn):
+    """Decorator: turn an exception in a snapshot helper into ``{"error": ...}``.
 
-    The resolved signature is critical for Gemini's automatic function calling.
-    This module uses ``from __future__ import annotations`` (PEP 563), so a
-    function's parameter annotations are stored as STRINGS ("str", "int").  The
-    SDK's argument converter calls ``inspect.signature(fn)`` and then runs
-    ``isinstance(value, param.annotation)`` — with a string annotation that
-    raises *"isinstance() arg 2 must be a type"*, crashing every tool the model
-    calls WITH arguments (parameterless tools slipped through).  By setting
-    ``__signature__`` to a version whose annotations are the real types
-    (via ``get_type_hints``), ``inspect.signature`` returns ``str``/``int`` and
-    the SDK's isinstance check works.
+    The snapshot builder reads that key and skips the BU, so one BU whose data
+    fails to load drops out of Dexter's context instead of blanking all of it.
+    The failure is logged with its traceback — skipped, never silent.
     """
     import functools
-    import inspect
-    import typing
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except Exception as exc:                                        # noqa: BLE001
-            logger.exception("Tool %s failed", fn.__name__)
-            return {
-                "error":         f"{type(exc).__name__}: {str(exc)[:200]}",
-                "tool":          fn.__name__,
-                "tool_arguments": {"args": list(args), "kwargs": dict(kwargs)},
-            }
+            logger.exception("%s failed", fn.__name__)
+            return {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
 
-    # Rebuild the signature with resolved (real-type) annotations.
-    try:
-        hints = typing.get_type_hints(fn)
-        sig = inspect.signature(fn)
-        params = [
-            p.replace(annotation=hints.get(name, p.annotation))
-            for name, p in sig.parameters.items()
-        ]
-        wrapper.__signature__ = sig.replace(
-            parameters=params,
-            return_annotation=hints.get("return", sig.return_annotation),
-        )
-    except Exception:                                                   # noqa: BLE001
-        pass  # fall back to the copied annotations if resolution fails
     return wrapper
 
 
-def _resolve_bu_name(query: str) -> str | None:
-    """Map a user-supplied BU code/name to the canonical display name."""
-    if not query:
-        return None
-    q   = query.lower().strip()
-    bus = sorted({r.bu for r in ALL_RULES})
-
-    for bu in bus:                                          # exact
-        if bu.lower() == q:
-            return bu
-    for bu, aliases in BU_RUN_ALIASES.items():              # alias (SD → Superdrug)
-        for alias in aliases:
-            if alias.lower() == q:
-                return bu
-    for bu in bus:                                          # loose substring
-        if q in bu.lower() or bu.lower() in q:
-            return bu
-    return None
-
-
-# ── Tool functions exposed to Gemini ─────────────────────────────────────────
-@_safe_tool
-def list_bus() -> dict:
-    """List all Business Units available in the dashboard."""
-    return {"business_units": sorted({r.bu for r in ALL_RULES})}
-
-
-@_safe_tool
+# ── Coverage helpers — the snapshot is built from these ─────────────────────
+@_error_as_dict
 def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
     """Get automation coverage for a Business Unit.
 
@@ -285,11 +204,11 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
     baseline coverage (cases tagged with big_regr_desktop / big_regr_mobile).
 
     Args:
-        bu: BU name or alias (e.g. "Superdrug" or "SD").
+        bu: the canonical BU name, as the snapshot builder passes it.
     """
-    canonical = _resolve_bu_name(bu)
-    if not canonical:
-        return {"error": f"Unknown BU '{bu}'. Call list_bus() to see options."}
+    if not any(r.bu == bu for r in ALL_RULES):
+        return {"error": f"Unknown BU '{bu}'"}
+    canonical = bu
 
     scope = next((r.scope for r in ALL_RULES if r.bu == canonical), "website")
     if scope == "mobile_app":
@@ -401,7 +320,6 @@ def get_bu_coverage(bu: str, _frames: dict | None = None) -> dict:
     }
 
 
-
 def _regression_stats(expanded) -> dict:
     """Regression figures from a classified baseline frame — ROW basis.
 
@@ -421,206 +339,12 @@ def _regression_stats(expanded) -> dict:
     }
 
 
-def _scopes_for(scope: str) -> tuple[str, ...]:
-    """Map a tool's `scope` argument to rule scopes.  Web (default) also covers
-    Microservices; 'mobile_app' isolates the dedicated MAPP projects."""
-    if (scope or "").strip().lower() in ("mobile_app", "mobile app", "mobile", "mapp", "app"):
-        return ("mobile_app",)
-    return ("website", "next_gen")
-
-
-@_safe_tool
-def get_active_runs(bu: str, scope: str = "website") -> dict:
-    """Get the list of active (open) TestRail runs for a BU.
-
-    Each run summary includes pass/fail/blocked counts, completion %,
-    pass rate, days since last activity, and the unique open JIRA bugs.
-
-    Args:
-        bu: BU name or alias.
-        scope: "website" (default, includes Microservices) or "mobile_app" for the
-            BU's dedicated mobile-app (MAPP) project.
-    """
-    canonical = _resolve_bu_name(bu)
-    if not canonical:
-        return {"error": f"Unknown BU '{bu}'"}
-
-    project_ids = runs_tab._bu_project_ids(_scopes_for(scope)).get(canonical, set())
-    if not project_ids:
-        return {"error": f"No TestRail projects for {canonical}"}
-
-    base_url    = tr.TestRailCredentials.from_secrets().base_url
-    all_active  = runs_tab._flatten_active_runs(project_ids, bu=canonical)
-    bu_runs     = [
-        r for r in all_active
-        if canonical in runs_tab._bus_for_run_name(r.get("name"))
-        or canonical in runs_tab._bus_for_run_name(r.get("plan_name"))
-    ]
-    rows = [runs_tab._summarise_run(r, base_url) for r in bu_runs]
-    rows.sort(key=lambda r: -(r["updated_on"] or 0))
-
-    bug_records = runs_tab._collect_bug_records(rows)
-    bugs_by_run: dict[int, set[str]] = {}
-    for rec in bug_records:
-        bugs_by_run.setdefault(rec["run_id"], set()).add(rec["bug"])
-
-    runs = []
-    for r in rows:
-        runs.append({
-            "name":                r["name"],
-            "plan":                r["plan"],
-            "total_tests":         r["total"],
-            "passed":              r["passed"],
-            "failed":              r["failed"],
-            "blocked":             r["blocked"],
-            "completion_pct":      r["completion"],
-            "pass_rate_pct":       r["pass_rate"],
-            "days_since_activity": r["days_idle"],
-            "last_activity":       r["updated_str"],
-            "open_bugs":           sorted(bugs_by_run.get(r["id"], set())),
-        })
-
-    return {
-        "business_unit":          canonical,
-        "active_run_count":       len(rows),
-        "unique_open_bugs_count": len({rec["bug"] for rec in bug_records}),
-        "runs":                   runs,
-    }
-
-
-@_safe_tool
-def get_open_bugs(bu: str, scope: str = "website") -> dict:
-    """List the open JIRA bug keys for a BU, with the test that generated each.
-
-    Useful to answer "What bugs are open for Drogas?" — returns one record per
-    failure event with the test ID/title, run name, and date.
-
-    Args:
-        bu: BU name or alias.
-        scope: "website" (default, includes Microservices) or "mobile_app" for the
-            BU's dedicated mobile-app (MAPP) project.
-    """
-    canonical = _resolve_bu_name(bu)
-    if not canonical:
-        return {"error": f"Unknown BU '{bu}'"}
-
-    project_ids = runs_tab._bu_project_ids(_scopes_for(scope)).get(canonical, set())
-    if not project_ids:
-        return {"error": f"No TestRail projects for {canonical}"}
-
-    base_url   = tr.TestRailCredentials.from_secrets().base_url
-    all_active = runs_tab._flatten_active_runs(project_ids, bu=canonical)
-    bu_runs    = [
-        r for r in all_active
-        if canonical in runs_tab._bus_for_run_name(r.get("name"))
-        or canonical in runs_tab._bus_for_run_name(r.get("plan_name"))
-    ]
-    rows = [runs_tab._summarise_run(r, base_url) for r in bu_runs]
-    bug_records = runs_tab._collect_bug_records(rows)
-
-    # Best-effort Jira enrichment: status / resolution / fix versions, live.
-    jira_info: dict[str, dict] = {}
-    try:
-        from .. import jira_client as jc
-        if jc.available():
-            jira_info = jc.fetch_issues(tuple(sorted({r["bug"] for r in bug_records})))
-    except Exception:                                                   # noqa: BLE001
-        logger.exception("get_open_bugs: Jira enrichment failed")
-
-    def _jira(rec: dict) -> dict:
-        info = jira_info.get(rec["bug"]) or {}
-        return {
-            "jira_status":  info.get("status"),
-            "resolution":   info.get("resolution"),
-            "fix_versions": info.get("fix_versions"),
-        } if info else {}
-
-    return {
-        "business_unit": canonical,
-        "bug_count":     len({rec["bug"] for rec in bug_records}),
-        "bugs": [
-            {
-                "key":         rec["bug"],
-                "url":         rec["bug_url"],
-                "test_id":     rec["case_id"],
-                "test_title":  rec["case_title"],
-                "run_name":    rec["run_name"],
-                "failed_on":   rec["failed_str"],
-                **_jira(rec),
-            }
-            for rec in bug_records
-        ],
-    }
-
-
-@_safe_tool
-def get_test_stability(bu: str, n_runs: int = 5, min_executions: int = 5,
-                       scope: str = "website") -> dict:
-    """Analyse test stability over recent completed runs for a BU.
-
-    Classifies each case as: Always pass, Always fail, Flaky, or Insufficient
-    data, then returns counts plus the top 10 actionable cases (Always fail +
-    Flaky, sorted by failure rate DESC).
-
-    Args:
-        bu:             BU name or alias.
-        n_runs:         Most recent completed runs to walk (default 5).
-        min_executions: Minimum results per case to receive a classification.
-        scope: "website" (default) or "mobile_app" for MAPP runs.
-    """
-    canonical = _resolve_bu_name(bu)
-    if not canonical:
-        return {"error": f"Unknown BU '{bu}'"}
-
-    project_ids = runs_tab._bu_project_ids(_scopes_for(scope)).get(canonical, set())
-    if not project_ids:
-        return {"error": f"No TestRail projects for {canonical}"}
-
-    completed = runs_tab._completed_runs_for_bu(canonical, project_ids, limit=int(n_runs))
-    if not completed:
-        return {"business_unit": canonical, "error": "No completed runs found"}
-
-    stab = runs_tab._classify_stability(completed, min_executions=int(min_executions))
-    if stab.empty:
-        return {"business_unit": canonical, "error": "No test data in selected runs"}
-
-    counts = {str(k): int(v) for k, v in stab["classification"].value_counts().to_dict().items()}
-
-    failing = stab[stab["classification"].isin(["Always fail", "Flaky"])]
-    failing = failing.sort_values(["failure_rate", "fail"], ascending=[False, False]).head(10)
-    top_failing = [
-        {
-            "case_id":        int(row["case_id"]),
-            "title":          str(row["title"]),
-            "classification": str(row["classification"]),
-            "failure_rate":   float(row["failure_rate"]),
-        }
-        for _, row in failing.iterrows()
-    ]
-
-    return {
-        "business_unit":         canonical,
-        "runs_analyzed":         len(completed),
-        "min_executions":        int(min_executions),
-        "classification_counts": counts,
-        "top_failing_cases":     top_failing,
-    }
-
-
-# Tools exposed to Gemini = ONLY the live/heavy detail that is NOT in the
-# pre-built snapshot.  Coverage, totals, comparisons and gaps are answered
-# directly from the snapshot (see `_build_coverage_brief`) in a single API call —
-# this is the core of the reliability fix (no multi-hop function calling for the
-# common case, so we stay well within the free-tier rate limits).
-_TOOLS = [get_active_runs, get_open_bugs, get_test_stability]
-
-
 @st.cache_data(ttl=21600, show_spinner=False)
 def _build_coverage_brief() -> str:
     """Build a compact markdown snapshot of CURRENT coverage for every BU.
 
     Injected into the system instruction so Gemini can answer coverage,
-    comparison and gap questions from context in a SINGLE call — no tool
+    comparison and gap questions from context in a SINGLE call — no function-calling
     round-trips.  Cheap to build: it reuses `get_bu_coverage`, which is backed by
     the same `@st.cache_data` rule-evaluation the dashboard already uses.  Cached
     here too (and cleared by the header's "Refresh Numbers" button).
@@ -795,11 +519,6 @@ def _build_coverage_brief() -> str:
 
 # ── Gemini client / session ──────────────────────────────────────────────────
 _get_api_key       = gemini_client.api_key
-_get_gemini_client = gemini_client.client
-
-
-def _gemini_ready() -> bool:
-    return _GEMINI_AVAILABLE and _get_api_key() is not None
 
 
 def _queue_user_message(text: str) -> None:
@@ -823,9 +542,6 @@ def _generate_pending_response() -> None:
     one if the current model is rate-limited (RESOURCE_EXHAUSTED / 429) or not
     found (404).  A short cooldown is recorded per-model so we don't keep
     hitting an exhausted one within the same session.
-
-    Function calling is auto-handled by the SDK: tool calls happen server-side
-    in a single round-trip, only the final text response comes back to us.
     """
     if not _GEMINI_AVAILABLE:
         return
@@ -873,16 +589,7 @@ def _generate_pending_response() -> None:
         )
 
     config = types.GenerateContentConfig(
-        tools=_TOOLS,
         system_instruction=system_instruction,
-        # The common case (coverage / comparisons / gaps) needs ZERO tool calls —
-        # it's answered from the snapshot above.  A small budget remains for the
-        # occasional live-detail question (runs / bugs / stability): one tool
-        # call + the formatting turn.  Keeping this low is what holds us inside
-        # the free-tier rate limits.
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-            maximum_remote_calls=4,
-        ),
         # Near-deterministic decoding: this is a factual data assistant reading
         # numbers out of its context — sampling variety only hurts here.
         temperature=0.1,

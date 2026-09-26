@@ -181,11 +181,6 @@ def _parse_all_configs(raw_field: dict) -> tuple[dict, dict, list]:
 
 
 # Keep the old name as an alias so any stray import doesn't break.
-def _parse_dropdown_configs(raw_field: dict) -> tuple[dict, dict]:
-    v, i, _ = _parse_all_configs(raw_field)
-    return v, i
-
-
 # 6h, matching the data caches — NOT 15 minutes.  This runs at the top of every
 # rule evaluation, so a short TTL meant three API calls every quarter of an hour
 # and, when one of them met a 429, the whole expansion died with it: that is the

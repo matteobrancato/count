@@ -103,7 +103,9 @@ class TestDexterSharesThePolicy:
         import inspect
 
         from src.ui import chat_assistant as ca
-        assert ca._parse_retry_delay is gc.parse_retry_delay
+        # No private copy of the retry parsing may survive in Dexter: two copies
+        # of a policy drift the first time one of them is fixed.
+        assert "parse_retry_delay" not in inspect.getsource(ca)
         src = inspect.getsource(ca._generate_pending_response)
         assert "gemini_client.generate(" in src
         assert "gemini_client.failure_message(" in src

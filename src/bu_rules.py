@@ -77,32 +77,27 @@ ALL_COUNTRY_TOKENS: dict[str, str] = {
 }
 
 
-# --------------------------------------------------------------------- run/plan name aliases
-# BU codes that appear in TestRail run/plan names (case-insensitive).  Used by the
-# Runs tab to associate a run with the right BU.
+# --------------------------------------------------------------------- BU aliases
+# The short codes people actually use for each BU.  Fed verbatim into Dexter's
+# system instruction, so "how is SD doing?" is understood as Superdrug — this
+# table is the ONLY copy: the prompt used to carry a hand-written duplicate, and
+# the two had already drifted apart.
 #
-# A single alias CAN belong to multiple BUs (e.g. "EE" = Eastern Europe,
-# which covers Drogas, Watsons Turkey and Marionnaud's CEE countries) — in that case
-# the same run will appear under each of them.
-#
-# Word-boundary regex matching means "TPS" doesn't accidentally match "TP",
-# so we can keep overlapping short codes safely.
-BU_RUN_ALIASES: dict[str, list[str]] = {
+# An alias must name exactly ONE BU.  "EE" (Eastern Europe) was dropped for
+# that reason: it covers Drogas, Watsons Turkey and Marionnaud, and a hint that
+# maps one code to three BUs gives the model nothing to go on.  The singular
+# "Watson …" spellings are listed because that is how the team writes them.
+BU_ALIASES: dict[str, list[str]] = {
     "Superdrug":        ["SD"],
     "Savers":           ["SV"],
     "The Perfume Shop": ["TPS"],
     "Kruidvat":         ["KV"],
     "Trekpleister":     ["TKP", "TP"],
-    "Watsons Turkey":   ["WTR", "EE"],          # EE = Eastern Europe (shared)
-    # Deliberately NOT "EE": that alias is shared by Turkey, Drogas and
-    # Marionnaud, and joining it would report their Eastern-Europe runs as
-    # Ukraine's.  Both spellings of the name are listed because the display
-    # name is plural and the run names are not — \b"Watson Ukraine"\b does not
-    # match "Watsons Ukraine", so listing one would quietly miss the other.
-    "Watsons Ukraine":  ["WTCUA", "UA", "Watson Ukraine", "Watsons Ukraine"],
-    "ICI Paris XL":     ["IPXL"],
-    "Marionnaud":       ["MFR", "MRN", "EE"],   # MRN CEE countries
-    "Drogas":           ["DRG", "EE"],          # Baltic — Eastern Europe
+    "Watsons Turkey":   ["WTR", "Watson Turkey"],
+    "Watsons Ukraine":  ["WTCUA", "UA", "Watson Ukraine"],
+    "ICI Paris XL":     ["IPXL", "ICI"],
+    "Marionnaud":       ["MRN", "MFR"],
+    "Drogas":           ["DRG", "DRO"],
     "Microservices":    ["NG", "NEXTGEN"],
 }
 
@@ -541,11 +536,3 @@ MOBILE_APP_BUS: list[str] = sorted({r.bu for r in ALL_RULES if r.scope == "mobil
 
 def rules_for_bu(bu: str, scope: Scope | None = None) -> list[Rule]:
     return [r for r in ALL_RULES if r.bu == bu and (scope is None or r.scope == scope)]
-
-
-def suites_for_bu(bu: str, scope: Scope | None = None) -> list[int]:
-    seen: list[int] = []
-    for r in rules_for_bu(bu, scope):
-        if r.suite_id not in seen:
-            seen.append(r.suite_id)
-    return seen

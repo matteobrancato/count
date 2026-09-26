@@ -473,7 +473,7 @@ class TestRailClient:
     def get_cases(self, project_id: int, suite_id: int, limit: int = 250) -> list[dict]:
         """Every case in a suite, following TestRail's own `_links.next`.
 
-        Sequential ON PURPOSE, like `get_sections` and `_get_paginated`.  This
+        Sequential ON PURPOSE, like `get_sections`.  This
         used to speculate five pages ahead, which was free while requests were
         cheap — the pacer serialises every request anyway, so the parallelism
         never bought wall-clock here.  What it did buy was the pages *past* the
@@ -497,73 +497,6 @@ class TestRailClient:
             # ~3.5s per request that is a warm-up that never returns.
             endpoint = nxt.lstrip("/") if (nxt and page) else None
         return cases
-
-    def get_case(self, case_id: int) -> dict:
-        """A single test case by ID (title, refs, section, type, custom fields)."""
-        return self._get(f"get_case/{case_id}")
-
-    def get_statuses(self) -> list[dict]:
-        """All result statuses, including custom ones (id ≥ 6)."""
-        return self._get("get_statuses")
-
-    # -------------------------------------------------- runs / plans / results
-    def _get_paginated(self, endpoint: str, key: str, limit: int = 250) -> list[dict]:
-        """Generic paginated fetch — used for runs / plans / tests / results.
-
-        TestRail v2 returns either a bare list (older deployments) or an envelope
-        ``{key: [...], _links: {next: ...}}``.  We follow ``_links.next`` until null.
-
-        TestRail's URL convention uses `&` for all params after the endpoint path
-        (the leading `?` is in the rewrite rule: index.php?/api/v2/<endpoint>).
-        """
-        out: list[dict] = []
-        url = f"{endpoint}&limit={limit}&offset=0"
-        while url:
-            payload = self._get(url)
-            if isinstance(payload, list):
-                return payload   # Old TR — full list, no pagination envelope.
-            out.extend(payload.get(key, []))
-            nxt = (payload.get("_links") or {}).get("next")
-            url = nxt.lstrip("/") if nxt else None
-        return out
-
-    def get_runs(self, project_id: int, is_completed: bool | None = None) -> list[dict]:
-        """List runs for a project (excluding runs that belong to a plan).
-
-        Each run dict already carries summary counts: passed_count, failed_count,
-        blocked_count, untested_count, retest_count, custom_status_*_count.
-        """
-        endpoint = f"get_runs/{project_id}"
-        if is_completed is not None:
-            endpoint += f"&is_completed={1 if is_completed else 0}"
-        return self._get_paginated(endpoint, key="runs")
-
-    def get_plans(self, project_id: int, is_completed: bool | None = None) -> list[dict]:
-        """List test plans for a project (each plan can contain many runs)."""
-        endpoint = f"get_plans/{project_id}"
-        if is_completed is not None:
-            endpoint += f"&is_completed={1 if is_completed else 0}"
-        return self._get_paginated(endpoint, key="plans")
-
-    def get_plan(self, plan_id: int) -> dict:
-        """Plan detail with `entries` → each entry has `runs`."""
-        return self._get(f"get_plan/{plan_id}")
-
-    def get_tests(self, run_id: int) -> list[dict]:
-        """All tests in a run with their current status_id."""
-        return self._get_paginated(f"get_tests/{run_id}", key="tests")
-
-    def get_results_for_run(self, run_id: int, status_id: int | None = None) -> list[dict]:
-        """All results for a run, optionally filtered by status_id (5 = failed)."""
-        endpoint = f"get_results_for_run/{run_id}"
-        if status_id is not None:
-            endpoint += f"&status_id={status_id}"
-        return self._get_paginated(endpoint, key="results")
-
-    def get_results_for_case(self, run_id: int, case_id: int) -> list[dict]:
-        """Every result the case accrued in one run (newest first per TestRail)."""
-        return self._get_paginated(
-            f"get_results_for_case/{run_id}/{case_id}", key="results")
 
 
 # --------------------------------------------------------------------- caching
@@ -763,102 +696,6 @@ def fetch_labels(project_id: int) -> dict[int, str]:
         return _fetch_labels_cached(project_id)
 
 
-# ── runs / plans / results ───────────────────────────────────────────────────
-# Split by whether the thing being asked about can still change.
-#
-# A COMPLETED run or plan is immutable — TestRail cannot alter it — so it gets
-# the same long, persisted TTL `fetch_tests` has always used.  Only the ACTIVE
-# queries need the short one.
-#
-# This used to be a single 10-minute TTL for both, which was affordable at 180
-# requests/minute.  At 5 it is not arithmetic that works: the Runs/Stability
-# view costs roughly 25 requests per BU, which at the current pace is ~90
-# seconds — so a 10-minute TTL meant closed history nobody could have changed
-# was re-downloaded all day, out of the same budget the coverage data needs.
-@st.cache_data(show_spinner=False, ttl=600)
-def _fetch_runs_live(project_id: int, is_completed: bool | None) -> list[dict]:
-    return _get_client().get_runs(project_id, is_completed=is_completed)
-
-
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
-def _fetch_runs_closed(project_id: int) -> list[dict]:
-    return _get_client().get_runs(project_id, is_completed=True)
-
-
-def fetch_runs(project_id: int, is_completed: bool | None = None) -> list[dict]:
-    if is_completed is True:
-        return _fetch_runs_closed(project_id)
-    return _fetch_runs_live(project_id, is_completed)
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def _fetch_plans_live(project_id: int, is_completed: bool | None) -> list[dict]:
-    return _get_client().get_plans(project_id, is_completed=is_completed)
-
-
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
-def _fetch_plans_closed(project_id: int) -> list[dict]:
-    return _get_client().get_plans(project_id, is_completed=True)
-
-
-def fetch_plans(project_id: int, is_completed: bool | None = None) -> list[dict]:
-    if is_completed is True:
-        return _fetch_plans_closed(project_id)
-    return _fetch_plans_live(project_id, is_completed)
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def fetch_plan(plan_id: int) -> dict:
-    """Detail of an ACTIVE plan — its runs and counts are still moving."""
-    return _get_client().get_plan(plan_id)
-
-
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
-def fetch_plan_closed(plan_id: int) -> dict:
-    """Detail of a COMPLETED plan.  Use ONLY for plans TestRail reports as
-    completed — same immutability contract as `fetch_tests`."""
-    return _get_client().get_plan(plan_id)
-
-
-# Completed-run data is immutable → long TTL (6h).  Use ONLY for completed runs.
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
-def fetch_tests(run_id: int) -> list[dict]:
-    return _get_client().get_tests(run_id)
-
-
-# Same call, short TTL — for ACTIVE runs, whose tests/statuses keep changing.
-@st.cache_data(show_spinner=False, ttl=600)
-def fetch_tests_fresh(run_id: int) -> list[dict]:
-    return _get_client().get_tests(run_id)
-
-
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
-def fetch_statuses() -> dict[int, str]:
-    """{status_id: display label} incl. custom statuses (id ≥ 6)."""
-    return {
-        int(s["id"]): (s.get("label") or s.get("name") or f"Status {s['id']}")
-        for s in _get_client().get_statuses()
-    }
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def fetch_failed_results(run_id: int) -> list[dict]:
-    """Failed results only (status_id=5) — used for bug/defect extraction."""
-    return _get_client().get_results_for_run(run_id, status_id=5)
-
-
-@st.cache_data(show_spinner=False, ttl=21600, persist="disk")
-def fetch_case(case_id: int) -> dict:
-    """A single case by ID — used by the Runs tab's in-depth analysis."""
-    return _get_client().get_case(case_id)
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def fetch_results_for_case(run_id: int, case_id: int) -> list[dict]:
-    """Result history of one case within one run."""
-    return _get_client().get_results_for_case(run_id, case_id)
-
-
 def resolve_project_id(suite_id: int) -> int:
     """Get the project_id that owns a given suite (needed for get_cases)."""
     suite = fetch_suite(suite_id)
@@ -868,12 +705,7 @@ def resolve_project_id(suite_id: int) -> int:
 def clear_all_caches() -> None:
     for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
                fetch_suite, _fetch_sections_cached, _fetch_cases_cached,
-               _fetch_labels_cached,
-               _fetch_runs_live, _fetch_runs_closed,
-               _fetch_plans_live, _fetch_plans_closed,
-               fetch_plan, fetch_plan_closed, fetch_tests, fetch_tests_fresh,
-               fetch_failed_results, fetch_case, fetch_results_for_case,
-               fetch_statuses):
+               _fetch_labels_cached):
         fn.clear()
 
 

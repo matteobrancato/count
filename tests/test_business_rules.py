@@ -1420,9 +1420,28 @@ class TestEveryBUIsWiredIntoEverySurface:
         assert set(br.WEBSITE_BUS) <= set(_BU_ORDER), \
             sorted(set(br.WEBSITE_BUS) - set(_BU_ORDER))
 
-    def test_every_website_bu_can_be_matched_to_its_runs(self):
-        assert set(br.WEBSITE_BUS) <= set(br.BU_RUN_ALIASES), \
-            sorted(set(br.WEBSITE_BUS) - set(br.BU_RUN_ALIASES))
+    def test_every_alias_names_a_bu_that_exists(self):
+        """A rename that misses this table leaves Dexter mapping a code to a
+        BU the snapshot no longer contains."""
+        known = {r.bu for r in br.ALL_RULES}
+        assert set(br.BU_ALIASES) <= known, sorted(set(br.BU_ALIASES) - known)
+
+    def test_no_alias_names_two_bus(self):
+        """A hint mapping one code to several BUs tells Dexter nothing — this
+        is why the shared "EE" is not in the table."""
+        seen: dict[str, str] = {}
+        for bu, aliases in br.BU_ALIASES.items():
+            for a in aliases:
+                assert a.lower() not in seen, (a, seen.get(a.lower()), bu)
+                seen[a.lower()] = bu
+
+    def test_dexter_reads_the_aliases_from_the_table(self):
+        """The prompt used to carry a hand-written copy, and it had already
+        drifted (WUA vs WTCUA).  Every alias must reach the prompt from here."""
+        from src.ui.chat_assistant import _SYSTEM_INSTRUCTION
+        for bu, aliases in br.BU_ALIASES.items():
+            for a in aliases:
+                assert f"{a}={bu}" in _SYSTEM_INSTRUCTION, (a, bu)
 
     def test_no_display_order_names_a_bu_that_does_not_exist(self):
         """A stale name is how a rename half-lands: the old entry keeps its
@@ -1486,27 +1505,9 @@ class TestWatsonsUkraineIsItsOwnBU:
         ng = next(r for r in br.ALL_RULES if r.bu == "Microservices")
         assert "UA" in ng.countries_filter
 
-    def test_its_aliases_do_not_join_the_shared_eastern_europe_pool(self):
-        """"EE" is shared by Turkey, Drogas and Marionnaud on purpose.  Ukraine
-        joining it would report their runs as Ukraine's."""
-        assert "EE" not in br.BU_RUN_ALIASES["Watsons Ukraine"]
-
-    def test_both_spellings_of_the_name_match_a_run(self):
-        """The display name is plural, the run names are not, and \bWatson
-        Ukraine\b does not match "Watsons Ukraine" — listing only one spelling
-        would quietly miss every run using the other."""
-        from src.ui.runs_tab import _bus_for_run_name
-        for name in ("WTCUA Regression 2026-08", "Watson Ukraine NR",
-                     "Watsons Ukraine NR", "Big NR UA"):
-            assert _bus_for_run_name(name) == {"Watsons Ukraine"}, name
-
-    def test_turkeys_runs_do_not_land_on_ukraine(self):
-        from src.ui.runs_tab import _bus_for_run_name
-        assert "Watsons Ukraine" not in _bus_for_run_name("WTR Big NR")
-
-    def test_turkey_kept_its_suite_and_aliases_through_the_rename(self):
+    def test_turkey_kept_its_suite_and_code_through_the_rename(self):
         assert {r.suite_id for r in br.rules_for_bu("Watsons Turkey", "website")} == {7544}
-        assert br.BU_RUN_ALIASES["Watsons Turkey"] == ["WTR", "EE"]
+        assert "WTR" in br.BU_ALIASES["Watsons Turkey"]
 
 
 class TestMarionnaudUnifiedStatusField:
@@ -2774,57 +2775,6 @@ class TestCasePaginationAsksOnlyForWhatExists:
             [self._page([1], forever)] + [self._page([], forever)] * 5)
         assert [c["id"] for c in client.get_cases(1, 2)] == [1]
         assert len(asked) == 2
-
-
-class TestClosedHistoryIsNotRedownloaded:
-    """A completed run or plan cannot change, so re-fetching it on a ten-minute
-    TTL spent the rate limit on history that was already final — roughly 25
-    requests per BU, taken out of the same budget the coverage data needs."""
-
-    def test_completed_runs_route_to_the_persisted_cache(self, monkeypatch):
-        from src import testrail_client as trc
-        seen: list[tuple] = []
-        monkeypatch.setattr(trc, "_fetch_runs_closed",
-                            lambda pid: seen.append(("closed", pid)) or [])
-        monkeypatch.setattr(trc, "_fetch_runs_live",
-                            lambda pid, c: seen.append(("live", pid, c)) or [])
-        trc.fetch_runs(1, is_completed=True)
-        trc.fetch_runs(1, is_completed=False)
-        trc.fetch_runs(1)
-        assert seen == [("closed", 1), ("live", 1, False), ("live", 1, None)]
-
-    def test_completed_plans_route_to_the_persisted_cache(self, monkeypatch):
-        from src import testrail_client as trc
-        seen: list[tuple] = []
-        monkeypatch.setattr(trc, "_fetch_plans_closed",
-                            lambda pid: seen.append(("closed", pid)) or [])
-        monkeypatch.setattr(trc, "_fetch_plans_live",
-                            lambda pid, c: seen.append(("live", pid, c)) or [])
-        trc.fetch_plans(2, is_completed=True)
-        trc.fetch_plans(2, is_completed=False)
-        assert seen == [("closed", 2), ("live", 2, False)]
-
-    def test_the_completed_plan_details_use_the_closed_fetcher(self):
-        """The ~20 detail calls per BU are the bulk of the cost."""
-        import inspect
-        from src.ui import runs_tab
-        src = inspect.getsource(runs_tab._completed_runs_for_bu)
-        assert "fetch_plan_closed" in src
-        assert "submit(tr.fetch_plan," not in src
-
-    def test_the_active_plan_details_stay_on_the_short_ttl(self):
-        """Active plans are exactly the thing that IS still moving."""
-        import inspect
-        from src.ui import runs_tab
-        src = inspect.getsource(runs_tab._flatten_active_runs)
-        assert "submit(tr.fetch_plan," in src
-        assert "fetch_plan_closed" not in src
-
-    def test_clearing_every_cache_still_resolves(self):
-        """`clear_all_caches` names its functions by hand — a renamed cache
-        turns the refresh button into a NameError at the worst moment."""
-        from src import testrail_client as trc
-        trc.clear_all_caches()
 
 
 class TestPrewarmSurvivesABadWindow:

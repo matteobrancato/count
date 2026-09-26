@@ -14,7 +14,6 @@ from src import jira_client as jc
 from src.rules_engine import _mapp_devices_for
 from src.ui import global_filter as gf
 from src.ui import report_tab as rt
-from src.ui import runs_tab as rn
 
 
 # ── MAPP operating-system field → device rows ────────────────────────────────
@@ -59,55 +58,8 @@ class TestMappDevices:
 
 
 # ── case-id parsing (In-depth Test Analysis input) ───────────────────────────
-class TestParseCaseId:
-    @pytest.mark.parametrize("text,expected", [
-        ("https://x.testrail.io/index.php?/cases/view/3500712", 3500712),
-        ("C3500712", 3500712),
-        ("3500712", 3500712),
-        ("  c3500712  ", 3500712),
-        ("", None),
-        ("no digits here", None),
-    ])
-    def test_accepts_url_prefixed_and_bare_ids(self, text, expected):
-        assert rn._parse_case_id(text) == expected
-
-
 # ── JIRA key extraction from TestRail defect fields ──────────────────────────
-class TestJiraKeyExtraction:
-    def test_bare_key(self):
-        assert rn._extract_jira_keys("EE20-1234") == ["EE20-1234"]
-
-    def test_key_inside_url(self):
-        assert rn._extract_jira_keys(
-            "https://x.atlassian.net/browse/EE20-1234") == ["EE20-1234"]
-
-    def test_multiple_keys_deduped_in_order(self):
-        assert rn._extract_jira_keys("EE20-1, MIC-2, EE20-1") == ["EE20-1", "MIC-2"]
-
-    def test_empty_input(self):
-        assert rn._extract_jira_keys(None) == []
-        assert rn._extract_jira_keys("") == []
-
-
 # ── BU matching from run/plan names ──────────────────────────────────────────
-class TestBuAliasMatching:
-    def test_no_name_matches_nothing(self):
-        assert rn._bus_for_run_name(None) == set()
-        assert rn._bus_for_run_name("") == set()
-
-    def test_alias_is_matched_case_insensitively(self):
-        assert "Drogas" in rn._bus_for_run_name("DRG LV Regression")
-        assert "Drogas" in rn._bus_for_run_name("drg lv regression")
-
-    def test_shared_alias_returns_every_owning_bu(self):
-        """'EE' (Eastern Europe) legitimately belongs to several BUs."""
-        assert len(rn._bus_for_run_name("EE Regression Run")) > 1
-
-    def test_substring_does_not_falsely_match(self):
-        """Alias matching is word-bounded, so 'SDK' must not match 'SD'."""
-        assert "Superdrug" not in rn._bus_for_run_name("SDK smoke run")
-
-
 # ── global scope + BU selector state machine ─────────────────────────────────
 class TestGlobalFilter:
     def setup_method(self):
@@ -196,12 +148,21 @@ class TestJiraClient:
         assert jc._conf() is None
         assert jc.available() is False
 
-    def test_calls_are_noops_when_unavailable(self, monkeypatch):
-        """Every caller must survive an unconfigured Jira."""
+    def test_story_and_field_reads_degrade_without_jira(self, monkeypatch):
+        """AI Test Design must survive an unconfigured Jira: an empty story it
+        can report on, never an exception."""
         monkeypatch.setattr(jc.st, "secrets", {})
-        assert jc.fetch_issues(("X-1",)) == {}
-        assert jc.fetch_versions("X") == []
-        assert jc.count_issues("project = X") is None
+        story = jc.fetch_story("X-1")
+        assert story["key"] == "X-1" and story["summary"] == ""
+        assert jc.field_ids_by_name(("Acceptance Criteria",)) == {}
+
+    def test_the_leakage_search_refuses_rather_than_reporting_zero(self, monkeypatch):
+        """Deliberately the opposite of the above.  An unconfigured Jira must
+        not read as "no production incidents" — that is a number, and a wrong
+        one.  The Leakage tab catches this and says the data is unavailable."""
+        monkeypatch.setattr(jc.st, "secrets", {})
+        with pytest.raises(RuntimeError):
+            jc.search_all("project = X", ("summary",))
 
 
 # ── Report: regression flag join ─────────────────────────────────────────────
@@ -253,55 +214,4 @@ class TestRegressionFlag:
 
 
 # ── release readiness: "how long until it ships" ─────────────────────────────
-class TestDaysToRelease:
-    """A release due today must read 'due today' — comparing instants instead of
-    dates made it '1 day overdue' as soon as the clock passed midnight."""
-
-    @staticmethod
-    def _ver(days_out: int) -> dict:
-        from datetime import datetime, timedelta, timezone
-        d = datetime.now(timezone.utc).date() + timedelta(days=days_out)
-        return {"released": False, "release_date": d.isoformat()}
-
-    @pytest.mark.parametrize("days,expected", [
-        (12, "12 days to release"), (1, "1 day to release"),
-        (0, "due today"), (-1, "1 day overdue"), (-5, "5 days overdue"),
-    ])
-    def test_wording(self, days, expected):
-        from src.ui.runs_tab import _days_to_release
-        assert _days_to_release(self._ver(days))[0] == expected
-
-    def test_degrades_gracefully(self):
-        from src.ui.runs_tab import _days_to_release
-        assert _days_to_release({"released": True})[0] == "already released"
-        assert _days_to_release({"released": False,
-                                 "release_date": ""})[0] == "no release date set"
-        # An unparseable date is shown as-is rather than raising.
-        assert _days_to_release({"released": False,
-                                 "release_date": "TBD"})[0] == "TBD"
-
-
 # ── stability controls: the default must always be selectable ────────────────
-class TestMinExecOptions:
-    """`st.segmented_control` raises when its default is not among the options,
-    which took the whole Stability tab down at 100 runs.  These lock the
-    invariant the previous check missed: the ladder is not just well-formed,
-    it CONTAINS the value the caller defaults to."""
-
-    @pytest.mark.parametrize("n_runs", [1, 2, 3, 5, 7, 10, 25, 33, 50, 100, 999])
-    def test_default_is_always_an_option(self, n_runs):
-        from src.ui.runs_tab import _min_exec_options
-        assert min(5, n_runs) in _min_exec_options(n_runs)
-
-    @pytest.mark.parametrize("n_runs", [5, 10, 25, 50, 100])
-    def test_shape(self, n_runs):
-        from src.ui.runs_tab import _min_exec_options
-        opts = _min_exec_options(n_runs)
-        assert opts == sorted(set(opts))      # sorted, no duplicates
-        assert opts[0] == 1                   # "counted at least once"
-        assert opts[-1] == n_runs             # "every run" is one click away
-        assert len(opts) <= 6                 # still a pill row, not a list
-
-    def test_runs_control_default_is_an_option(self):
-        from src.ui.runs_tab import _STAB_RUNS
-        assert 5 in _STAB_RUNS

@@ -62,38 +62,3 @@ def totals(df: pd.DataFrame) -> dict:
         "desktop": int((df["device"] == "Desktop").sum()),
         "mobile": int((df["device"] == "Mobile").sum()),
     }
-
-
-# --------------------------------------------------------------------- coverage
-def coverage_by_section(
-    raw: pd.DataFrame, automated: pd.DataFrame, *, section_level: int = 1
-) -> pd.DataFrame:
-    """% automated per section (at a given hierarchy depth).
-
-    `raw` is every case in the relevant suites (non-deprecated only). `automated`
-    is the expansion DataFrame; we dedupe on case_id for coverage purposes so a
-    case counted by multiple rules only contributes once to "automated".
-    """
-    if raw.empty:
-        return pd.DataFrame(columns=["section", "total", "automated", "coverage"])
-
-    base = raw[raw["deprecated"] == False].copy()  # noqa: E712
-
-    def top_sections(path: str) -> str:
-        parts = [p.strip() for p in (path or "").split(">") if p.strip()]
-        if not parts:
-            return "(root)"
-        return " > ".join(parts[:section_level])
-
-    base["section"] = base["section_path"].map(top_sections)
-
-    auto_ids = set(automated["case_id"].unique()) if not automated.empty else set()
-    base["is_auto"] = base["case_id"].isin(auto_ids)
-
-    grouped = (
-        base.groupby("section", dropna=False)
-        .agg(total=("case_id", "count"), automated=("is_auto", "sum"))
-        .reset_index()
-    )
-    grouped["coverage"] = (grouped["automated"] / grouped["total"]).fillna(0.0)
-    return grouped.sort_values("total", ascending=False).reset_index(drop=True)
