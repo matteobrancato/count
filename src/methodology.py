@@ -98,6 +98,14 @@ exception: **Watsons Turkey** has a single country, so when that field is left
 blank the case's own `multi_countries` is used instead — unless it also names
 another Business Unit's country, in which case the row is not counted.
 
+**Automation save** — the time automation saves, as measured by the QA team
+and configured per Business Unit (its unit and date are shown beside it). The
+dashboard divides it by the BU's automated **configurations** — baseline rows,
+case × country × device — to get the saving per configuration, then multiplies
+that by the Backlog rows (what automating the backlog would add) and by all
+rows (the saving at full automation). Shown on the Big No-Regression baseline
+only. A BU whose time save is not configured shows no figure at all.
+
 **Freshness** — numbers refresh automatically every few hours; the "Updated …"
 label next to the tabs shows their real age, and the ↻ next to it forces an
 immediate refresh (it re-reads TestRail, so it takes a minute).
@@ -163,6 +171,10 @@ METHODOLOGY_FOR_LLM = """
   own tooling.
 - A Playwright case needs BOTH "Automation Status" = automated AND the
   `playwright` label.  The label alone never makes a case automated.
+- Automation save = the configured time save of a BU ÷ its automated
+  configurations (baseline rows), × Backlog rows ("backlog would add") and ×
+  all rows ("at full automation").  Big No-Regression only; never estimate a
+  saving for a BU with no configured time save.
 - Testim rows take their countries from "Testim Country Coverage", NOT from
   multi_countries: only the countries named there count as automated.  Sole
   exception, Watsons Turkey (one country): a BLANK Testim Country Coverage falls

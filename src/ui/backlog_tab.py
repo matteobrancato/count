@@ -63,6 +63,7 @@ from ..bu_rules import (
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
+from .. import automation_save
 from .. import testrail_client as tr
 from ..rules_engine import evaluate_rules
 from . import global_filter
@@ -1346,6 +1347,36 @@ def _csv_writer(evidence: pd.DataFrame, category: str,
     return _build
 
 
+def _automation_save_line(bu: str, scope: str, s: dict) -> None:
+    """Time saved by automation, and what the backlog would add (see
+    `src/automation_save.py`).  Same one-line shape as the coverage line."""
+    cfg = automation_save.config_for(bu, scope)
+    if cfg.time_save is None:
+        st.caption(f"⏱ **Automation save** — no time save configured for "
+                   f"{html.escape(bu)} yet.")
+        return
+    sv = automation_save.compute(cfg.time_save, s["automated"], s["backlog"],
+                                 s["total"])
+    f = automation_save.fmt
+    context = ", ".join(p for p in (cfg.unit, f"as of {cfg.as_of}" if cfg.as_of else "")
+                        if p)
+    parts = [f"**⏱ Automation save:** `{f(sv.time_save)}` saved"]
+    if sv.per_configuration is None:
+        parts.append("the rest needs at least one automated configuration")
+    else:
+        backlog_part = (f"**Backlog would add** `+{f(sv.backlog_gain)}` "
+                        f"({sv.backlog:,} configurations)")
+        parts += [
+            backlog_part,
+            f"**At full automation** `{f(sv.at_full_automation)}`",
+            f"**Per configuration** `{f(sv.per_configuration)}`",
+        ]
+    line = " &nbsp;·&nbsp; ".join(parts)
+    if context:
+        line += f" &nbsp;<span style='color:{COLORS['muted']}'>({html.escape(context)})</span>"
+    st.markdown(line, unsafe_allow_html=True)
+
+
 def _detail_view(
     bu: str,
     scope: str,
@@ -1424,6 +1455,12 @@ def _detail_view(
                          f"`{s['cov_ex_partial']:.1f}%`")
     cov_parts.append(f"**Not Applicable:** `{s['na_pct']:.1f}%`")
     st.markdown(" &nbsp;·&nbsp; ".join(cov_parts), unsafe_allow_html=True)
+
+    # The time save is measured on the regression the BU runs, so it is shown
+    # against that baseline only — never beside Small NR or Production Sanity,
+    # where its coefficient would be divided by the wrong count.
+    if run == RUN_BIG:
+        _automation_save_line(bu, scope, s)
 
     st.divider()
 

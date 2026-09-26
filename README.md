@@ -78,6 +78,7 @@ app.py                      Streamlit entry point: header, credential gate,
 │   ├── gemini_client.py    Gemini client + the model fallback policy, shared by
 │   │                       Dexter and AI Test Design
 │   ├── test_design.py      AI Test Design: sources, prompt, schema, validation
+│   ├── automation_save.py  Automation save: configured time save → per configuration
 │   └── ui/
 │       ├── global_filter.py  Scope + BU selector, shareable via URL
 │       ├── kpi_strip.py      Executive KPI row under the header
@@ -246,6 +247,15 @@ ATLASSIAN_API_KEY  = "your_atlassian_token"
 # Optional — Confluence pages in AI Test Design (same Atlassian token);
 # derived from JIRA_URL's host when absent
 CONFLUENCE_URL     = "https://your-site.atlassian.net/wiki"
+
+# Optional — Automation save on the Backlog tab (Big No-Regression).  The time
+# save is measured by the QA team; keep it here, not in the (public) repo.
+# KEEP THIS TABLE AT THE END OF THE FILE: in TOML every key written after a
+# [table] header belongs to that table, so TESTRAIL_* keys below it would vanish.
+[automation_time_save]
+unit  = "hours per regression cycle"   # shown verbatim
+as_of = "2026-09"                      # shown verbatim
+"ICI Paris XL" = 120                   # one line per Business Unit
 ```
 
 Only the three `TESTRAIL_*` values are required. Without `GEMINI_API_KEY` the
