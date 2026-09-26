@@ -345,3 +345,24 @@ class TestTheNumbersLoadOncePerDay:
                     if ttl is None and not persisted:
                         offenders.append(f"{f}:{node.name} has no ttl and no persist")
         assert not offenders, offenders
+
+
+class TestTheLoaderStaysOpen:
+    """The warm-up writes a line per step into an expanded status box, and
+    updates its label with a live counter.  Streamlit 1.59 treats a label-only
+    `update()` as "collapse": the steps were written and never seen — which is
+    what "la UI in caricamento non si aggiorna" was.  Found in the live app,
+    confirmed against a local 1.59.2 server with and without the argument."""
+
+    def test_every_label_update_keeps_the_box_open(self):
+        import ast
+        import pathlib
+        tree = ast.parse(pathlib.Path("app.py").read_text())
+        updates = [n for n in ast.walk(tree)
+                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                   and n.func.attr == "update"
+                   and isinstance(n.func.value, ast.Name) and n.func.value.id == "_status"]
+        assert updates, "the warm-up no longer updates its status box"
+        for call in updates:
+            kw = {k.arg for k in call.keywords}
+            assert "expanded" in kw, ast.unparse(call)

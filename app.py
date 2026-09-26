@@ -332,7 +332,15 @@ def main() -> None:
                                            expanded=True) as _status:
                                 warmup_cache(
                                     on_step=_status.write,
-                                    on_label=lambda lbl: _status.update(label=lbl),
+                                    # `expanded=True` on EVERY label update.
+                                    # Without it Streamlit 1.59 re-sends the
+                                    # block with `expanded` cleared, and the
+                                    # frontend reads that as closed: the first
+                                    # progress tick collapsed the box, so the
+                                    # steps were written but never seen.
+                                    # Verified against a real 1.59.2 server.
+                                    on_label=lambda lbl: _status.update(
+                                        label=lbl, expanded=True),
                                 )
                                 _status.update(label="✅ Dashboard ready",
                                                state="complete", expanded=False)

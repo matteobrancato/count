@@ -726,6 +726,15 @@ def clear_all_caches() -> None:
 _WARMED_AT = 0.0
 _WARM_INTERVAL = float(DAY_TTL)
 
+# Whether a download is running right now, and how far it has got — shared, so
+# a session that arrives while another one is downloading can SHOW that
+# download instead of returning at once and then waiting, silently, on the
+# per-suite locks.  That silent wait was the second visitor's whole morning.
+_PREFETCH_LOCK = threading.Lock()
+_PREFETCH_IDLE = threading.Event()
+_PREFETCH_IDLE.set()
+_prefetch_progress = [0, 0]          # [done, total] of the running download
+
 
 # How long a failed warm-up holds the lock before another session may retry.
 # NOT the full interval: the caches are empty when it fails, so claiming the
@@ -770,15 +779,8 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
     call is always made where Streamlit expects it.
     """
     global _WARMED_AT, _warm_failures
-    if time.time() - _WARMED_AT < _WARM_INTERVAL:
-        return
-    _WARMED_AT = time.time()   # claimed upfront so concurrent sessions don't re-warm
-    failures = 0
-    # The one place a lot of requests go out together: find out whether
-    # TestRail has raised the cap since the last download (see the pacer notes).
-    _start_probe_window()
 
-    def tick(done: int, total: int) -> None:
+    def report(done: int, total: int) -> None:
         if not on_progress:
             return
         try:
@@ -787,6 +789,30 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
             # See evaluate_rules' progress hook: a killed session's UI callback
             # must not abort a download the other sessions are waiting on.
             pass
+
+    # Claim the download and mark it running in ONE step, so no session can
+    # see "warmed" before the running flag is up.
+    with _PREFETCH_LOCK:
+        claimed = time.time() - _WARMED_AT >= _WARM_INTERVAL
+        if claimed:
+            _WARMED_AT = time.time()
+            _prefetch_progress[:] = [0, 0]
+            _PREFETCH_IDLE.clear()
+    if not claimed:
+        # Someone else's download — follow it, then return.  Returns at once
+        # when nothing is running (the data is simply warm).
+        while not _PREFETCH_IDLE.wait(_PROGRESS_TICK):
+            report(*_prefetch_progress)
+        return
+
+    failures = 0
+    # The one place a lot of requests go out together: find out whether
+    # TestRail has raised the cap since the last download (see the pacer notes).
+    _start_probe_window()
+
+    def tick(done: int, total: int) -> None:
+        _prefetch_progress[:] = [done, total]      # read by followers
+        report(done, total)
 
     try:
         # Step 1: resolve all project IDs in parallel (skip suites that fail)
@@ -852,3 +878,4 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
                 failures, _warm_failures, backoff)
         else:
             _warm_failures = 0
+        _PREFETCH_IDLE.set()            # release every session following it

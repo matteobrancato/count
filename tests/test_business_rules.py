@@ -3177,3 +3177,60 @@ class TestOneTileFilter:
         assert "_cat" not in bl._rows_for_category(ev, "backlog").columns
         assert bl._rows_for_category(pd.DataFrame(), "backlog").empty
 
+
+
+class TestASecondVisitorSeesTheDownload:
+    """When two sessions start together, the second used to find the download
+    already claimed, return at once, and then wait on the per-suite locks with
+    a loader that said nothing for minutes.  Seen live on 2026-09-26: a box
+    stuck on "Expanding coverage rules" while another session downloaded."""
+
+    def _stub(self, monkeypatch, trc, gate):
+        import threading
+        monkeypatch.setattr(trc, "resolve_project_id", lambda sid: 1)
+        monkeypatch.setattr(trc, "fetch_cases", lambda p, s: gate.wait(2) or [])
+        monkeypatch.setattr(trc, "fetch_sections", lambda p, s: [])
+        monkeypatch.setattr(trc, "fetch_labels", lambda p: {})
+        monkeypatch.setattr(trc, "_start_probe_window", lambda: None)
+        monkeypatch.setattr(trc, "_PROGRESS_TICK", 0.05)
+        monkeypatch.setattr(trc, "_WARMED_AT", 0.0)
+        monkeypatch.setattr(trc, "_prefetch_progress", [0, 0])
+        idle = threading.Event()
+        idle.set()
+        monkeypatch.setattr(trc, "_PREFETCH_IDLE", idle)
+
+    def test_the_follower_reports_progress_and_waits_for_the_end(self, monkeypatch):
+        import threading
+        import time
+
+        from src import testrail_client as trc
+        gate = threading.Event()
+        self._stub(monkeypatch, trc, gate)
+        owner = threading.Thread(target=trc.prefetch_all_suites, args=([1, 2],))
+        owner.start()
+        time.sleep(0.2)                      # the owner has claimed the download
+        seen: list[tuple] = []
+        follower = threading.Thread(
+            target=trc.prefetch_all_suites, args=([1, 2],),
+            kwargs={"on_progress": lambda d, t, r: seen.append((d, t))})
+        follower.start()
+        time.sleep(0.3)
+        assert follower.is_alive(), "the follower returned before the download ended"
+        assert seen, "the follower showed no progress while it waited"
+        gate.set()
+        owner.join(3)
+        follower.join(3)
+        assert not follower.is_alive()
+
+    def test_nothing_running_means_no_wait(self, monkeypatch):
+        """Warm data must stay instant: the follow path only waits on a
+        download that is actually in flight."""
+        import threading
+        import time
+
+        from src import testrail_client as trc
+        self._stub(monkeypatch, trc, threading.Event())
+        monkeypatch.setattr(trc, "_WARMED_AT", time.time())       # warm, idle
+        t0 = time.time()
+        trc.prefetch_all_suites([1, 2])
+        assert time.time() - t0 < 0.1
