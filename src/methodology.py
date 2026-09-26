@@ -106,6 +106,12 @@ that by the Backlog rows (what automating the backlog would add) and by all
 rows (the saving at full automation). Shown on the Big No-Regression baseline
 only. A BU whose time save is not configured shows no figure at all.
 
+**Leakage** — every Jira issue of type "Production Incident", in any
+environment, attributed to a Business Unit by its Jira project. EE20 (Eastern
+Europe) and SD20 (Superdrug & Savers) each serve several BUs and cannot be
+split, so they are shown as groups. "On an automated test" means a TestRail
+case citing the incident in its References is automated.
+
 **Freshness** — numbers refresh automatically every few hours; the "Updated …"
 label next to the tabs shows their real age, and the ↻ next to it forces an
 immediate refresh (it re-reads TestRail, so it takes a minute).
@@ -175,6 +181,9 @@ METHODOLOGY_FOR_LLM = """
   configurations (baseline rows), × Backlog rows ("backlog would add") and ×
   all rows ("at full automation").  Big No-Regression only; never estimate a
   saving for a BU with no configured time save.
+- Leakage = Jira "Production Incident" issues (any environment) per Jira
+  project; EE20 and SD20 are multi-BU groups and must never be split or
+  attributed to a single BU.
 - Testim rows take their countries from "Testim Country Coverage", NOT from
   multi_countries: only the countries named there count as automated.  Sole
   exception, Watsons Turkey (one country): a BLANK Testim Country Coverage falls

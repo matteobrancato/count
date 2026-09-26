@@ -577,6 +577,10 @@ def _raw_case_row(
         "url":            _case_url(base_url, int(case["id"])),
         "suite_id":       suite_id,
         "section_id":     case.get("section_id"),
+        # The Jira keys a case cites (stories, and production incidents).  The
+        # Leakage tab matches incidents to the tests that cover them through
+        # this — from data already downloaded, so at no TestRail cost.
+        "refs":           case.get("refs") or "",
         "type_id":        type_id,
         "type_label":     type_label,
         "priority_id":    case.get("priority_id"),

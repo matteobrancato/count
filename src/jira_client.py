@@ -415,3 +415,62 @@ def fetch_story(key: str) -> dict:
     ac = [adf_to_text(f.get(fid)).strip() for fid in ac_ids if f.get(fid)]
     out["acceptance_criteria"] = "\n\n".join(a for a in ac if a)
     return out
+
+
+# ── production incidents (Leakage tab) ────────────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
+def field_ids_by_name(names: tuple[str, ...]) -> dict[str, str]:
+    """{field name: field id} for the named fields that exist on this site.
+
+    Custom field ids differ from one Jira site to the next, so they are looked
+    up by name rather than hardcoded.
+    """
+    conf = _conf()
+    if not conf:
+        return {}
+    base, user, token = conf
+    try:
+        resp = requests.get(f"{base}/rest/api/3/field",
+                            auth=HTTPBasicAuth(user, token), timeout=_TIMEOUT)
+        if not resp.ok:
+            return {}
+        wanted = set(names)
+        return {f["name"]: f["id"] for f in resp.json() if f.get("name") in wanted}
+    except Exception:
+        logger.exception("Jira field lookup failed")
+        return {}
+
+
+def search_all(jql: str, fields: tuple[str, ...], max_pages: int = 50) -> list[dict]:
+    """EVERY issue matching a JQL (raw Jira JSON), paginated 100 at a time.
+
+    Unlike `search_issues` this is not capped at one page: the Leakage tab
+    needs complete counts, and a silently truncated count is a wrong one.  The
+    `max_pages` guard (5,000 issues) exists only to stop a mistyped JQL from
+    walking a whole instance; hitting it is logged, never hidden.  Read-only.
+    Raises on failure, so the caller can say the data is unavailable instead
+    of showing zero incidents.
+    """
+    conf = _conf()
+    if not conf:
+        raise RuntimeError("Jira is not configured")
+    base, user, token = conf
+    auth = HTTPBasicAuth(user, token)
+    issues: list[dict] = []
+    token_next: str | None = None
+    for _ in range(max_pages):
+        body = {"jql": jql, "maxResults": 100, "fields": list(fields)}
+        if token_next:
+            body["nextPageToken"] = token_next
+        resp = requests.post(f"{base}/rest/api/3/search/jql", json=body,
+                             auth=auth, timeout=30)
+        if not resp.ok:
+            raise RuntimeError(f"Jira search answered {resp.status_code}")
+        payload = resp.json()
+        issues.extend(payload.get("issues") or [])
+        token_next = payload.get("nextPageToken")
+        if not token_next or payload.get("isLast"):
+            return issues
+    logger.warning("Jira search stopped at %d pages (%d issues): %s",
+                   max_pages, len(issues), jql)
+    return issues

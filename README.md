@@ -29,6 +29,7 @@ using the same cached data the dashboard renders.
 | **📈 Stability** | How dependable the tests are — always-pass / always-fail / flaky classification over the last N runs — plus a deep-dive on a single case's execution history |
 | **🧭 Overview** | Cross-BU totals — Smoke Suite, All Automated Cases and Production Sanity — broken down by country and device, over any subset of BUs. These are *automated* counts, not baseline coverage: for that, read the Backlog tab |
 | **📄 Report** | Presentation-ready Altair charts (per BU × country × device, plus a coverage leaderboard), suitable for copy-pasting into slides |
+| **🐞 Leakage** | Every Jira "Production Incident" per Business Unit (by Jira project; EE20 and SD20 shown as multi-BU groups): count vs the previous period, Highest & High, web vs app, a 6-month trend, and how many hit an area an automated TestRail test covers. Jira only — no TestRail request |
 | **✨ AI Test Design** *(Beta)* | Jira stories, Confluence pages, documents and images in; the fewest TestRail-style test cases that cover every acceptance criterion out — step by step, traced AC → test, with open questions for the PO. One Gemini call, Pro first |
 
 A floating chat button (bottom-left, every tab) opens **Dexter**.
@@ -78,6 +79,7 @@ app.py                      Streamlit entry point: header, credential gate,
 │   ├── gemini_client.py    Gemini client + the model fallback policy, shared by
 │   │                       Dexter and AI Test Design
 │   ├── test_design.py      AI Test Design: sources, prompt, schema, validation
+│   ├── leakage.py          Leakage: production incidents from Jira, per BU group
 │   ├── automation_save.py  Automation save: configured time save → per configuration
 │   └── ui/
 │       ├── global_filter.py  Scope + BU selector, shareable via URL
@@ -90,6 +92,7 @@ app.py                      Streamlit entry point: header, credential gate,
 │       ├── report_tab.py     Report tab
 │       ├── data_quality.py   TestRail hygiene checklist
 │       ├── chat_assistant.py Dexter — the Gemini assistant
+│       ├── leakage_tab.py    Leakage tab
 │       ├── test_design_tab.py AI Test Design tab (Beta)
 │       └── styles.py         Design system (colours, CSS, health thresholds)
 │
@@ -240,7 +243,7 @@ TESTRAIL_API_KEY = "your_api_key"
 GEMINI_API_KEY   = "your_gemini_key"
 GEMINI_MODEL     = "gemini-2.5-flash"   # omit to use the built-in fallback chain
 
-# Optional — Jira enrichment for the Runs tab
+# Optional — Jira: Leakage tab, AI Test Design, Runs tab enrichment
 JIRA_URL           = "https://your-site.atlassian.net"
 ATLASSIAN_USER     = "your.email@example.com"
 ATLASSIAN_API_KEY  = "your_atlassian_token"
