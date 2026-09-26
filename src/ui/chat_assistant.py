@@ -352,9 +352,14 @@ def _build_coverage_brief() -> str:
 
     Injected into the system instruction so Gemini can answer coverage,
     comparison and gap questions from context in a SINGLE call — no function-calling
-    round-trips.  Cheap to build: it reuses `get_bu_coverage`, which is backed by
-    the same `@st.cache_data` rule-evaluation the dashboard already uses.  Cached
-    here too (and cleared by the header's "Refresh Numbers" button).
+    round-trips.  Built from `get_bu_coverage`, which reads the three runs from
+    the Backlog tab's own cached rows, so every figure here is one the screen
+    shows.  Cached for the day, cleared with everything else by ↻ and by the
+    daily reload; built in the background after a load (rules_engine).
+
+    Streamlit keys this cache on THIS function's source, not on its callees':
+    a fix inside `get_bu_coverage` alone left the broken snapshot of the day in
+    place.  Changing this docstring is what retired it on 2026-09-26.
     """
     bus = sorted({r.bu for r in ALL_RULES})
     ranking: list[tuple[str, float]] = []
