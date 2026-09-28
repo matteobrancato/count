@@ -42,13 +42,14 @@ EE = next(g for g in lk.GROUPS if g.project == "EE20")
 
 
 def _incident(key, created, *, rc="Code issue", priority="Medium", status="Done",
-              components=(), labels=()):
+              components=(), labels=(), team_ownership=""):
     return {"key": key, "url": f"https://j/browse/{key}", "type": "Production Incident",
             "summary": "Checkout fails with voucher", "created": created,
             "priority": priority, "status": status, "components": list(components),
             "labels": list(labels), "root_cause": rc, "environment": "PROD",
             "description": "", "steps": "", "actual": "", "expected": "",
-            "case_refs": "", "links": [], "resolution": ""}
+            "case_refs": "", "links": [], "resolution": "",
+            "team_ownership": team_ownership}
 
 
 # ── releases and windows ─────────────────────────────────────────────────────
@@ -118,6 +119,7 @@ class TestDeliverysRules:
             "not applicable", "not a bug"}
         assert lk.EXCLUDED_COMPONENTS == {"ios app", "android app"}
         assert lk.EXCLUDED_LABELS == {"mapp", "ios", "android"}
+        assert lk.EXCLUDED_OWNERS == {"mapp squad"}
 
     @pytest.mark.parametrize(("change", "reason"), [
         ({"status": "Cancelled"}, "Cancelled"),
@@ -126,6 +128,9 @@ class TestDeliverysRules:
         ({"rc": "NOT A BUG"}, "Root cause: NOT A BUG"),
         ({"components": ["Ios App"]}, "App component: Ios App"),
         ({"labels": ["MAPP"]}, "App label: MAPP"),
+        # Kruidvat: the app team's incidents, as Delivery leaves them out
+        ({"team_ownership": "MAPP Squad"}, "App team: MAPP Squad"),
+        ({"team_ownership": "Web Squad, MAPP Squad"}, "App team: MAPP Squad"),
     ])
     def test_each_exclusion_says_why(self, change, reason):
         row = _incident("X-1", None, **change)
@@ -134,6 +139,7 @@ class TestDeliverysRules:
     def test_web_incidents_with_an_analysed_root_cause_count(self):
         for rc in ("Code issue", "Configuration", "3rd party issue", "connectivity issue"):
             assert lk.exclusion(_incident("X-1", None, rc=rc, components=["Checkout"])) is None
+        assert lk.exclusion(_incident("X-1", None, team_ownership="Web Squad")) is None
 
     def test_split_keeps_every_excluded_incident_visible(self):
         rows = [_incident("A-1", None), _incident("A-2", None, rc="duplicate")]

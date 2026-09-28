@@ -117,7 +117,8 @@ to the next release's date (to date, while the next one has not shipped),
 without those Delivery leaves out: cancelled, no root cause yet, a root cause
 of Requirement/Documentation, new requirement, non reproducible, expected
 behaviour, data issue, duplicate, security issue, not applicable or not a bug,
-and app components or labels. **Leakage ratio** = leaked ÷ UAT issues, limit
+and app components or labels (on Kruidvat, the incidents owned by the MAPP
+Squad too). **Leakage ratio** = leaked ÷ UAT issues, limit
 25%; **High & Highest** = leaked High/Highest ÷ all UAT issues, limit 10%.
 Every excluded incident and every Defect left out is listed with the reason.
 Delivery starts Defects at a UAT start date Jira does not hold, so a ratio can
@@ -216,7 +217,7 @@ METHODOLOGY_FOR_LLM = """
   UAT issues = every Bug of the fixVersion + its Defects created since the
   previous release; leaked = Production Incidents from the release date to
   the next release (or to date), minus Delivery's exclusions (cancelled, no
-  root cause, non-defect root causes, app components/labels).  Ratio = leaked
+  root cause, non-defect root causes, app components/labels, KV's MAPP Squad).  Ratio = leaked
   ÷ UAT issues (limit 25%); High & Highest = leaked High/Highest ÷ ALL UAT
   issues (limit 10%).  EE20 and SD20 are multi-BU groups — never split them or
   attribute them to a single BU.  The AI's verdicts are proposals: always

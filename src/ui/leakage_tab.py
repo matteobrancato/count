@@ -566,7 +566,7 @@ def _issue_table(rows: list[dict], extra: dict[str, str] | None = None) -> None:
 # Delivery's exclusion reasons, as the Excluded line sums them up.
 _WHY_SHORT = {"Cancelled": "cancelled", "No root cause yet": "no root cause yet",
               "Root cause": "excluded root cause", "App component": "app",
-              "App label": "app"}
+              "App label": "app", "App team": "app"}
 
 
 def _lists(data: lk.ReleaseLeakage) -> None:

@@ -38,7 +38,10 @@ The exclusions are Delivery's JQL, word for word (Matteo, 2026-09-28):
     AND (component NOT IN ("Ios App", "Android App") OR component IS EMPTY)
     AND (labels NOT IN ("MAPP", "ios", "Android") OR labels IS EMPTY)
 In JQL `not in` also drops an EMPTY root cause, so an incident nobody has
-analysed yet is not counted either.  They are applied here in Python, not in
+analysed yet is not counted either.  Kruidvat marks its app incidents with
+"KV Team Ownership" = "MAPP Squad" rather than with app components or
+labels, and Delivery leaves them out (0 of 1,338 rows in its KV sheet):
+excluded here too (Matteo, 2026-09-28).  They are applied here in Python, not in
 the JQL, so every excluded incident is still listed with the reason.
 
 The BU comes from the Jira project.  EE20 and SD20 serve several BUs and
@@ -68,6 +71,8 @@ ROOT_CAUSE_FIELD = "Root Cause (EU)"
 ENVIRONMENT_FIELD = "ENVIRONMENT"
 TEXT_FIELDS: tuple[str, ...] = ("Steps to Reproduce", "Actual Results",
                                 "Expected Results")
+# Kruidvat's owning team; its app team's incidents are app incidents.
+OWNERSHIP_FIELD = "KV Team Ownership"
 # Where a reporter can name the TestRail case directly (94 of 3,828 incidents
 # in the last year had one — the deterministic links, used before any guess).
 CASE_FIELDS: tuple[str, ...] = ("TestRail Case ID", "Test Case Reference")
@@ -80,6 +85,7 @@ EXCLUDED_ROOT_CAUSES = frozenset(v.lower() for v in (
 EXCLUDED_STATUSES = frozenset({"cancelled"})
 EXCLUDED_COMPONENTS = frozenset({"ios app", "android app"})
 EXCLUDED_LABELS = frozenset({"mapp", "ios", "android"})
+EXCLUDED_OWNERS = frozenset({"mapp squad"})
 
 
 @dataclass(frozen=True)
@@ -232,7 +238,7 @@ def uat_issues(project: str, release: str) -> list[dict]:
 
 def _field_ids() -> dict[str, str]:
     return jira_client.field_ids_by_name(
-        (ROOT_CAUSE_FIELD, ENVIRONMENT_FIELD, *TEXT_FIELDS, *CASE_FIELDS))
+        (ROOT_CAUSE_FIELD, ENVIRONMENT_FIELD, OWNERSHIP_FIELD, *TEXT_FIELDS, *CASE_FIELDS))
 
 
 def _base_url() -> str:
@@ -264,6 +270,7 @@ def normalise_incident(issue: dict, base_url: str, ids: dict[str, str]) -> dict:
         "labels":      list(f.get("labels") or []),
         "root_cause":  custom(ROOT_CAUSE_FIELD),
         "environment": custom(ENVIRONMENT_FIELD),
+        "team_ownership": custom(OWNERSHIP_FIELD),
         "steps":       custom("Steps to Reproduce"),
         "actual":      custom("Actual Results"),
         "expected":    custom("Expected Results"),
@@ -277,7 +284,9 @@ def normalise_incident(issue: dict, base_url: str, ids: dict[str, str]) -> dict:
 @st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def incidents(project: str, start: date, end: date | None) -> list[dict]:
     """Every Production Incident created from `start` up to (not including)
-    `end`; `end` None means up to now."""
+    `end`; `end` None means up to now.  (Streamlit keys this cache on this
+    function's source: a row gaining a field, like team_ownership, needs a
+    change here too, or rows cached without it are served until tomorrow.)"""
     ids = _field_ids()
     jql = (f"project = {_q(project)} AND issuetype = {_q(INCIDENT_TYPE)} "
            f"AND created >= {_q(start.isoformat())}")
@@ -308,6 +317,10 @@ def exclusion(row: dict) -> str | None:
     app_labels = [lb for lb in row.get("labels", []) if lb.lower() in EXCLUDED_LABELS]
     if app_labels:
         return f"App label: {', '.join(app_labels)}"
+    owners = [o.strip() for o in (row.get("team_ownership") or "").split(",")]
+    app_owners = [o for o in owners if o.lower() in EXCLUDED_OWNERS]
+    if app_owners:
+        return f"App team: {', '.join(app_owners)}"
     return None
 
 
