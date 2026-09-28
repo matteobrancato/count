@@ -7,6 +7,12 @@ from contextlib import contextmanager
 
 import streamlit as st
 
+import deploy_guard
+
+# Before anything from src/: after a deploy, drop the modules imported from the
+# previous code, or the new app.py runs against them (see deploy_guard).
+deploy_guard.reload_after_deploy()
+
 from src import freshness
 from src import testrail_client as tr
 from src.methodology import METHODOLOGY_MD
