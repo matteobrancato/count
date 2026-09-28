@@ -1,41 +1,48 @@
-"""Automation save — the time automation saves, per Business Unit.
+"""Automation save — the manual effort automation saves, per Business Unit.
 
-The time save itself is NOT computed here.  It is a business figure the QA team
-measures and configures, in the Streamlit secrets and never in this public
-repository.  What the dashboard adds is the arithmetic that turns it into the
-figures a manager asks for, on the same baseline every other number on the
-Backlog tab is counted in:
+The coefficient is NOT computed here.  It is a business figure — the manual
+effort one configuration costs per release cycle — derived by the QA team from
+the savings they have confirmed, and kept in the Streamlit secrets, never in
+this public repository.  The dashboard multiplies it by the configurations each
+BU has today, so the figures follow the automation as it grows:
 
-    per configuration    = time save ÷ automated configurations
-    backlog would add    = per configuration × backlog configurations
-    at full automation   = per configuration × total configurations
+    manual effort, all tests  = coefficient × all configurations
+    saved by automation       = coefficient × automated configurations
+    backlog would add         = coefficient × backlog configurations
 
-A "configuration" is one baseline row — case × country × device.
+A "configuration" is one baseline row — case × country × device — the unit
+every other number on the Backlog tab is counted in.
 
 Secrets (Streamlit Cloud):
 
-    [automation_time_save]
-    unit  = "hours per regression cycle"      # shown verbatim
-    as_of = "2026-09"                         # shown verbatim
-    "ICI Paris XL" = 120                      # website scope, by BU name
-    "The Perfume Shop" = 64
+    [automation_coefficient]
+    unit    = "MD per release cycle"   # shown verbatim
+    as_of   = "2026-09"                # shown verbatim
+    default = 0.002                    # optional: every BU not listed below
+    "Drogas" = 0.004                   # website scope, by BU name
 
-    [automation_time_save.mobile_app]         # optional: another scope
-    "ICI Paris XL" = 30
+    [automation_coefficient.next_gen]  # optional: another scope, own default
+    "Microservices" = 0.003
 
-A BU with nothing configured says so on the tab: no figure is ever invented,
-and none can be typed on the page — a value typed there and screenshotted
-would be a saving nobody measured.
+A root `default` applies to the website scope only: another scope's baseline
+is built differently (Mobile App counts by priority and OS), so it takes a
+coefficient only from its own table.
+
+A BU with no coefficient says so on the tab: no figure is ever invented, and
+none can be typed on the page — a value typed there and screenshotted would be
+a saving nobody measured.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 import streamlit as st
 
-SECRETS_KEY = "automation_time_save"
-_RESERVED = {"unit", "as_of"}
+SECRETS_KEY = "automation_coefficient"
+DEFAULT_KEY = "default"
+_RESERVED = {"unit", "as_of", DEFAULT_KEY}
 _SCOPES = {"website", "mobile_app", "next_gen"}
 
 
@@ -43,15 +50,16 @@ _SCOPES = {"website", "mobile_app", "next_gen"}
 class Config:
     unit: str
     as_of: str
-    time_save: float | None     # None: nothing configured for this BU/scope
+    coefficient: float | None   # None: nothing configured for this BU/scope
+    is_default: bool = False    # True: the scope's default, not the BU's own
 
 
 @dataclass(frozen=True)
 class Saving:
-    time_save: float
-    per_configuration: float | None   # None when nothing is automated yet
-    backlog_gain: float | None
-    at_full_automation: float | None
+    coefficient: float
+    effort: float               # coefficient × all configurations
+    saved: float                # coefficient × automated configurations
+    backlog_gain: float         # coefficient × backlog configurations
     automated: int
     backlog: int
     total: int
@@ -66,49 +74,61 @@ def _secrets_table() -> Mapping:
 
 
 def _number(value) -> float | None:
+    """A usable coefficient, or None: text that is not a number, a negative
+    and zero all read as "not configured" rather than as a saving of 0."""
     if isinstance(value, bool):
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if number >= 0 else None
+    return number if number > 0 and math.isfinite(number) else None
 
 
 def config_for(bu: str, scope: str, table: Mapping | None = None) -> Config:
-    """The configured time save for one BU in one scope (see module docstring)."""
+    """The coefficient for one BU in one scope (see module docstring)."""
     table = _secrets_table() if table is None else table
     unit = str(table.get("unit") or "").strip()
     as_of = str(table.get("as_of") or "").strip()
     if scope == "website":
-        values = {k: v for k, v in table.items()
-                  if k not in _RESERVED and k not in _SCOPES}
+        values = {k: v for k, v in table.items() if k not in _SCOPES}
     else:
         nested = table.get(scope)
         values = nested if isinstance(nested, Mapping) else {}
-    return Config(unit=unit, as_of=as_of, time_save=_number(values.get(bu)))
+    own = _number(values.get(bu)) if bu not in _RESERVED else None
+    if own is not None:
+        return Config(unit, as_of, own)
+    default = _number(values.get(DEFAULT_KEY))
+    return Config(unit, as_of, default, is_default=default is not None)
 
 
-def compute(time_save: float, automated: int, backlog: int, total: int) -> Saving:
-    """Turn a measured time save into the per-configuration figures."""
-    per = time_save / automated if automated > 0 else None
+def compute(coefficient: float, automated: int, backlog: int, total: int) -> Saving:
+    """Turn the coefficient into the figures a manager reads."""
     return Saving(
-        time_save=time_save,
-        per_configuration=per,
-        backlog_gain=per * backlog if per is not None else None,
-        at_full_automation=per * total if per is not None else None,
+        coefficient=coefficient,
+        effort=coefficient * total,
+        saved=coefficient * automated,
+        backlog_gain=coefficient * backlog,
         automated=automated, backlog=backlog, total=total,
     )
 
 
-def fmt(value: float | None) -> str:
-    """A figure as a manager reads it: whole numbers when large, never 12 digits."""
-    if value is None:
-        return "—"
+def fmt(value: float) -> str:
+    """An effort as a manager reads it: whole numbers when large, one decimal
+    otherwise, never "0.0" for a small but real figure, and a plain "0" for
+    nothing at all."""
+    if value == 0:
+        return "0"
     if value >= 100:
         return f"{value:,.0f}"
-    if value >= 10:
-        return f"{value:,.1f}"
     if value >= 1:
-        return f"{value:,.2f}"
-    return f"{value:.3g}"
+        return f"{value:,.1f}"
+    return f"{value:.2g}"
+
+
+def fmt_coefficient(value: float) -> str:
+    """Three significant digits, never scientific notation: 0.00485, 0.0185."""
+    if value <= 0:
+        return "0"
+    decimals = max(0, 2 - math.floor(math.log10(value)))
+    return f"{value:,.{decimals}f}"

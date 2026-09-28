@@ -1363,33 +1363,57 @@ def _csv_writer(evidence: pd.DataFrame, category: str,
     return _build
 
 
+def _save_context(cfg: automation_save.Config) -> str:
+    """"MD per release cycle, as of 2026-09" — whatever of the two is set."""
+    return ", ".join(p for p in (cfg.unit, f"as of {cfg.as_of}" if cfg.as_of else "")
+                     if p)
+
+
+def _summary_saves(display: pd.DataFrame, scope: str
+                   ) -> tuple[dict[str, automation_save.Saving | None], str]:
+    """The All-BU table's Automation save column: one figure per row, from the
+    same Total / Automated / Backlog the row shows, so the two can never drift."""
+    saves: dict[str, automation_save.Saving | None] = {}
+    unit = ""
+    for _, r in display.iterrows():
+        cfg = automation_save.config_for(str(r["BU"]), scope)
+        unit = unit or cfg.unit
+        saves[str(r["BU"])] = (
+            None if cfg.coefficient is None
+            else automation_save.compute(cfg.coefficient, int(r["Automated"]),
+                                         int(r["Backlog"]), int(r["Total"])))
+    return saves, unit
+
+
 def _automation_save_line(bu: str, scope: str, s: dict) -> None:
-    """Time saved by automation, and what the backlog would add (see
-    `src/automation_save.py`).  Same one-line shape as the coverage line."""
+    """The manual effort automation saves per release cycle, and what the
+    backlog would add (see `src/automation_save.py`).  Same one-line shape as
+    the coverage line."""
     cfg = automation_save.config_for(bu, scope)
-    if cfg.time_save is None:
-        st.caption(f"⏱ **Automation save** — no time save configured for "
+    if cfg.coefficient is None:
+        st.caption(f"⏱ **Automation save** — no coefficient configured for "
                    f"{html.escape(bu)} yet.")
         return
-    sv = automation_save.compute(cfg.time_save, s["automated"], s["backlog"],
+    sv = automation_save.compute(cfg.coefficient, s["automated"], s["backlog"],
                                  s["total"])
     f = automation_save.fmt
-    context = ", ".join(p for p in (cfg.unit, f"as of {cfg.as_of}" if cfg.as_of else "")
-                        if p)
-    parts = [f"**⏱ Automation save:** `{f(sv.time_save)}` saved"]
-    if sv.per_configuration is None:
-        parts.append("the rest needs at least one automated configuration")
-    else:
-        backlog_part = (f"**Backlog would add** `+{f(sv.backlog_gain)}` "
-                        f"({sv.backlog:,} configurations)")
-        parts += [
-            backlog_part,
-            f"**At full automation** `{f(sv.at_full_automation)}`",
-            f"**Per configuration** `{f(sv.per_configuration)}`",
-        ]
+    noun = "configuration" if sv.backlog == 1 else "configurations"
+    per = f"**Per configuration** `{automation_save.fmt_coefficient(sv.coefficient)}`"
+    if cfg.is_default:
+        # Said out loud: a reader must not take the shared default for a
+        # figure measured on this BU.
+        per += " (default)"
+    parts = [
+        f"**⏱ Automation save:** `{f(sv.saved)}` saved",
+        f"**Manual effort, all tests** `{f(sv.effort)}`",
+        f"**Backlog would add** `+{f(sv.backlog_gain)}` ({sv.backlog:,} {noun})",
+        per,
+    ]
     line = " &nbsp;·&nbsp; ".join(parts)
+    context = _save_context(cfg)
     if context:
-        line += f" &nbsp;<span style='color:{COLORS['muted']}'>({html.escape(context)})</span>"
+        line += (f" &nbsp;<span style='color:{COLORS['muted']}'>— "
+                 f"{html.escape(context)}</span>")
     st.markdown(line, unsafe_allow_html=True)
 
 
@@ -1540,7 +1564,9 @@ def _backlog_pct_html(backlog: int, total: int) -> str:
 
 def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
                         selected_bu: str = "",
-                        backlog_health: bool = True) -> str:
+                        backlog_health: bool = True,
+                        saves: dict[str, automation_save.Saving | None] | None = None,
+                        save_unit: str = "") -> str:
     """Presentation-grade HTML for the All-BU summary — same data as the native
     dataframe, with an RAG coverage bar and tidy typography.  Styling lives in
     the `.bl-summary` CSS block in styles.py.
@@ -1552,6 +1578,11 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
     for Production Sanity: the 3% threshold was agreed for the regression
     baseline, and a verdict borrowed from another population is a verdict that
     has not been agreed at all.
+
+    *saves* adds the Automation save column (Big No-Regression only, see
+    `_summary_saves`): the effort saved per BU over the manual effort of all
+    its tests, or "Not configured" where the BU has no coefficient — the same
+    placeholder the detail view shows, so no row is silently blank.
     """
     strong_cols = {"Total", "Automated", "Backlog"}   # numbers a manager reads first
     # Three columns of outstanding work, stacked into one labelled cell.  They
@@ -1586,6 +1617,8 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         + ('<th class="l">Scope</th>' if show_scope else '')
         + "".join(f'<th>{v}</th>' if k == "col" else '<th>Outstanding</th>'
                    for k, v in items)
+        + (f'<th>Automation save<span class="th-sub">'
+           f'{html.escape(save_unit)}</span></th>' if saves is not None else '')
         + f'<th class="l">{cov_head}</th></tr></thead>'
     )
     body_rows = []
@@ -1647,13 +1680,22 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
             f'</div>{ex_html}</td>'
         )
+        save_td = ""
+        if saves is not None:
+            sv = saves.get(str(r["BU"]))
+            save_td = (
+                '<td class="mut"><span class="sub">Not configured</span></td>'
+                if sv is None else
+                f'<td><span class="strong">{automation_save.fmt(sv.saved)}</span>'
+                f'<span class="sub">of {automation_save.fmt(sv.effort)}</span></td>'
+            )
         sel_cls  = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
         scope_td = (f'<td class="l"><span class="scope-pill">'
                     f'{html.escape(str(r["Scope"]))}</span></td>') if show_scope else ''
         body_rows.append(
             f'<tr{sel_cls}>'
             f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
-            f'{scope_td}{nums}{cov_cell}</tr>'
+            f'{scope_td}{nums}{save_td}{cov_cell}</tr>'
         )
     return (f'<div class="bl-summary"><table>{head}'
             f'<tbody>{"".join(body_rows)}</tbody></table></div>')
@@ -1723,6 +1765,21 @@ def render() -> None:
                                 "Not Applicable", "Unknown"]
                 if col in display.columns]
 
+    # Automation save rides on the regression it was measured on — never beside
+    # Small NR or Production Sanity (same rule as the detail line below).
+    saves, save_unit = (_summary_saves(display, scope) if run == RUN_BIG
+                        else (None, ""))
+    export = display
+    if saves is not None:
+        suffix = f" ({save_unit})" if save_unit else ""
+        per_row = [saves.get(str(b)) for b in display["BU"]]
+        export = display.assign(**{
+            f"Automation save{suffix}": [round(sv.saved, 2) if sv else None
+                                         for sv in per_row],
+            f"Manual effort, all tests{suffix}": [round(sv.effort, 2) if sv else None
+                                                  for sv in per_row],
+        })
+
     # Header + RAG legend + export on ONE row.  The CSV is a text-sized label
     # next to the legend, not a button: managers forward these numbers into decks
     # and mails, so the export must exist — but it is a secondary action and a
@@ -1752,12 +1809,13 @@ def render() -> None:
         )
         st.download_button(
             "⬇ CSV",
-            display.to_csv(index=False).encode("utf-8"),
+            export.to_csv(index=False).encode("utf-8"),
             file_name=f"automation_baseline_{scope}.csv",
             mime="text/csv",
             help="Download the table above, exactly as shown, as a CSV.",
         )
-    st.markdown(_summary_table_html(display, num_cols, selected_bu=bu),
+    st.markdown(_summary_table_html(display, num_cols, selected_bu=bu,
+                                    saves=saves, save_unit=save_unit),
                 unsafe_allow_html=True)
 
     st.divider()

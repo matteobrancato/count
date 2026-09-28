@@ -75,7 +75,7 @@ app.py                      Streamlit entry point: header, credential gate,
 │   ├── jira_client.py      Read-only Jira reads for the Leakage tab (best-effort)
 │   ├── gemini_client.py    Gemini client + the model fallback policy Dexter uses
 │   ├── leakage.py          Leakage: production incidents from Jira, per BU group
-│   ├── automation_save.py  Automation save: configured time save → per configuration
+│   ├── automation_save.py  Automation save: coefficient × configurations
 │   └── ui/
 │       ├── global_filter.py  Scope + BU selector, shareable via URL
 │       ├── kpi_strip.py      Executive KPI row under the header
@@ -245,14 +245,16 @@ JIRA_URL           = "https://your-site.atlassian.net"
 ATLASSIAN_USER     = "your.email@example.com"
 ATLASSIAN_API_KEY  = "your_atlassian_token"
 
-# Optional — Automation save on the Backlog tab (Big No-Regression).  The time
-# save is measured by the QA team; keep it here, not in the (public) repo.
+# Optional — Automation save on the Backlog tab (Big No-Regression): the manual
+# effort ONE configuration costs per release cycle, derived by the QA team from
+# its confirmed savings.  Business figures: keep them here, not in the repo.
 # KEEP THIS TABLE AT THE END OF THE FILE: in TOML every key written after a
 # [table] header belongs to that table, so TESTRAIL_* keys below it would vanish.
-[automation_time_save]
-unit  = "hours per regression cycle"   # shown verbatim
-as_of = "2026-09"                      # shown verbatim
-"ICI Paris XL" = 120                   # one line per Business Unit
+[automation_coefficient]
+unit    = "MD per release cycle"   # shown verbatim
+as_of   = "2026-09"                # shown verbatim
+default = 0.002                    # optional: BUs without a line of their own
+"Drogas" = 0.004                   # one line per Business Unit
 ```
 
 Only the three `TESTRAIL_*` values are required. Without `GEMINI_API_KEY` the

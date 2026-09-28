@@ -820,6 +820,25 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     cursor: help;
 }}
 .bl-summary .cov-val {{ font-weight: 700; font-size: 12.5px; min-width: 46px; text-align: right; }}
+/* Automation save: the unit under the header, and the effort it is part of
+   under the figure — both quieter than the number, like `.cov-ex`, but with no
+   tooltip behind them, so no help cursor either. */
+.bl-summary .th-sub {{
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+}}
+.bl-summary .sub {{
+    display: block;
+    margin-top: 1px;
+    font-size: 10.5px;
+    line-height: 1.2;
+    font-weight: 500;
+    color: {c['muted']};
+}}
 
 /* ── Coverage chart panels — a fixed-height head so both charts start on the
    same line, whatever width the captions wrap at. ──────────────────────────── */

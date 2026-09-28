@@ -98,13 +98,15 @@ exception: **Watsons Turkey** has a single country, so when that field is left
 blank the case's own `multi_countries` is used instead — unless it also names
 another Business Unit's country, in which case the row is not counted.
 
-**Automation save** — the time automation saves, as measured by the QA team
-and configured per Business Unit (its unit and date are shown beside it). The
-dashboard divides it by the BU's automated **configurations** — baseline rows,
-case × country × device — to get the saving per configuration, then multiplies
-that by the Backlog rows (what automating the backlog would add) and by all
-rows (the saving at full automation). Shown on the Big No-Regression baseline
-only. A BU whose time save is not configured shows no figure at all.
+**Automation save** — an indicative figure. The QA team derives a
+**coefficient** from the savings it has confirmed: the manual effort one
+**configuration** (baseline row, case × country × device) costs per release
+cycle. The dashboard multiplies it by the BU's configurations today — all of
+them for the manual effort of the whole regression, the automated ones for the
+effort saved, the Backlog ones for what automating the backlog would add — so
+the figures follow the automation as it grows. Unit and date are shown beside
+them; a coefficient shared by several BUs is marked "(default)". Shown on the
+Big No-Regression baseline only. A BU with no coefficient shows no figure.
 
 **Leakage** — every Jira issue of type "Production Incident", in any
 environment, attributed to a Business Unit by its Jira project. EE20 (Eastern
@@ -181,10 +183,11 @@ METHODOLOGY_FOR_LLM = """
   own tooling.
 - A Playwright case needs BOTH "Automation Status" = automated AND the
   `playwright` label.  The label alone never makes a case automated.
-- Automation save = the configured time save of a BU ÷ its automated
-  configurations (baseline rows), × Backlog rows ("backlog would add") and ×
-  all rows ("at full automation").  Big No-Regression only; never estimate a
-  saving for a BU with no configured time save.
+- Automation save (indicative) = a configured coefficient (manual effort per
+  configuration per release cycle) × the BU's configurations: × all rows =
+  manual effort of all tests, × automated rows = effort saved, × Backlog rows
+  = what the backlog would add.  Big No-Regression only; never estimate a
+  saving for a BU with no coefficient.
 - Leakage = Jira "Production Incident" issues (any environment) per Jira
   project; EE20 and SD20 are multi-BU groups and must never be split or
   attributed to a single BU.
