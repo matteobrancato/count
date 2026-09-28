@@ -291,12 +291,18 @@ def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
 _SECTIONS = [
     ("📋 Backlog",        backlog_tab.render,        "backlog_anim"),
     # The Business Unit picked in the top bar, one BU at a time.
-    ("🔎 BU Detail",      backlog_tab.render_detail, "detail_anim"),
+    ("🔎 Detail",         backlog_tab.render_detail, "detail_anim"),
     ("📐 Coverage",       coverage_tab.render,       ""),          # wraps itself
     # Jira only, matched to TestRail through cases already downloaded — the
-    # tab never calls TestRail.  (The Overview is a window in the utility bar.)
+    # tabs never call TestRail.  (The Overview is a window in the utility bar.)
     ("🐞 Leakage",        leakage_tab.render,        ""),
+    # Leakage's sub-tabs: shown only while the Leakage group is open (_SUBTABS).
+    ("📈 Trend",          leakage_tab.render_trend,  ""),
+    ("🌍 All BUs",        leakage_tab.render_all_bus, ""),
 ]
+_LABELS = [label for label, _fn, _anim in _SECTIONS]
+# parent tab -> the tabs that appear beside it while it (or one of them) is open
+_SUBTABS = {"🐞 Leakage": ("📈 Trend", "🌍 All BUs")}
 
 
 def _warm_up(cold: bool, kpi_slot) -> None:
@@ -357,7 +363,10 @@ def _warm_up(cold: bool, kpi_slot) -> None:
 def main() -> None:
     _t_main = time.perf_counter()
     with _timed("Styles"):
-        styles.inject()   # global design system — purely cosmetic, must run first.
+        # The global design system — purely cosmetic, must run first.
+        styles.inject("".join(
+            styles.subtabs_css(_LABELS.index(parent), tuple(_LABELS.index(c) for c in children))
+            for parent, children in _SUBTABS.items()))
     if not _creds_ok():
         st.stop()
 
@@ -434,8 +443,7 @@ def main() -> None:
         # 2.15 s per click with all caches warm, 87% of it in tabs nobody was
         # looking at.  Switching tab now costs a rerun of that one tab instead
         # of being free; every other click costs one tab instead of all of them.
-        tabs = st.tabs([label for label, _fn, _anim in _SECTIONS],
-                       key="section", on_change="rerun")
+        tabs = st.tabs(_LABELS, key="section", on_change="rerun")
 
     open_index = next((i for i, t in enumerate(tabs) if t.open), 0)
     label, render_fn, anim_key = _SECTIONS[open_index]

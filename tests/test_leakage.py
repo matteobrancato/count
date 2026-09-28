@@ -519,10 +519,10 @@ class TestExport:
 # ── the tab ──────────────────────────────────────────────────────────────────
 class TestTab:
     @staticmethod
-    def _run(bu, running=False):
+    def _run(bu, running=False, renderer="render", follow=0):
         from streamlit.testing.v1 import AppTest
 
-        def page(bu, running):
+        def page(bu, running, renderer, follow):
             from datetime import date, datetime, timezone
 
             import pandas as pd
@@ -561,10 +561,20 @@ class TestTab:
                 {101}, set())
             saved = (jira_client.available, lk.releases, lk.analyse, lm.index_for,
                      global_filter.current, gemini_client.ready)
+            import streamlit as st
+
             from src import leakage_store as ls
-            if running:
+            if "fresh" not in st.session_state:        # a store of its own per test
+                ls._registry().clear()
+                st.session_state.fresh = True
+            leakage_tab._FOLLOW_SECONDS = follow
+            if running and ls.store().run("EE20", "EE_SAP_Release_2026Q3.Sept") is None:
                 ls.store().start_run("EE20", "EE_SAP_Release_2026Q3.Sept", 1)
-                leakage_tab._FOLLOW_SECONDS = 0
+                if follow:
+                    # The run ends while the tab follows it, as a background one does.
+                    import threading
+                    threading.Timer(0.5, ls.store().finish_run,
+                                    ("EE20", "EE_SAP_Release_2026Q3.Sept", ["stopped"])).start()
             jira_client.available = lambda: True
             lk.releases = lambda g: rels
             lk.analyse = analyse
@@ -572,12 +582,13 @@ class TestTab:
             global_filter.current = lambda: ("website", bu)
             gemini_client.ready = lambda: running
             try:
-                leakage_tab.render()
+                getattr(leakage_tab, renderer)()
             finally:
                 (jira_client.available, lk.releases, lk.analyse, lm.index_for,
                  global_filter.current, gemini_client.ready) = saved
 
-        at = AppTest.from_function(page, args=(bu, running), default_timeout=30)
+        at = AppTest.from_function(page, args=(bu, running, renderer, follow),
+                                   default_timeout=30)
         at.run()
         assert not at.exception, at.exception
         return at
@@ -604,8 +615,59 @@ class TestTab:
     def test_a_running_analysis_shows_its_progress(self):
         at = self._run("Drogas", running=True)
         text = " ".join(e.proto.text for e in at.get("progress"))
-        assert "Analysing 1 incidents with AI · 0 done" in text and "—" not in text
+        assert "Analysing 1 incident with AI · 0 done" in text and "—" not in text
+
+    def test_a_run_ending_on_the_first_draw_redraws_the_page(self):
+        # Live on 2026-09-28: the tab followed a run it had just started on a
+        # full-page run, and st.rerun(scope="fragment") raised there.
+        at = self._run("Watsons Ukraine", running=True, follow=5)
+        assert not at.get("progress")
+        assert any("stopped" in w.value for w in at.warning)
+
+    def test_the_trend_tab_draws_the_release_history(self):
+        at = self._run("Drogas", renderer="render_trend")
+        assert len(at.get("vega_lite_chart")) == 3
+
+    def test_all_bus_never_shows_a_pending_ai_count_as_a_number(self):
+        at = self._run("Drogas", renderer="render_all_bus")
+        table = at.dataframe[0].value
+        assert list(table["Business Unit"]) == [g.label for g in lk.GROUPS]
+        assert set(table["Not covered"]) == {"…"}                # nothing analysed yet
+        assert table["Leaked"].tolist() == [1] * len(lk.GROUPS)
 
     def test_without_ai_the_counts_still_stand(self):
         at = self._run("Drogas")
         assert any("GEMINI_API_KEY" in i.value for i in at.info)
+
+
+# ── what a leak means for automation ─────────────────────────────────────────
+class TestBucket:
+    @staticmethod
+    def _b(verdict, gap):
+        from src.ui import leakage_tab as t
+        return t.bucket({"uat_detectability": verdict}, gap)
+
+    def test_every_gap_lands_where_the_extended_suite_needs_it(self):
+        from src.ui import leakage_tab as t
+        assert self._b(lai.DETECTABLE, "No test case") == t.NO_TEST
+        assert self._b(lai.DETECTABLE, "Manual test") == t.MANUAL_ONLY
+        assert self._b(lai.DETECTABLE, "Manual, not in regression") == t.MANUAL_ONLY
+        assert self._b(lai.DETECTABLE, "Automated test") == t.AUTOMATED_MISS
+        assert self._b(lai.DETECTABLE, "Automated test outdated") == t.AUTOMATED_MISS
+        # an automated case among them: automation missed it, it is not "manual only"
+        assert self._b(lai.DETECTABLE, "Manual and automated") == t.AUTOMATED_MISS
+        assert self._b(lai.DETECTABLE, "Case not in this BU's suites") == t.UNCLEAR
+        assert self._b(lai.NOT_DETECTABLE, "—") == t.NOT_UAT
+        assert self._b(lai.NEEDS_REVIEW, "—") == t.UNCLEAR
+        assert self._b("", "—") == t.NOT_ANALYSED
+
+
+class TestSubtabs:
+    def test_the_sub_tabs_hide_outside_their_group(self):
+        from src.ui.styles import subtabs_css
+        css = subtabs_css(3, (4, 5))
+        hide = next(line for line in css.splitlines() if "display: none" in line)
+        assert hide.startswith('[role="tablist"]:not(:has(')
+        for i in (3, 4, 5):                        # open: the parent or either child
+            assert f'[data-key="{i}"][aria-selected="true"]' in hide
+        assert hide.count('[data-key="3"]') == 1   # the parent itself never hides

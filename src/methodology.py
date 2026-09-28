@@ -132,7 +132,11 @@ covered it — chosen among cases linked to the incident or similar to it, never
 presented as coverage below 0.6 confidence. The coverage gap (manual,
 automated, no test case) follows that case's status in the Backlog. These are
 proposals, labelled as the AI's everywhere they appear, including the Excel
-export.
+export. **Trend** and **All BUs** sort each leaked incident by what it means
+for automation: no test case or a manual test only (not covered: what an
+extended automated production suite should add), an automated test that
+missed it, not UAT-detectable, unclear, or not analysed yet. A BU's AI figures
+are shown only once every leak of the release is analysed.
 
 **Freshness** — the numbers are loaded from TestRail once a day, by the first
 visit of the day, and then served from cache for the rest of it, so every

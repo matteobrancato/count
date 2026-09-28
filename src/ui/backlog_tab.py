@@ -1706,7 +1706,7 @@ def _run_picker(scope: str) -> str:
     share a page.  The picker takes the width it needs; the rest of the row
     carries what the chosen run actually is, rather than being left over.
 
-    Drawn by both the Backlog and the BU Detail tab with the SAME key, so the
+    Drawn by both the Backlog and the Detail tab with the SAME key, so the
     choice follows you from one to the other (only the open tab runs, so the
     key is never on screen twice)."""
     c_pick, c_what = st.columns([5, 6], vertical_alignment="center")
@@ -1839,7 +1839,7 @@ def render() -> None:
 
 @st.fragment
 def render_detail() -> None:
-    """The BU Detail tab: the Business Unit picked in the top bar, on the run
+    """The Detail tab: the Business Unit picked in the top bar, on the run
     picked here — tiles with their rows, coverage, automation save, frameworks
     and the pivot."""
     scope, bu = global_filter.current()

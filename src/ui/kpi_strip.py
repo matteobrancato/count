@@ -1,15 +1,14 @@
-"""Group KPIs — the two cross-BU figures, as chips in the top bar.
+"""Group KPIs — the cross-BU figures, as chips under the title.
 
-    🟡 Coverage 79.4% all BUs   🟢 Backlog 837 3.3%
+    🟡 Coverage 79.4% all BUs   🟢 Backlog 837 3.3%   🏆 Best …   🔴 Focus …
 
 "Coverage" here means AUTOMATED / REGRESSION-BASELINE (the big_regr rows —
 exactly the Backlog tab's numbers and Cov. % basis), NOT automated over the
 whole case universe: that total-universe figure mixes BUs with huge unlabelled
 suites and reads misleadingly low, and management steers on the baseline.
 
-Only the two aggregates the page shows nowhere else.  "Best" and "Focus" (the
-top and bottom BU) were dropped on 2026-09-28: the All-BU table right below
-shows every BU's coverage in RAG colour, so they repeated it in less detail.
+All four chips, on one line that scrolls sideways when it runs out of room
+(Matteo, 2026-09-28: keep them all rather than drop Best and Focus).
 
 All aggregates come straight from the Backlog pipeline (`_backlog_data`), so
 the chips always agree with the All-BU table.  They deliberately ignore the
@@ -74,7 +73,7 @@ def render_skeleton() -> None:
     the top bar does not shift when they arrive after the first load."""
     st.markdown(
         "<div class='kpi-row'>"
-        + "".join("<span class='kpi-skeleton'></span>" for _ in range(2))
+        + "".join("<span class='kpi-skeleton'></span>" for _ in range(4))
         + "</div>",
         unsafe_allow_html=True, width="content",
     )
@@ -104,5 +103,11 @@ def render() -> None:
                        f"to write from scratch — {kpct:.1f}% of the baseline, all "
                        f"BUs. Healthy ≤ {BACKLOG_OK_PCT:.0f}%.")),
     ]
+    best, worst = k["per_bu"][0], k["per_bu"][-1]
+    chips.append(_chip("🏆", "Best", f"{best['bu']} {best['pct']:.1f}%",
+                       tooltip="Highest regression-baseline coverage."))
+    chips.append(_chip(coverage_health(worst["pct"])[0], "Focus",
+                       f"{worst['bu']} {worst['pct']:.1f}%",
+                       tooltip="Lowest regression-baseline coverage: needs attention."))
     st.markdown(f"<div class='kpi-row'>{''.join(chips)}</div>",
                 unsafe_allow_html=True, width="content")

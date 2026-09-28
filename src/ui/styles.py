@@ -296,6 +296,17 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
    smaller than the title so the two read as one block. */
 .st-key-brand_text {{ gap: 4px !important; }}
 .st-key-brand_text .kpi-chip {{ padding: 1px 9px; font-size: 11.5px; gap: 5px; }}
+/* Four chips are wider than the title: the line keeps the title's block
+   narrow enough for the controls to stay on the same row, and scrolls
+   sideways (trackpad, shift + wheel) with its end faded so the scroll reads. */
+.st-key-brand_text .kpi-row {{
+    max-width: 430px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 88%, transparent);
+    mask-image: linear-gradient(to right, #000 88%, transparent);
+    padding-right: 28px;
+}}
 .st-key-brand_text .kpi-skeleton {{ height: 20px; width: 130px; }}
 
 /* ── Secondary export button (right-aligned under the summary table) ────────
@@ -466,9 +477,9 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     line-height: 1 !important;
 }}
 /* Bare ↻ glyph — no circle, border or background (the previous circle rendered
-   oval because Streamlit's default button min-height beat our height).  Hidden
-   by default; fades/scales in when the label area is hovered.  (Hovering the
-   glyph itself keeps the parent :hover alive.) */
+   oval because Streamlit's default button min-height beat our height).  Always
+   visible (it used to appear only on hover, so nobody knew it was there); a
+   quarter turn on hover says what it does. */
 [class*="st-key-refresh_mini"] button {{
     width: auto !important;
     min-width: 0 !important;
@@ -483,9 +494,7 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     line-height: 1 !important;
     box-shadow: none !important;
     outline: none !important;
-    opacity: 0;
-    transform: scale(0.6);
-    transition: opacity .16s ease, transform .2s cubic-bezier(0.34, 1.3, 0.5, 1),
+    transition: transform .25s cubic-bezier(0.34, 1.3, 0.5, 1),
                 color .15s ease !important;
 }}
 [class*="st-key-refresh_mini"] button:focus,
@@ -495,14 +504,10 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     outline: none !important;
     background: transparent !important;
 }}
-.st-key-freshness:hover [class*="st-key-refresh_mini"] button {{
-    opacity: 1;
-    transform: scale(1);
-}}
 .st-key-freshness [class*="st-key-refresh_mini"] button:hover {{
     color: {c['brand']} !important;
     background: transparent !important;
-    transform: scale(1.12) rotate(90deg);
+    transform: rotate(90deg);
 }}
 [class*="st-key-refresh_mini"] button p {{ color: inherit !important; font-size: inherit !important; }}
 
@@ -1035,9 +1040,56 @@ def section_title(text: str, *, top: int = 6) -> None:
     )
 
 
-def inject() -> None:
-    """Inject the global design-system CSS.  Call once at the top of main()."""
-    st.markdown(_css(), unsafe_allow_html=True)
+def inject(extra: str = "") -> None:
+    """Inject the global design-system CSS, plus `extra` (e.g. subtabs_css),
+    in ONE element: each st.markdown adds a gap to the top of the page.
+    Call once at the top of main()."""
+    st.markdown(_css() + extra, unsafe_allow_html=True)
+
+
+def subtabs_css(parent: int, children: tuple[int, ...]) -> str:
+    """Tabs `children` shown only while their group (`parent` or one of
+    them) is open, sliding in beside the parent.
+
+    Streamlit has no nested tabs.  Every tab is a sibling in one tab list,
+    `[data-testid="stTab"][data-key="<index>"]` with `aria-selected`
+    (Streamlit 1.59), so `:has()` can tell whether the group is open.  If a
+    later Streamlit drops `data-key`, nothing matches and the sub-tabs are
+    simply always visible."""
+    c = COLORS
+
+    def tab(i: int) -> str:
+        return f'[data-testid="stTab"][data-key="{i}"]'
+
+    def open_(tabs) -> str:
+        return ", ".join(f'> {tab(i)}[aria-selected="true"]' for i in tabs)
+
+    kids = ":is(" + ", ".join(tab(i) for i in children) + ")"
+    delays = "\n".join(f'[role="tablist"] > {tab(i)} {{ animation-delay: {n * 60}ms; }}'
+                       for n, i in enumerate(children))
+    return f"""<style>
+[role="tablist"]:not(:has({open_((parent, *children))})) > {kids} {{ display: none; }}
+[role="tablist"] > {kids} {{
+    font-size: 13px;
+    animation: count-subtab-in .34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}}
+{delays}
+/* A hairline before the first one says they belong to the tab on their left. */
+[role="tablist"] > {tab(children[0])} {{ margin-left: 2px; position: relative; }}
+[role="tablist"] > {tab(children[0])}::before {{
+    content: ""; position: absolute; left: -2px; top: 30%; height: 40%;
+    border-left: 1px solid {c['border']};
+}}
+/* The parent keeps the brand colour while one of its sub-tabs is open. */
+[role="tablist"]:has({open_(children)}) > {tab(parent)} {{ color: {c['brand']}; }}
+@keyframes count-subtab-in {{
+    from {{ opacity: 0; transform: translateX(-8px); }}
+    to   {{ opacity: 1; transform: none; }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+    [role="tablist"] > {kids} {{ animation: none; }}
+}}
+</style>"""
 
 
 def stat_card(col, label: str, n: int | str, u: int | None = None, *,
