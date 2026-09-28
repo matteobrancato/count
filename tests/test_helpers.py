@@ -2,18 +2,16 @@
 
 Complements `test_business_rules.py` (which covers the counting rules): here we
 lock down the input parsing, the scope+BU selector state machine, the Jira
-client's graceful degradation, and the Report's regression-flag join.
+client's graceful degradation, and how and when the app loads its data.
 """
 from __future__ import annotations
 
-import pandas as pd
 import pytest
 import streamlit as st
 
 from src import jira_client as jc
 from src.rules_engine import _mapp_devices_for
 from src.ui import global_filter as gf
-from src.ui import report_tab as rt
 
 
 # ── MAPP operating-system field → device rows ────────────────────────────────
@@ -148,13 +146,11 @@ class TestJiraClient:
         assert jc._conf() is None
         assert jc.available() is False
 
-    def test_story_and_field_reads_degrade_without_jira(self, monkeypatch):
-        """AI Test Design must survive an unconfigured Jira: an empty story it
-        can report on, never an exception."""
+    def test_field_lookup_degrades_without_jira(self, monkeypatch):
+        """Resolving a field name on an unconfigured Jira is an empty answer,
+        never an exception: the Leakage tab then reads without that field."""
         monkeypatch.setattr(jc.st, "secrets", {})
-        story = jc.fetch_story("X-1")
-        assert story["key"] == "X-1" and story["summary"] == ""
-        assert jc.field_ids_by_name(("Acceptance Criteria",)) == {}
+        assert jc.field_ids_by_name(("ENVIRONMENT",)) == {}
 
     def test_the_leakage_search_refuses_rather_than_reporting_zero(self, monkeypatch):
         """Deliberately the opposite of the above.  An unconfigured Jira must
@@ -163,74 +159,6 @@ class TestJiraClient:
         monkeypatch.setattr(jc.st, "secrets", {})
         with pytest.raises(RuntimeError):
             jc.search_all("project = X", ("summary",))
-
-
-# ── Report: regression flag join ─────────────────────────────────────────────
-class TestRegressionFlag:
-    @staticmethod
-    def _stub_backlog(monkeypatch, base: pd.DataFrame):
-        from src.ui import backlog_tab as bl
-        monkeypatch.setattr(
-            bl, "_backlog_data",
-            lambda: (pd.DataFrame(), {("X", "website"): base.assign(category="automated")}, {}),
-        )
-
-    def test_a_failed_baseline_load_raises_instead_of_zeroing_regression(
-            self, monkeypatch):
-        """The fallback used to be an empty baseline, which flagged every
-        automated row as NOT regression: a slide-ready chart reading zero
-        regression on every BU.  An error in its place is the honest outcome."""
-        from src.ui import backlog_tab as bl
-
-        def _boom():
-            raise RuntimeError("backlog unavailable")
-
-        monkeypatch.setattr(bl, "_backlog_data", _boom)
-        auto = pd.DataFrame([{"case_id": 1, "country_label": "NL",
-                              "device": "Desktop", "bu": "X"}])
-        with pytest.raises(RuntimeError):
-            rt._add_regression_flag(auto, pd.DataFrame(), "website")
-
-    def test_exact_match_flags_regression(self, monkeypatch):
-        base = pd.DataFrame([{"case_id": 1, "country_label": "NL", "device": "Desktop"}])
-        self._stub_backlog(monkeypatch, base)
-        auto = pd.DataFrame([
-            {"case_id": 1, "country_label": "NL", "device": "Desktop", "bu": "X"},
-            {"case_id": 2, "country_label": "NL", "device": "Desktop", "bu": "X"},
-        ])
-        out = rt._add_regression_flag(auto, pd.DataFrame(), "website")
-        assert list(out["is_regression"]) == [True, False]
-
-    def test_device_less_rows_match_at_case_level(self, monkeypatch):
-        base = pd.DataFrame([{"case_id": 1, "country_label": "NL", "device": "Desktop"}])
-        self._stub_backlog(monkeypatch, base)
-        auto = pd.DataFrame([
-            {"case_id": 1, "country_label": "ZZ", "device": "Unspecified", "bu": "X"},
-        ])
-        out = rt._add_regression_flag(auto, pd.DataFrame(), "website")
-        assert list(out["is_regression"]) == [True]
-
-    def test_join_never_duplicates_rows(self, monkeypatch):
-        """Duplicate baseline keys must not multiply the automated rows."""
-        base = pd.DataFrame([
-            {"case_id": 1, "country_label": "NL", "device": "Desktop"},
-            {"case_id": 1, "country_label": "NL", "device": "Desktop"},   # dupe
-        ])
-        self._stub_backlog(monkeypatch, base)
-        auto = pd.DataFrame([
-            {"case_id": 1, "country_label": "NL", "device": "Desktop", "bu": "X"},
-        ])
-        out = rt._add_regression_flag(auto, pd.DataFrame(), "website")
-        assert len(out) == 1
-
-    def test_empty_input_is_safe(self, monkeypatch):
-        self._stub_backlog(monkeypatch, pd.DataFrame(
-            columns=["case_id", "country_label", "device"]))
-        assert rt._add_regression_flag(pd.DataFrame(), pd.DataFrame(), "website").empty
-
-
-# ── release readiness: "how long until it ships" ─────────────────────────────
-# ── stability controls: the default must always be selectable ────────────────
 
 
 # ── Daily freshness ──────────────────────────────────────────────────────────
@@ -318,14 +246,11 @@ class TestTheNumbersLoadOncePerDay:
         assert "run_every" not in pathlib.Path("app.py").read_text(encoding="utf-8")
 
     def test_no_dashboard_cache_expires_within_the_day(self):
-        """A cache that lapses mid-day turns one fast visit into a slow one.
-        Only AI Test Design may be shorter: it reads stories people are
-        editing while they generate."""
+        """A cache that lapses mid-day turns one fast visit into a slow one."""
         import ast
         import pathlib
 
         from src.freshness import DAY_TTL
-        allowed_short = {"fetch_story", "_acceptance_field_ids", "fetch_page"}
         offenders = []
         for f in [pathlib.Path("app.py"), *pathlib.Path("src").rglob("*.py")]:
             for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
@@ -339,8 +264,7 @@ class TestTheNumbersLoadOncePerDay:
                     if persisted and "ttl" in kw:
                         offenders.append(f"{f}:{node.name} passes a ttl Streamlit ignores")
                     ttl = kw.get("ttl")
-                    if (isinstance(ttl, ast.Constant) and ttl.value < DAY_TTL
-                            and node.name not in allowed_short):
+                    if isinstance(ttl, ast.Constant) and ttl.value < DAY_TTL:
                         offenders.append(f"{f}:{node.name} ttl={ttl.value}")
                     if ttl is None and not persisted:
                         offenders.append(f"{f}:{node.name} has no ttl and no persist")

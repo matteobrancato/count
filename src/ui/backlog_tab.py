@@ -45,7 +45,7 @@ Scopes
   mobile_app         : a PRIORITY-based baseline (High/Highest) with the mobile
                        OS as device — see `_expand_mapp_baseline`.  It is served
                        by its own `_mapp_backlog_data()` so the website /
-                       microservices numbers (KPI strip, Report, Dexter) are
+                       microservices numbers (KPI strip, Dexter) are
                        never affected by it.
 """
 from __future__ import annotations
@@ -853,7 +853,7 @@ def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFram
 def _mapp_backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                   dict[tuple[str, str], pd.DataFrame]]:
     """The Mobile-App baseline pipeline, kept SEPARATE from `_backlog_data` so the
-    website/microservices numbers (KPI strip, All-BU table, Report, Dexter) stay
+    website/microservices numbers (KPI strip, All-BU table, Dexter) stay
     untouched.  Loaded lazily — mobile_app is deferred from the start-up warm-up,
     so this only fetches when the user actually opens the Mobile App scope."""
     raw, auto, rules = _load_scope("mobile_app")
@@ -905,7 +905,7 @@ def _framework_cards(s: dict) -> list[tuple[str, int, int]]:
 def _stat_card(col, label: str, n: int, u: int, *,
                badge_html: str = "") -> None:
     """Thin alias — the card itself lives in styles.stat_card, shared with the
-    Report tab so the two never drift apart."""
+    Leakage tab so the cards look the same everywhere."""
     stat_card(col, label, n, u, badge_html=badge_html)
 
 
@@ -1593,7 +1593,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         # The bar, the colour and the big figure are on coverage EXCLUDING the
         # partial gaps: the question this table is read for is "how are we doing
         # on the tests we have started".  The coverage over the whole baseline —
-        # the figure the KPI strip, the Coverage tab, the Report and Dexter all
+        # the figure the KPI strip, the Coverage tab and Dexter all
         # show — stays underneath in grey, so the two can never be confused and
         # the table still reconciles with the rest of the app.
         real = float(r["Coverage %"])
@@ -1638,7 +1638,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             ex_html = (
                 f"<span class='cov-ex' title='Coverage over the WHOLE baseline, "
                 f"partial gaps included — the figure the KPI strip, the Coverage "
-                f"tab, the Report and Dexter show.'>{real:.1f}%</span>"
+                f"tab and Dexter show.'>{real:.1f}%</span>"
             )
         cov_cell = (
             f'<td class="l"><div class="cov-wrap">'

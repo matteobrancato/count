@@ -150,7 +150,7 @@ def _get_prod_sanity(case: dict, reg: FieldRegistry,
     It used to read the "Test Automation PRD Run" checkbox.  That field no
     longer counts: the label is the definition now, and changing it here rather
     than at each call site is what keeps every surface — the Coverage tab's
-    Production Sanity view, the Overview, the Report — on one definition
+    Production Sanity view, the Overview — on one definition
     instead of drifting into two.
     """
     if labels is None:

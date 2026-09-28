@@ -3,8 +3,8 @@
 Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
   * Section names normalised by auto-stripping dominant "container roots"
     (e.g. "SD" or "WTR > Root") so the rows match the Excel "Main Category".
-  * Desktop / Mobile / Unspecified columns count EXPANDED rows (same convention
-    as the Report tab) — a case automated for both devices counts twice.
+  * Desktop / Mobile / Unspecified columns count EXPANDED rows — a case
+    automated for both devices counts twice.
   * Coverage % on the baseline view divides EXPANDED ROWS, reusing the Backlog
     tab's own classified frame — so both tabs report one number for a BU, by
     construction rather than by coincidence (locked by tests/test_business_rules
@@ -648,8 +648,8 @@ def _render_coverage_section(
         c1.metric("Total Cases", f"{total:,}")
         c2.metric("Automated Cases", f"{auto_unique:,}")
         c3.metric("Automated Rows", f"{len(auto_bu):,}",
-                  help="Expanded rows: Desktop + Mobile. Same convention as "
-                       "the Report tab.")
+                  help="Expanded rows: Desktop + Mobile — a case automated "
+                       "on both devices counts twice.")
         _cov_help = ("Automated cases ÷ total cases.  This view has no baseline "
                      "row expansion (that is defined on the regression baseline "
                      "only), so it counts cases — hence the label.")
@@ -816,9 +816,8 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 
     raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
     auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
-    # Dedup dual-framework rows on (case, country, device) — the same
-    # convention the Report tab uses.  Without this a case automated by
-    # BOTH Java and Testim would count as two D+M rows here but one there.
+    # Dedup dual-framework rows on (case, country, device): a case automated
+    # by BOTH Java and Testim is one D+M row, not two.
     if not auto_bu.empty:
         auto_bu = auto_bu.drop_duplicates(subset=["case_id", "country_label", "device"])
 

@@ -101,6 +101,12 @@ class TestPeriods:
 
 
 class TestLinkToTests:
+    def test_keys_are_found_bare_in_urls_and_lowercase(self):
+        text = ("IPXL20-15740, https://x.atlassian.net/browse/SD-512 and "
+                "ipxl20-15740 again\nhttps://x.atlassian.net/jira/software/c/"
+                "projects/TPS/boards/1?selectedIssue=TPS-9")
+        assert jc.extract_issue_keys(text) == ["IPXL20-15740", "SD-512", "TPS-9"]
+
     def test_references_are_indexed_by_jira_key(self):
         by_key = lk.cases_by_key({1: "IPXL20-7322, SD20-1", 2: "ipxl20-7322", 3: ""})
         assert by_key == {"IPXL20-7322": {1, 2}, "SD20-1": {1}}

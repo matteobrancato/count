@@ -10,7 +10,7 @@ widgets.  The BU list adapts to the chosen scope, and each scope remembers its
 own last BU (per-scope widget key), so switching back and forth never produces
 an invalid selection.
 
-All-BU overview sections (Overview, Report, the Backlog summary table) are
+All-BU overview sections (Overview, the Backlog and Leakage tables) are
 cross-BU comparisons by design and intentionally ignore the BU selection.
 """
 from __future__ import annotations

@@ -19,9 +19,7 @@ from src.ui import (
     kpi_strip,
     leakage_tab,
     overview_tab,
-    report_tab,
     styles,
-    test_design_tab,
 )
 from src.ui.styles import COLORS
 
@@ -264,13 +262,9 @@ _SECTIONS = [
     ("📋 Backlog",        backlog_tab.render,     "backlog_anim"),
     ("📐 Coverage",       coverage_tab.render,    ""),          # wraps itself
     ("🧭 Overview",       overview_tab.render,    "overview_anim"),
-    ("📄 Report",         report_tab.render,      "report_anim"),
     # Jira only: one read of the last year's incidents, cached for the day and
     # matched to TestRail through cases already downloaded — no TestRail call.
     ("🐞 Leakage",        leakage_tab.render,     ""),
-    # Beta.  One fragment that draws a form, and calls Jira, Confluence or
-    # Gemini only when "Generate" is pressed.
-    ("✨ AI Test Design", test_design_tab.render, ""),
 ]
 
 

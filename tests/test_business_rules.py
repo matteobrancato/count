@@ -1405,19 +1405,14 @@ class TestPlaywrightCountryCoverageResolves:
 
 
 class TestEveryBUIsWiredIntoEverySurface:
-    """Adding a BU means touching more than bu_rules: two hardcoded display
-    orders and the run-alias table all key off the BU NAME, in three different
-    files.  Miss one and nothing errors — the BU just silently sorts to the
-    bottom of a tab, or its Runs view comes back empty.  These are the guards
-    that turn that into a failing test instead."""
+    """Adding a BU means touching more than bu_rules: the selector's display
+    order and Dexter's alias table key off the BU NAME.  Miss one and nothing
+    errors — the BU just silently sorts to the bottom of the selector, or
+    Dexter cannot map its short name.  These are the guards that turn that
+    into a failing test instead."""
 
     def test_the_global_filter_lists_every_website_bu(self):
         from src.ui.global_filter import _BU_ORDER
-        assert set(br.WEBSITE_BUS) <= set(_BU_ORDER), \
-            sorted(set(br.WEBSITE_BUS) - set(_BU_ORDER))
-
-    def test_the_report_lists_every_website_bu(self):
-        from src.ui.report_tab import _BU_ORDER
         assert set(br.WEBSITE_BUS) <= set(_BU_ORDER), \
             sorted(set(br.WEBSITE_BUS) - set(_BU_ORDER))
 
@@ -1448,10 +1443,8 @@ class TestEveryBUIsWiredIntoEverySurface:
         """A stale name is how a rename half-lands: the old entry keeps its
         slot and the renamed BU falls to the end."""
         from src.ui.global_filter import _BU_ORDER as gf
-        from src.ui.report_tab import _BU_ORDER as rt
         known = set(br.WEBSITE_BUS) | {r.bu for r in br.ALL_RULES}
         assert set(gf) <= known, sorted(set(gf) - known)
-        assert set(rt) <= known, sorted(set(rt) - known)
 
 
 class TestWatsonsUkraineIsItsOwnBU:

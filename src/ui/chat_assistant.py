@@ -608,8 +608,8 @@ def _generate_pending_response() -> None:
         top_p=0.9,
     )
 
-    # The fallback walk and its cooldowns live in `gemini_client` — shared with
-    # AI Test Design, so a model one feature exhausted is skipped by the other.
+    # The fallback walk and its cooldowns live in `gemini_client`; the refusals
+    # are remembered for the session, so an exhausted model is not asked again.
     cooling: dict[str, float] = st.session_state.setdefault(
         gemini_client.COOLDOWN_KEY, {})
     result = gemini_client.generate(contents, config, _models_to_try(), cooling)

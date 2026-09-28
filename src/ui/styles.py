@@ -167,8 +167,8 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 /* Primary-kind buttons keep the brand fill — a form's primary submit included:
    the rule above gives every form submit a white surface, and it used to win
-   over `type="primary"`, leaving AI Test Design's one call to action looking
-   like a secondary button. */
+   over `type="primary"`, leaving a form's one call to action looking like a
+   secondary button. */
 .stButton > button[kind="primary"],
 [data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"] {{
     background: {c['brand']};
@@ -1015,13 +1015,12 @@ def inject() -> None:
 
 def stat_card(col, label: str, n: int, u: int | None = None, *,
               badge_html: str = "") -> None:
-    """The ONE metric card of the dashboard — Backlog and Report share it.
+    """The ONE metric card of the dashboard — Backlog and Leakage share it.
 
     Identical markup everywhere means identical height, which is what keeps a
     row of cards (and any captions under them) aligned.  *u* adds the
-    unique-cases caption; pass None where that number would be misleading (the
-    Report aggregates several BUs, and a case shared between two of them must
-    not be counted twice).
+    unique-cases caption; pass None where that number would be misleading (a
+    figure that is not a count of cases, such as the Leakage tab's incidents).
     """
     import streamlit as _st  # noqa: F401
     col.markdown(

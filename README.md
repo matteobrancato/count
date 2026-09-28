@@ -16,7 +16,7 @@ visit, and served from cache for the rest of it — so after that first load eve
 visit and every interaction is instant.
 
 Optional integrations enrich the picture and degrade silently when not
-configured: **Jira** (the Leakage tab and AI Test Design) and
+configured: **Jira** (the Leakage tab) and
 **Dexter**, a Gemini-powered assistant that answers questions about the numbers
 using the same cached data the dashboard renders.
 
@@ -27,9 +27,7 @@ using the same cached data the dashboard renders.
 | **📋 Backlog** | The regression baseline for the selected BU: every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports, followed by the all-BU summary table |
 | **📐 Coverage** | Coverage per functional area (TestRail section), as a pie + bar pair, with drill-down links back into TestRail |
 | **🧭 Overview** | Cross-BU totals — Smoke Suite, All Automated Cases and Production Sanity — broken down by country and device, over any subset of BUs. These are *automated* counts, not baseline coverage: for that, read the Backlog tab |
-| **📄 Report** | Presentation-ready Altair charts (per BU × country × device, plus a coverage leaderboard), suitable for copy-pasting into slides |
 | **🐞 Leakage** | Every Jira "Production Incident" per Business Unit (by Jira project; EE20 and SD20 shown as multi-BU groups): count vs the previous period, Highest & High, web vs app, a 6-month trend, and how many hit an area an automated TestRail test covers. Jira only — no TestRail request |
-| **✨ AI Test Design** *(Beta)* | Jira stories, Confluence pages, documents and images in; the fewest TestRail-style test cases that cover every acceptance criterion out — step by step, traced AC → test, with open questions for the PO. One Gemini call, Pro first |
 
 A floating chat button (bottom-left, every tab) opens **Dexter**.
 
@@ -50,7 +48,7 @@ produce an invalid combination. The selection is published to the URL as
 `?scope=…&bu=…`, which makes any view linkable — paste the link and the
 recipient lands on exactly what you were looking at.
 
-All-BU sections (Overview, Report, the Backlog summary table) are cross-BU
+All-BU sections (Overview, the Backlog and Leakage tables) are cross-BU
 comparisons by design and intentionally ignore the BU part of the selection.
 
 ---
@@ -74,11 +72,8 @@ app.py                      Streamlit entry point: header, credential gate,
 │   │                       framework precedence, cache warm-up
 │   ├── metrics.py          Aggregation helpers (smoke, totals, prod sanity)
 │   ├── methodology.py      Canonical description of how every number is computed
-│   ├── jira_client.py      Read-only Jira enrichment (best-effort) and story reading
-│   ├── confluence_client.py Read-only Confluence pages (AI Test Design context)
-│   ├── gemini_client.py    Gemini client + the model fallback policy, shared by
-│   │                       Dexter and AI Test Design
-│   ├── test_design.py      AI Test Design: sources, prompt, schema, validation
+│   ├── jira_client.py      Read-only Jira reads for the Leakage tab (best-effort)
+│   ├── gemini_client.py    Gemini client + the model fallback policy Dexter uses
 │   ├── leakage.py          Leakage: production incidents from Jira, per BU group
 │   ├── automation_save.py  Automation save: configured time save → per configuration
 │   └── ui/
@@ -87,11 +82,9 @@ app.py                      Streamlit entry point: header, credential gate,
 │       ├── backlog_tab.py    Backlog tab
 │       ├── coverage_tab.py   Coverage tab
 │       ├── overview_tab.py   Overview tab
-│       ├── report_tab.py     Report tab
 │       ├── data_quality.py   TestRail hygiene checklist
 │       ├── chat_assistant.py Dexter — the Gemini assistant
 │       ├── leakage_tab.py    Leakage tab
-│       ├── test_design_tab.py AI Test Design tab (Beta)
 │       └── styles.py         Design system (colours, CSS, health thresholds)
 │
 └── tests/                  Pure-Python regression suite (no API calls)
@@ -191,9 +184,7 @@ every cache and reloads; every other run that day is a cache hit
 "Updated …" label forces a reload at any time, for everyone.
 
 The TestRail payloads are persisted to disk, so a restart does not cost a
-reload; derived frames are cached in memory for the day. The only exception is
-AI Test Design, whose Jira and Confluence reads stay short-lived — it reads
-stories people are editing while they generate. On startup `warmup_cache()`
+reload; derived frames are cached in memory for the day. On startup `warmup_cache()`
 fetches every suite in parallel and pre-computes the expansion per scope, so
 switching tabs is instant. The Mobile App scope is deferred — it loads the first
 time someone selects it.
@@ -249,13 +240,10 @@ TESTRAIL_API_KEY = "your_api_key"
 GEMINI_API_KEY   = "your_gemini_key"
 GEMINI_MODEL     = "gemini-2.5-flash"   # omit to use the built-in fallback chain
 
-# Optional — Jira: Leakage tab and AI Test Design
+# Optional — Jira: the Leakage tab
 JIRA_URL           = "https://your-site.atlassian.net"
 ATLASSIAN_USER     = "your.email@example.com"
 ATLASSIAN_API_KEY  = "your_atlassian_token"
-# Optional — Confluence pages in AI Test Design (same Atlassian token);
-# derived from JIRA_URL's host when absent
-CONFLUENCE_URL     = "https://your-site.atlassian.net/wiki"
 
 # Optional — Automation save on the Backlog tab (Big No-Regression).  The time
 # save is measured by the QA team; keep it here, not in the (public) repo.
@@ -295,8 +283,8 @@ The suite is pure Python — no TestRail or Jira calls, no Streamlit runtime —
 it runs in seconds and is safe to execute before every push.
 `tests/test_business_rules.py` locks the counting rules (including the agreement
 between the Backlog and Coverage tabs); `tests/test_helpers.py` covers input
-parsing, the scope/BU state machine, Jira's graceful degradation and the
-Report's regression-flag join.
+parsing, the scope/BU state machine, Jira's graceful degradation and how the
+app loads its data.
 
 Dev tooling is deliberately kept out of `requirements.txt` so it never ships to
 Streamlit Cloud.
@@ -319,7 +307,7 @@ Streamlit Cloud.
 | `streamlit` | UI framework and caching |
 | `pandas` | Data manipulation and pivot tables |
 | `requests` + `tenacity` | TestRail / Jira API calls with retry logic |
-| `altair` | Charts in the Coverage and Report tabs |
+| `altair` | Charts in the Coverage and Leakage tabs |
 | `google-genai` | Dexter, the Gemini assistant (imported lazily — the app boots without it) |
 | `openpyxl` | Two-sheet workbook for the Data-Quality export (falls back to CSV if missing) |
 
@@ -340,10 +328,10 @@ test, then re-pin.
    "Testim Country Coverage", which is wrong for a BU that keeps its country in
    `multi_countries` — and the failure is silent: every TestIM case comes out
    un-automated
-4. **Add the BU to both display orders** — `_BU_ORDER` in
-   `src/ui/global_filter.py` and in `src/ui/report_tab.py` — and give it its
-   short codes in `BU_ALIASES`, which Dexter reads to understand "SD" or "WTR".
-   Guard tests fail if any of the three is missed
+4. **Add the BU to the display order** — `_BU_ORDER` in
+   `src/ui/global_filter.py` — and give it its short codes in `BU_ALIASES`,
+   which Dexter reads to understand "SD" or "WTR". Guard tests fail if either
+   is missed
 5. Refresh the app — the BU appears in the global filter and in every tab
    (`WEBSITE_BUS` / `MOBILE_APP_BUS` are derived from the rule set)
 

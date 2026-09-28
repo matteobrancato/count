@@ -1,10 +1,9 @@
-"""Gemini access shared by every AI feature: one client, one fallback policy.
+"""Gemini access for Dexter: one client, one fallback policy.
 
-Dexter owned this privately until a second feature (AI Test Design) needed the
-very same behaviour — try the best model first, step down when Google refuses
-one, remember the refusal for the rest of the session.  Two copies of a retry
-policy drift the first time one of them is fixed, so it lives here and both
-features call `generate()`.
+Try the best model first, step down when Google refuses one, remember the
+refusal for the rest of the session.  It lives in its own module so any future
+AI feature calls the same `generate()` instead of growing a second copy of the
+policy — two copies drift the first time one of them is fixed.
 
 Gemini exposes no "remaining quota" endpoint, so the policy is REACTIVE: it
 asks the best model and learns from the refusal —
