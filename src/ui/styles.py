@@ -1040,7 +1040,7 @@ def inject() -> None:
     st.markdown(_css(), unsafe_allow_html=True)
 
 
-def stat_card(col, label: str, n: int, u: int | None = None, *,
+def stat_card(col, label: str, n: int | str, u: int | None = None, *,
               badge_html: str = "") -> None:
     """The ONE metric card of the dashboard — Backlog and Leakage share it.
 
@@ -1048,6 +1048,7 @@ def stat_card(col, label: str, n: int, u: int | None = None, *,
     row of cards (and any captions under them) aligned.  *u* adds the
     unique-cases caption; pass None where that number would be misleading (a
     figure that is not a count of cases, such as the Leakage tab's incidents).
+    *n* is a count, or an already formatted figure such as a ratio ("12.6%").
     """
     import streamlit as _st  # noqa: F401
     col.markdown(
@@ -1058,7 +1059,8 @@ def stat_card(col, label: str, n: int, u: int | None = None, *,
         f"letter-spacing:0.01em;white-space:nowrap'>{label}</div>"
         f"<div style='display:flex;align-items:center;gap:9px;margin-top:6px'>"
         f"<span style='color:{COLORS['ink']};font-weight:750;font-size:34px;"
-        f"line-height:1.15'>{n:,}</span>{badge_html}</div></div>",
+        f"line-height:1.15'>{n if isinstance(n, str) else f'{n:,}'}</span>"
+        f"{badge_html}</div></div>",
         unsafe_allow_html=True,
     )
     if u is not None:

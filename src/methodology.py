@@ -108,11 +108,31 @@ the figures follow the automation as it grows. Unit and date are shown beside
 them; a coefficient shared by several BUs is marked "(default)". Shown on the
 Big No-Regression baseline only. A BU with no coefficient shows no figure.
 
-**Leakage** — every Jira issue of type "Production Incident", in any
-environment, attributed to a Business Unit by its Jira project. EE20 (Eastern
-Europe) and SD20 (Superdrug & Savers) each serve several BUs and cannot be
-split, so they are shown as groups. "On an automated test" means a TestRail
-case citing the incident in its References is automated.
+**Leakage** — counted per release, the way Delivery's quality report counts
+it. A release is a fixVersion of the BU's main release stream (hotfixes are not
+releases). **UAT issues** are every Bug with that fixVersion, whatever its
+status, and the Defects with that fixVersion created since the previous release
+shipped. **Leaked** are the Production Incidents created from the release date
+to the next release's date (to date, while the next one has not shipped),
+without those Delivery leaves out: cancelled, no root cause yet, a root cause
+of Requirement/Documentation, new requirement, non reproducible, expected
+behaviour, data issue, duplicate, security issue, not applicable or not a bug,
+and app components or labels. **Leakage ratio** = leaked ÷ UAT issues, limit
+25%; **High & Highest** = leaked High/Highest ÷ all UAT issues, limit 10%.
+Every excluded incident and every Defect left out is listed with the reason.
+Delivery starts Defects at a UAT start date Jira does not hold, so a ratio can
+differ from the report by a ticket or two; tickets edited after a report was
+sent change it too. The BU comes from the Jira project: EE20 (Eastern Europe)
+and SD20 (Superdrug & Savers) serve several BUs and are shown as groups.
+
+Each leaked incident gets an **AI proposal**: whether UAT could have caught it,
+a category (proposed by the dashboard, to be validated by the QA team), a
+rationale with the evidence it used, and the TestRail case that should have
+covered it — chosen among cases linked to the incident or similar to it, never
+presented as coverage below 0.6 confidence. The coverage gap (manual,
+automated, no test case) follows that case's status in the Backlog. The Key QA
+confirms or changes every proposal; both are kept, with who and when, and the
+Excel export carries them side by side.
 
 **Freshness** — the numbers are loaded from TestRail once a day, by the first
 visit of the day, and then served from cache for the rest of it, so every
@@ -188,9 +208,15 @@ METHODOLOGY_FOR_LLM = """
   manual effort of all tests, × automated rows = effort saved, × Backlog rows
   = what the backlog would add.  Big No-Regression only; never estimate a
   saving for a BU with no coefficient.
-- Leakage = Jira "Production Incident" issues (any environment) per Jira
-  project; EE20 and SD20 are multi-BU groups and must never be split or
-  attributed to a single BU.
+- Leakage is per RELEASE (a fixVersion of the main stream, not a hotfix):
+  UAT issues = every Bug of the fixVersion + its Defects created since the
+  previous release; leaked = Production Incidents from the release date to
+  the next release (or to date), minus Delivery's exclusions (cancelled, no
+  root cause, non-defect root causes, app components/labels).  Ratio = leaked
+  ÷ UAT issues (limit 25%); High & Highest = leaked High/Highest ÷ ALL UAT
+  issues (limit 10%).  EE20 and SD20 are multi-BU groups — never split them or
+  attribute them to a single BU.  The AI's verdicts are proposals the Key QA
+  confirms or changes: always say which one you are quoting.
 - Testim rows take their countries from "Testim Country Coverage", NOT from
   multi_countries: only the countries named there count as automated.  Sole
   exception, Watsons Turkey (one country): a BLANK Testim Country Coverage falls

@@ -1,8 +1,10 @@
 """Read-only Jira Cloud client.
 
-One consumer today, on demand: the Leakage tab — every "Production
-Incident", paginated to the end (`search_all`), with custom field ids resolved
-by name, and the issue keys TestRail cases cite (`extract_issue_keys`).
+One consumer, on demand: the Leakage tab — the releases of a project
+(`project_versions`), every Bug / Defect of a release and every Production
+Incident after it, paginated to the end (`search_all`), custom field ids
+resolved by name, rich text read as plain text (`adf_to_text`), and the issue
+keys TestRail cases cite (`extract_issue_keys`).
 
 Strictly best-effort and read-only: `available()` is False when the Atlassian
 secrets are missing, and every caller degrades without an error.
@@ -68,7 +70,78 @@ def extract_issue_keys(text: str) -> list[str]:
     return list(seen)
 
 
+
+def adf_to_text(node) -> str:
+    """Atlassian Document Format (Jira Cloud's rich text) → readable plain text.
+
+    Keeps what matters to someone reading an incident: paragraphs, headings,
+    bullet and numbered lists (nested ones indented), tables as `a | b` rows,
+    links and mentions by their visible text.
+    """
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return "".join(adf_to_text(n) for n in node)
+    if not isinstance(node, dict):
+        return ""
+
+    kind    = node.get("type")
+    attrs   = node.get("attrs") or {}
+    content = node.get("content") or []
+
+    if kind == "text":
+        return node.get("text", "")
+    if kind == "hardBreak":
+        return "\n"
+    if kind == "mention":
+        return attrs.get("text", "")
+    if kind == "emoji":
+        return attrs.get("text") or attrs.get("shortName", "")
+    if kind in ("inlineCard", "blockCard", "embedCard"):
+        return attrs.get("url", "")
+    if kind == "rule":
+        return "\n"
+    if kind in ("bulletList", "orderedList"):
+        lines = []
+        for i, item in enumerate(content, 1):
+            body = adf_to_text(item.get("content") or []).strip("\n")
+            marker = f"{i}. " if kind == "orderedList" else "- "
+            first, *rest = body.split("\n") if body else [""]
+            lines.append(marker + first)
+            lines.extend("  " + r for r in rest)
+        return "\n".join(lines) + "\n"
+    if kind == "table":
+        rows = []
+        for row in content:
+            cells = [adf_to_text(c.get("content") or []).strip().replace("\n", " ")
+                     for c in (row.get("content") or [])]
+            rows.append(" | ".join(cells))
+        return "\n".join(rows) + "\n"
+    inner = adf_to_text(content)
+    if kind in ("paragraph", "heading", "codeBlock", "blockquote", "panel"):
+        return inner.rstrip("\n") + "\n"
+    return inner
+
+
 # ── production incidents (Leakage tab) ────────────────────────────────────────
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+def project_versions(project: str) -> list[dict]:
+    """Every fixVersion of a project (raw Jira JSON: name, released,
+    releaseDate, startDate, archived …).  Raises on failure — the caller says
+    the releases are unavailable rather than showing an empty list."""
+    conf = _conf()
+    if not conf:
+        raise RuntimeError("Jira is not configured")
+    base, user, token = conf
+    resp = requests.get(f"{base}/rest/api/3/project/{project}/versions",
+                        auth=HTTPBasicAuth(user, token), timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"Jira versions of {project} answered {resp.status_code}")
+    return resp.json()
+
+
 @st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def field_ids_by_name(names: tuple[str, ...]) -> dict[str, str]:
     """{field name: field id} for the named fields that exist on this site.
