@@ -75,6 +75,21 @@ DEXTER_CHAIN: list[str] = [
 
 
 @st.cache_resource(show_spinner=False)
+def model_status() -> dict[str, tuple[str, float]]:
+    """{model: (what happened the last time it was asked, when)} for the whole
+    process — so a page can say which model answered and why a stronger one
+    did not, instead of leaving "is it using the best model?" to a guess."""
+    return {}
+
+
+def _note(model: str, outcome: str) -> None:
+    try:
+        model_status()[model] = (outcome, time.time())
+    except Exception:
+        logger.debug("model status unavailable", exc_info=True)
+
+
+@st.cache_resource(show_spinner=False)
 def shared_cooldowns() -> dict[str, float]:
     """Cooldowns for the whole process, not one session: a quota refusal is
     about the API key, so every visitor should skip the refused model."""
@@ -141,13 +156,16 @@ def generate(contents, config, models: list[str],
 
     now = time.time()
     last_err = ""
+    asked = False
     for model in models:
         if cooling.get(model, 0.0) > now:
             continue
+        asked = True
         try:
             response = client(key).models.generate_content(
                 model=model, contents=contents, config=config,
             )
+            _note(model, "answered")
             return Result((response.text or "").strip(), model)
         except Exception as exc:
             err_str = str(exc)
@@ -156,19 +174,23 @@ def generate(contents, config, models: list[str],
                 # Account-level (no free tier on this model): nothing to do
                 # server-side, retry tomorrow.
                 cooling[model] = now + 24 * 3600
+                _note(model, "no quota on this plan (limit: 0)")
                 logger.info("Model %s has no quota (limit: 0) — trying next", model)
                 continue
             if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
                 cooling[model] = now + parse_retry_delay(err_str, default=60.0)
+                _note(model, "rate-limited")
                 logger.info("Model %s rate-limited — trying next", model)
                 continue
             if ("503" in err_str or "UNAVAILABLE" in err_str
                     or "overload" in err_str.lower()):
                 cooling[model] = now + 30.0
+                _note(model, "overloaded")
                 logger.info("Model %s overloaded (503) — trying next", model)
                 continue
             if "404" in err_str or "NOT_FOUND" in err_str:
                 cooling[model] = now + 9_999_999
+                _note(model, "not found")
                 logger.info("Model %s not found — trying next", model)
                 continue
             if "403" in err_str or "PERMISSION_DENIED" in err_str:
@@ -176,19 +198,24 @@ def generate(contents, config, models: list[str],
                 # limited to past users).  Not an error in the request: the
                 # next model may well answer.
                 cooling[model] = now + 24 * 3600
+                _note(model, "not open to this project")
                 logger.info("Model %s not open to this project — trying next", model)
                 continue
             # A different error will not be cured by another model — stop
             # rather than burn the rest of the chain on it.
+            _note(model, "error: " + err_str.split("\n", 1)[0][:160])
             logger.exception("Unexpected Gemini error from %s", model)
             break
-    return Result(None, None, last_err)
+    return Result(None, None, last_err if asked else "ALL_COOLING")
 
 
 def failure_message(last_err: str) -> str:
     """The most useful thing to tell a user when no model answered."""
     if last_err == "NOT_CONFIGURED":
         return "⚠️ **Gemini is not configured.**  Add `GEMINI_API_KEY` to the secrets."
+    if last_err == "ALL_COOLING":
+        return ("⚠️ **Every model refused recently and is resting** (rate limit or no "
+                "quota).  Nothing was asked this time; try again in a few minutes.")
     if "limit: 0" in last_err:
         return (
             "⚠️ **Your Google AI Studio account has no free-tier quota** "

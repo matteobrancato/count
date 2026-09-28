@@ -1,11 +1,11 @@
 """Leakage: defect leakage per release, from Jira, as Delivery counts it.
 
 No network.  What is locked here is what decides the figures a manager reads
-and the proposals a Key QA reviews: which fixVersions are releases, where
-each window starts and ends, which incidents count, the ratios, how an
+and the AI proposals shown next to them: which fixVersions are releases,
+where each window starts and ends, which incidents count, the ratios, how an
 incident is matched to the TestRail case that should have caught it, what
-the AI's answer is allowed to say, and that a review never erases the AI's
-proposal.
+the AI's answer is allowed to say, and that a redone analysis keeps the
+proposal it replaces.
 """
 from __future__ import annotations
 
@@ -402,6 +402,30 @@ class TestTheAIsAnswer:
         out, model, errors = lai.classify(rows, {"EE20-50": ([], [idx.cases[101]])})
         assert set(out) == {"EE20-50"} and model == "gemini-3.8-flash" and not errors
 
+    def test_batches_run_in_parallel_and_land_one_by_one(self, monkeypatch):
+        """Thirteen incidents: three batches, each handed over as it lands."""
+        import json as _json
+
+        from src import gemini_client as gc
+        idx = _index()
+        rows = [_incident(f"EE20-{i}", None) for i in range(13)]
+
+        def generate(contents, config, models, cooling):
+            text = contents[0].parts[0].text
+            keys = [ln[4:] for ln in text.splitlines() if ln.startswith("### ")]
+            return gc.Result(_json.dumps({"verdicts": [_verdict(key=k) for k in keys]}),
+                             "gemini-3.8-flash")
+
+        monkeypatch.setattr(gc, "ready", lambda: True)
+        monkeypatch.setattr(gc, "types", pytest.importorskip("google.genai.types"))
+        monkeypatch.setattr(gc, "generate", generate)
+        landed = []
+        out, model, errors = lai.classify(
+            rows, {r["key"]: ([], [idx.cases[101]]) for r in rows},
+            on_batch=lambda got, m: landed.append(len(got)), cooling={})
+        assert len(out) == 13 and not errors and model == "gemini-3.8-flash"
+        assert sorted(landed) == [1, 6, 6]
+
     def test_when_every_model_refuses_it_says_so(self, monkeypatch):
         from src import gemini_client as gc
         monkeypatch.setattr(gc, "ready", lambda: True)
@@ -411,27 +435,15 @@ class TestTheAIsAnswer:
         assert out == {} and model is None and errors
 
 
-# ── the Key QA's review ──────────────────────────────────────────────────────
+# ── the AI proposals and the analysis runs ───────────────────────────────────
 class TestStore:
-    def test_a_review_never_erases_the_ai_proposal(self):
-        s = ls.MemoryStore()
-        s.put_ai("EE20", "A-1", {"uat_detectability": lai.DETECTABLE,
-                                 "category": "Missing test case", "testrail_case": ""}, "m", "h")
-        s.review("EE20", "A-1", "Anna", ls.CHANGED,
-                 {"uat_detectability": lai.NOT_DETECTABLE, "category": "Production data",
-                  "testrail_case": ""}, "promo only in prod")
-        rec = s.get("EE20", "A-1")
-        assert rec.ai["uat_detectability"] == lai.DETECTABLE
-        assert rec.final["uat_detectability"] == lai.NOT_DETECTABLE
-        assert (rec.status, rec.reviewer) == (ls.CHANGED, "Anna")
-        assert rec.events[0].before["category"] == "Missing test case"
-
     def test_a_re_analysis_keeps_the_previous_proposal(self):
         s = ls.MemoryStore()
         s.put_ai("EE20", "A-1", {"category": "one"}, "m1", "h1")
         s.put_ai("EE20", "A-1", {"category": "two"}, "m2", "h2")
         rec = s.get("EE20", "A-1")
         assert rec.ai["category"] == "two" and rec.past_ai[0]["ai"]["category"] == "one"
+        assert rec.final["category"] == "two"
 
     def test_the_record_is_a_copy(self):
         s = ls.MemoryStore()
@@ -439,16 +451,43 @@ class TestStore:
         s.get("EE20", "A-1").ai["category"] = "tampered"
         assert s.get("EE20", "A-1").ai["category"] == "one"
 
-    def test_attempts_are_remembered_until_forgotten(self):
+    def test_one_run_per_release_at_a_time(self):
+        """Two visitors opening the same release must not pay for it twice."""
         s = ls.MemoryStore()
-        s.mark_attempted("EE20", "R1")
-        assert s.attempted("EE20", "R1")
-        s.forget_attempt("EE20", "R1")
-        assert not s.attempted("EE20", "R1")
+        assert s.start_run("EE20", "R1", 12)
+        assert not s.start_run("EE20", "R1", 12)
+        assert s.start_run("EE20", "R2", 3)                      # another release
+
+    def test_progress_and_outcome_are_shared(self):
+        s = ls.MemoryStore()
+        s.start_run("EE20", "R1", 12)
+        s.run_progress("EE20", "R1", 6, "gemini-3.8-flash")
+        s.run_progress("EE20", "R1", 6, "gemini-2.5-flash")
+        s.finish_run("EE20", "R1", [])
+        run = s.run("EE20", "R1")
+        assert (run.state, run.done, run.models) == (
+            ls.DONE, 12, ["gemini-3.8-flash", "gemini-2.5-flash"])
+
+    def test_a_run_that_ends_short_without_errors_is_still_a_failure(self):
+        """Counted as done, it would be started again on every visit."""
+        s = ls.MemoryStore()
+        s.start_run("EE20", "R1", 3)
+        s.finish_run("EE20", "R1", [])
+        run = s.run("EE20", "R1")
+        assert run.state == ls.FAILED and "3 of 3" in run.errors[0]
+
+    def test_a_run_with_missing_verdicts_is_a_failure_to_retry(self):
+        s = ls.MemoryStore()
+        s.start_run("EE20", "R1", 12)
+        s.run_progress("EE20", "R1", 6, "m")
+        s.finish_run("EE20", "R1", ["All fallback models hit their rate limit."])
+        run = s.run("EE20", "R1")
+        assert run.state == ls.FAILED and run.errors and run.finished
+        assert s.start_run("EE20", "R1", 6)                       # can run again
 
 
 class TestExport:
-    def test_the_workbook_has_every_sheet_and_keeps_ai_and_human_apart(self):
+    def test_the_workbook_has_every_sheet_and_labels_the_ai(self):
         import openpyxl
         rel = lk.Release("EE_SAP_Release_2026Q2.Apr", True, date(2026, 4, 27))
         created = datetime(2026, 5, 2, tzinfo=timezone.utc)
@@ -459,23 +498,21 @@ class TestExport:
         d = lk.ReleaseLeakage(EE, rel, None, uat, [leak], excluded)
         s = ls.MemoryStore()
         s.put_ai("EE20", "A-1", lai.validate(_verdict(key="A-1"), {101}), "gemini-3.8-flash", "h")
-        s.review("EE20", "A-1", "Anna", ls.CONFIRMED, s.get("EE20", "A-1").final)
         data = lx.workbook(d, {"A-1": s.get("EE20", "A-1")}, {"A-1": "Automated test"}, {})
         wb = openpyxl.load_workbook(io.BytesIO(data))
-        assert wb.sheetnames == ["Summary", "Incidents", "UAT issues", "Excluded", "Audit trail"]
+        assert wb.sheetnames == ["Summary", "Incidents", "UAT issues", "Excluded"]
         header = [c.value for c in wb["Incidents"][1]]
-        assert {"AI verdict", "AI rationale", "Final verdict", "Reviewer",
-                "Coverage gap"} <= set(header)
-        assert wb["Audit trail"].max_row == 2
+        assert {"AI verdict", "AI rationale", "AI TestRail case", "Coverage gap"} <= set(header)
+        assert wb["Incidents"].max_row == 2
 
 
 # ── the tab ──────────────────────────────────────────────────────────────────
 class TestTab:
     @staticmethod
-    def _run(bu):
+    def _run(bu, running=False):
         from streamlit.testing.v1 import AppTest
 
-        def page(bu):
+        def page(bu, running):
             from datetime import date, datetime, timezone
 
             import pandas as pd
@@ -514,19 +551,23 @@ class TestTab:
                 {101}, set())
             saved = (jira_client.available, lk.releases, lk.analyse, lm.index_for,
                      global_filter.current, gemini_client.ready)
+            from src import leakage_store as ls
+            if running:
+                ls.store().start_run("EE20", "EE_SAP_Release_2026Q3.Sept", 1)
+                leakage_tab._FOLLOW_SECONDS = 0
             jira_client.available = lambda: True
             lk.releases = lambda g: rels
             lk.analyse = analyse
             lm.index_for = lambda bus: index
             global_filter.current = lambda: ("website", bu)
-            gemini_client.ready = lambda: False
+            gemini_client.ready = lambda: running
             try:
                 leakage_tab.render()
             finally:
                 (jira_client.available, lk.releases, lk.analyse, lm.index_for,
                  global_filter.current, gemini_client.ready) = saved
 
-        at = AppTest.from_function(page, args=(bu,), default_timeout=30)
+        at = AppTest.from_function(page, args=(bu, running), default_timeout=30)
         at.run()
         assert not at.exception, at.exception
         return at
@@ -535,13 +576,11 @@ class TestTab:
         at = self._run("Drogas")
         text = " ".join(m.value for m in at.markdown) + " ".join(c.value for c in at.caption)
         assert "12.5%" in text                           # 1 leaked ÷ 8 UAT issues
-        assert "EE_SAP_Release_2026Q3.Sept" in text
-        assert "until EE_SAP_Release_2026Q4.Oct ships" in text
         assert at.selectbox[0].value == "EE_SAP_Release_2026Q3.Sept"
 
-    def test_a_shared_project_says_it_cannot_be_split(self):
+    def test_a_bu_of_a_shared_project_gets_its_group(self):
         at = self._run("Watsons Turkey")
-        assert any("cannot be split per Business Unit" in c.value for c in at.caption)
+        assert at.selectbox[0].value == "EE_SAP_Release_2026Q3.Sept"
 
     def test_release_names_lose_only_the_part_they_share(self):
         from src.ui.leakage_tab import short_names
@@ -551,6 +590,11 @@ class TestTab:
             "2026Q2.1", "2026Q2.2"}                         # never cut inside a token
         assert short_names(["SD_Release_2026Q2.Apr SAP", "SD_Release_2026Q2.May SAP"])[
             "SD_Release_2026Q2.May SAP"] == "2026Q2.May"
+
+    def test_a_running_analysis_shows_its_progress(self):
+        at = self._run("Drogas", running=True)
+        text = " ".join(e.proto.text for e in at.get("progress"))
+        assert "Analysing 1 incidents with AI · 0 done" in text and "—" not in text
 
     def test_without_ai_the_counts_still_stand(self):
         at = self._run("Drogas")

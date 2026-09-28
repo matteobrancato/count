@@ -1,16 +1,12 @@
 """The Leakage analysis of one release as an Excel workbook.
 
-Five sheets, all for the release and BU on screen:
-  Summary      the release, its windows and every figure of the tab
-  Incidents    each counted incident: Jira data, the AI proposal (verdict,
+Four sheets, all for the release and BU on screen:
+  Summary      the release, its window and every figure of the tab
+  Incidents    each counted incident: Jira data and the AI proposal (verdict,
                category, confidence, rationale, evidence, TestRail matches,
-               actions), the Key QA's final values, status, reviewer and time
-  UAT issues   the Bugs and Defects the ratio divides by
+               actions), in separate, labelled columns
+  UAT issues   the Bugs and Defects the ratio divides by, and those left out
   Excluded     the incidents Delivery's rules leave out, with the reason
-  Audit trail  every review, oldest first, with the values before and after
-
-Jira source data, AI proposals and human decisions sit in separate, labelled
-columns, so a reader can always tell who said what.
 """
 from __future__ import annotations
 
@@ -61,7 +57,6 @@ def incident_rows(data: ReleaseLeakage, records: dict[str, Record],
     for r in data.leaks:
         rec = records.get(r["key"], Record())
         ai = rec.ai or {}
-        final = rec.final
         out.append({
             "Incident": r["key"], "Link": r["url"], "Summary": r["summary"],
             "Created": r["created"].strftime("%Y-%m-%d") if r["created"] else "",
@@ -80,35 +75,11 @@ def incident_rows(data: ReleaseLeakage, records: dict[str, Record],
                 f"C{m['case_id']} ({m['confidence']:.2f}): {m['reason']}"
                 for m in ai.get("testrail_matches", [])),
             "AI corrective actions": " | ".join(ai.get("corrective_actions", [])),
-            "AI model": rec.ai_model, "AI analysed at": rec.ai_at,
-            "Final verdict": final.get("uat_detectability", ""),
-            "Final category": final.get("category", ""),
-            "Final TestRail case": final.get("testrail_case", ""),
+            "AI TestRail case": ai.get("testrail_case", ""),
             "Coverage gap": gaps.get(r["key"], ""),
-            "Review status": rec.status, "Reviewer": rec.reviewer,
-            "Reviewed at": rec.reviewed_at,
-            "Review comment": rec.events[-1].comment if rec.events else "",
+            "AI model": rec.ai_model, "AI analysed at": rec.ai_at,
         })
     return out
-
-
-def audit_rows(records: dict[str, Record]) -> list[dict]:
-    out = []
-    for key, rec in records.items():
-        for past in rec.past_ai:
-            out.append({"Incident": key, "When": past["at"], "Who": past["model"],
-                        "Action": "AI proposal replaced by a re-analysis",
-                        "Before": _brief(past["ai"]), "After": "", "Comment": ""})
-        for e in rec.events:
-            out.append({"Incident": key, "When": e.at, "Who": e.reviewer,
-                        "Action": e.status, "Before": _brief(e.before),
-                        "After": _brief(e.final), "Comment": e.comment})
-    return sorted(out, key=lambda r: r["When"])
-
-
-def _brief(values: dict) -> str:
-    return " · ".join(str(values.get(k, "")) for k in
-                      ("uat_detectability", "category", "testrail_case") if values.get(k))
 
 
 def workbook(data: ReleaseLeakage, records: dict[str, Record], gaps: dict[str, str],
@@ -129,7 +100,6 @@ def workbook(data: ReleaseLeakage, records: dict[str, Record], gaps: dict[str, s
             "Priority": r["priority"], "Root cause (Jira)": r["root_cause"],
             "Summary": r["summary"],
         } for r in data.excluded]),
-        "Audit trail": pd.DataFrame(audit_rows(records)),
     }
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xl:

@@ -3,13 +3,12 @@
 Follows the global BU selector.  The release is picked here, from the BU's
 Jira project (released or unreleased; the latest released by default).  All
 the counting lives in `src/leakage.py`, the TestRail matching in
-`src/leakage_match.py`, the AI in `src/leakage_ai.py`, the Key QA's decisions
+`src/leakage_match.py`, the AI in `src/leakage_ai.py`, its proposals and runs
 in `src/leakage_store.py`.
 
-What is what, on screen:
-  * Jira source data and counts — plain;
-  * the AI's proposals — in columns and panels labelled "AI";
-  * the Key QA's decisions — the editable columns (✎), with who and when.
+On screen, Jira's data and the counts are plain; everything the AI proposes
+is labelled as such (Matteo removed the Key QA review on 2026-09-28 to keep
+the section lean, so the AI's proposal is what is shown and exported).
 
 Cost: Jira reads cached for the day; the AI runs once per incident and keeps
 its answer; the TestRail matching uses cases already downloaded — this tab
@@ -22,6 +21,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import Counter
 
@@ -79,28 +79,6 @@ def _pick_release(group: lk.Group, rels: list[lk.Release]):
     return by_name[name], c_export
 
 
-def _uat_rule(data: lk.ReleaseLeakage) -> str:
-    since = (f"the Defects created since {data.previous.name} shipped "
-             f"({_d(data.previous.date)})" if data.previous else "its Defects")
-    return f"**UAT issues:** every Bug with fixVersion {data.release.name}, and {since}."
-
-
-def _window_caption(data: lk.ReleaseLeakage) -> None:
-    w, rel = data.window, data.release
-    if w is None:
-        st.caption(f"**{rel.name}** has not been released yet (planned {_d(rel.date)}): "
-                   f"UAT issues so far, no post-release window yet. {_uat_rule(data)}")
-        return
-    if w.open_ended:
-        end = "today"
-        tail = (f", until {w.following.name} ships (planned {_d(w.following.date)})"
-                if w.following else ", no later release planned yet")
-    else:
-        end, tail = _d(w.end), f", when {w.following.name} shipped"
-    st.caption(f"{_uat_rule(data)} **Leaked:** Production Incidents from "
-               f"{_d(w.start)} to {end}{tail}, counted with Delivery's rules.")
-
-
 # ── TestRail context and AI ──────────────────────────────────────────────────
 @st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _context(bus: tuple[str, ...], rows_json: str) -> dict[str, tuple[list, list]]:
@@ -119,34 +97,71 @@ def _rows_json(rows: list[dict]) -> str:
     return json.dumps([{k: r.get(k) for k in keep} for r in rows], sort_keys=True)
 
 
-def _ai_key(data: lk.ReleaseLeakage) -> str:
-    return f"lk_ai_{data.group.project}_{data.release.name}"
+# A failed analysis is tried again on the next visit after this long; the
+# button retries at once.
+_RETRY_AFTER = 600
+# How long an open page follows a running analysis live before it stops
+# waiting (a batch took 20-40 s on the live app; three run in parallel).
+_FOLLOW_SECONDS = 180
 
 
-def _run_ai(data: lk.ReleaseLeakage, ctx: dict, keys: list[str]) -> None:
+def _pending(data: lk.ReleaseLeakage, ctx: dict) -> list[str]:
+    """Incidents without a current proposal: never analysed, or edited in Jira
+    (or offered other TestRail cases) since."""
     store = ls.store()
+    return [r["key"] for r in data.leaks
+            if (rec := store.get(data.group.project, r["key"])).ai is None
+            or rec.ai_input != lai.input_hash(r, *ctx[r["key"]])]
+
+
+def _start_analysis(data: lk.ReleaseLeakage, ctx: dict, keys: list[str]) -> None:
+    """Analyse `keys` in a background thread.  The page never waits on it:
+    the run's state lives in the store, so every visitor sees the same run,
+    a second visitor never starts it twice, and results land batch by batch."""
+    store = ls.store()
+    project, release = data.group.project, data.release.name
     rows = [r for r in data.leaks if r["key"] in keys]
-    with st.spinner(f"Analysing {len(rows)} incident{'s' if len(rows) != 1 else ''} "
-                    f"with AI — about ten seconds per six…"):
-        results, model, errors = lai.classify(rows, ctx)
-    for r in rows:
-        if r["key"] in results:
-            store.put_ai(data.group.project, r["key"], results[r["key"]], model or "",
-                         lai.input_hash(r, *ctx[r["key"]]))
-    st.session_state[_ai_key(data)] = errors
+    if not rows or not store.start_run(project, release, len(rows)):
+        return
+    hashes = {r["key"]: lai.input_hash(r, *ctx[r["key"]]) for r in rows}
+    cooling = gemini_client.shared_cooldowns()
+    try:
+        # Warm the shared client here, in the script thread; the worker then
+        # gets a cache hit.  A failure is the worker's to report, not the tab's.
+        gemini_client.client(gemini_client.api_key())
+    except Exception:
+        logger.exception("Leakage: the Gemini client could not be created")
+
+    def on_batch(verdicts: dict[str, dict], model: str) -> None:
+        for key, verdict in verdicts.items():
+            store.put_ai(project, key, verdict, model, hashes[key])
+        store.run_progress(project, release, len(verdicts), model)
+
+    def work() -> None:
+        try:
+            _results, _model, errors = lai.classify(rows, ctx, on_batch=on_batch,
+                                                    cooling=cooling)
+        except Exception as exc:
+            logger.exception("Leakage: AI analysis of %s %s failed", project, release)
+            errors = [f"The analysis stopped: {exc}"]
+        store.finish_run(project, release, errors)
+
+    threading.Thread(target=work, name=f"leakage-ai-{project}", daemon=True).start()
 
 
 def _auto_ai(data: lk.ReleaseLeakage, ctx: dict) -> None:
-    """Analyse what has no current proposal — once per release per process,
-    so a failing AI is not asked again on every click (the button retries)."""
-    store = ls.store()
-    project, release = data.group.project, data.release.name
-    pending = [r["key"] for r in data.leaks
-               if (rec := store.get(project, r["key"])).ai is None
-               or rec.ai_input != lai.input_hash(r, *ctx[r["key"]])]
-    if pending and gemini_client.ready() and not store.attempted(project, release):
-        store.mark_attempted(project, release)
-        _run_ai(data, ctx, pending)
+    """Start the analysis of what has no current proposal — unless one is
+    running, or the last one failed less than _RETRY_AFTER ago (a failing AI
+    is not asked again on every click; the button retries at once)."""
+    if not gemini_client.ready():
+        return
+    run = ls.store().run(data.group.project, data.release.name)
+    if run is not None and (run.state == ls.RUNNING or (
+            run.state == ls.FAILED and time.time() - run.finished < _RETRY_AFTER)):
+        return
+    pending = _pending(data, ctx)
+    if pending:
+        _start_analysis(data, ctx, pending)
 
 
 def _gap(final: dict, rec: ls.Record, linked: list, index: lm.Index | None) -> str:
@@ -172,8 +187,7 @@ def _ratio_badge(value: float | None, limit: float) -> str:
             f"white-space:nowrap'>{mark} limit {limit:.0%}</span>")
 
 
-def _cards(data: lk.ReleaseLeakage, finals: dict[str, dict], gaps: dict[str, str],
-           records: dict[str, ls.Record]) -> None:
+def _cards(data: lk.ReleaseLeakage, finals: dict[str, dict], gaps: dict[str, str]) -> None:
     uat = len(data.uat)
     c1, c2, c3, c4 = st.columns(4)
     stat_card(c1, "Leakage ratio", _pct(data.ratio),
@@ -193,141 +207,124 @@ def _cards(data: lk.ReleaseLeakage, finals: dict[str, dict], gaps: dict[str, str
     if not data.leaks:
         return
     verdicts = Counter(f.get("uat_detectability") or "Not analysed" for f in finals.values())
-    reviewed = sum(1 for r in records.values() if r.status != ls.PENDING)
     gap_counts = Counter(g for g in gaps.values() if g != "—")
     manual = sum(v for k, v in gap_counts.items() if k.startswith("Manual"))
     automated = sum(v for k, v in gap_counts.items() if k.startswith("Automated"))
-    d1, d2, d3 = st.columns(3)
-    stat_card(d1, "UAT-detectable", verdicts[lai.DETECTABLE])
+    d1, d2 = st.columns(2)
+    stat_card(d1, "UAT-detectable (AI)", verdicts[lai.DETECTABLE])
     d1.caption(f"{verdicts[lai.NOT_DETECTABLE]} not UAT-detectable · "
-               f"{verdicts[lai.NEEDS_REVIEW] + verdicts['Not analysed']} to decide")
-    stat_card(d2, "Reviewed by the Key QA", f"{reviewed} of {len(data.leaks)}")
-    d2.caption("The rest are the AI's proposals")
-    stat_card(d3, "Coverage gaps", sum(gap_counts.values()))
-    d3.caption(f"{manual} manual · {automated} automated · "
+               f"{verdicts[lai.NEEDS_REVIEW] + verdicts['Not analysed']} undecided")
+    stat_card(d2, "Coverage gaps (AI)", sum(gap_counts.values()))
+    d2.caption(f"{manual} manual · {automated} automated · "
                f"{gap_counts['No test case']} without a test case")
 
 
-# ── incidents: review table and inspector ────────────────────────────────────
-def _editor_key(data: lk.ReleaseLeakage) -> str:
-    ver = st.session_state.get(f"lk_ver_{data.group.project}", 0)
-    return f"lk_ed_{data.group.project}_{data.release.name}_{ver}"
+# ── incidents: AI status, table and inspector ──────────────────────────────
+def _ago(ts: float) -> str:
+    secs = max(0, int(time.time() - ts))
+    return f"{secs} s ago" if secs < 90 else f"{secs // 60} min ago"
 
 
-def _ai_status(data: lk.ReleaseLeakage, ctx: dict, records: dict[str, ls.Record]) -> None:
+def _models_panel() -> None:
+    """Which model answered and why a stronger one did not — the chain in
+    order, with each model's last outcome."""
+    status = gemini_client.model_status()
+    rows = [{"Model": m, "Last outcome": status[m][0] if m in status else "not asked yet",
+             "When": _ago(status[m][1]) if m in status else ""}
+            for m in gemini_client.ANALYSIS_CHAIN]
+    with st.expander("AI models, strongest first"):
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.caption("Each incident goes to the first model that answers; a model that "
+                   "refuses (no quota on this plan, rate limit, not available) is skipped "
+                   "for a while and the next one is asked.")
+
+
+def _ai_status(data: lk.ReleaseLeakage, ctx: dict, records: dict[str, ls.Record]):
+    """The analysis state and its one action; returns the progress slot while
+    a run is going, for `_follow` to keep up to date."""
+    if not gemini_client.ready():
+        st.info("The AI analysis needs GEMINI_API_KEY in the secrets. "
+                "The counts above do not depend on it.")
+        return None
+    run = ls.store().run(data.group.project, data.release.name)
+    if run is not None and run.state == ls.RUNNING:
+        slot = st.empty()
+        _progress(slot, run)
+        return slot
     done = [r for r in records.values() if r.ai is not None]
     models = sorted({r.ai_model for r in done if r.ai_model})
-    left, right = st.columns([4, 1.3], vertical_alignment="center")
-    if not gemini_client.ready():
-        left.info("The AI analysis needs GEMINI_API_KEY in the secrets — the counts "
-                  "above do not depend on it.")
-        return
-    errors = st.session_state.get(_ai_key(data)) or []
-    text = (f"🤖 AI proposals for {len(done)} of {len(records)} incidents"
-            + (f" · {', '.join(models)}" if models else ""))
-    left.caption(text + ".  Proposals, not decisions: confirm or change them below.")
-    for e in errors:
-        left.warning(e)
-    missing = [k for k, r in records.items() if r.ai is None]
-    label = f"🤖 Analyse {len(missing)}" if missing else "↻ Re-analyse all"
-    if right.button(label, key=f"lk_run_{data.group.project}_{data.release.name}",
-                    width="stretch"):
-        _run_ai(data, ctx, missing or list(records))
+    missing = _pending(data, ctx)
+    left, right = st.columns([3.2, 1], vertical_alignment="center")
+    left.markdown(
+        f"<span style='font-size:13px;color:{COLORS['muted']}'>🤖 <b style='color:"
+        f"{COLORS['ink']}'>{len(done)} of {len(records)}</b> incidents analysed by AI"
+        + (f" · {html.escape(', '.join(models))}" if models else "")
+        + "</span>", unsafe_allow_html=True)
+    if run is not None and run.state == ls.FAILED:
+        for e in run.errors:
+            st.warning(e)
+        st.caption(f"Last attempt {_ago(run.finished)}. Tried again automatically after "
+                   f"{_RETRY_AFTER // 60} minutes, or now with the button.")
+    # One call to action while something is left to analyse; once everything
+    # has a proposal it steps back to a quiet link-style button.
+    if missing:
+        clicked = right.button(f"✨ Analyse {len(missing)} with AI", type="primary",
+                               key=f"lk_run_{data.group.project}_{data.release.name}",
+                               width="stretch")
+    else:
+        clicked = right.button("↻ Analyse again", type="tertiary",
+                               key=f"lk_run_{data.group.project}_{data.release.name}",
+                               width="stretch")
+    if clicked:
+        _start_analysis(data, ctx, missing or list(records))
         st.rerun(scope="fragment")
+    return None
 
 
-def _review_table(data: lk.ReleaseLeakage, records: dict[str, ls.Record],
-                  gaps: dict[str, str]) -> None:
+def _progress(slot, run: ls.Run) -> None:
+    slot.progress(min(run.done / run.total, 1.0) if run.total else 0.0,
+                  text=f"🤖 Analysing {run.total} incidents with AI · {run.done} done")
+
+
+def _follow(data: lk.ReleaseLeakage, slot) -> None:
+    """Keep the progress bar live while the analysis runs, and redraw the tab
+    when a batch lands or the run ends.  Every pass writes to the page, which
+    is where Streamlit takes a click elsewhere: the wait never blocks it."""
+    store = ls.store()
+    project, release = data.group.project, data.release.name
+    first = store.run(project, release)
+    seen = first.done if first else 0
+    deadline = time.time() + _FOLLOW_SECONDS
+    while time.time() < deadline:
+        time.sleep(1.5)
+        run = store.run(project, release)
+        if run is None or run.state != ls.RUNNING or run.done != seen:
+            st.rerun(scope="fragment")
+        _progress(slot, run)
+
+
+def _incident_table(data: lk.ReleaseLeakage, records: dict[str, ls.Record],
+                    gaps: dict[str, str]) -> None:
     rows = []
     for r in data.leaks:
-        rec = records[r["key"]]
-        ai, final = rec.ai or {}, rec.final
-        # Only what a review decision needs, so the ✎ columns fit on screen.
-        # They start as the AI's proposal, so separate "AI verdict / category"
-        # columns would repeat them; the AI's original stays in the inspector
-        # below, in the history and in the Excel.  The confidence says where
-        # to look first.
+        ai = records[r["key"]].ai or {}
         rows.append({
             "Incident": r["url"],
             "Summary": r["summary"],
             "Root cause (Jira)": r["root_cause"],
-            "AI confidence": ai.get("confidence"),
-            "Verdict": final.get("uat_detectability") or None,
-            "Category": final.get("category") or None,
-            "TestRail case": final.get("testrail_case", ""),
+            "Verdict (AI)": ai.get("uat_detectability", "Not analysed"),
+            "Category (AI)": ai.get("category", ""),
+            "Confidence": ai.get("confidence"),
+            "TestRail case": ai.get("testrail_case", ""),
             "Coverage gap": gaps[r["key"]],
-            "Review": rec.status,
-            "Comment": "",
         })
-    base = pd.DataFrame(rows, index=[r["key"] for r in data.leaks])
-    clash = [k for k, rec in records.items()
-             if (f := rec.final).get("category") in lai.VERDICT_OF
-             and f.get("uat_detectability") in (lai.DETECTABLE, lai.NOT_DETECTABLE)
-             and lai.VERDICT_OF[f["category"]] not in (f["uat_detectability"], lai.NEEDS_REVIEW)]
-    if clash:
-        st.warning(f"Verdict and category disagree on {', '.join(clash)}: the category "
-                   f"belongs to the other verdict — change one of the two.")
-    # A form: edits and the Save travel together.  Outside one, the first
-    # click on Save was spent committing the cell being edited (a rerun of its
-    # own) and did nothing visible — found in the preview on 2026-09-28.
-    with st.form(key=f"lk_form_{_editor_key(data)}", border=False):
-        c_who, c_save, c_note = st.columns([1.6, 1, 3], vertical_alignment="bottom")
-        reviewer = c_who.text_input("Reviewer", key="lk_reviewer",
-                                    placeholder="Your name — kept with each change")
-        save = c_save.form_submit_button("💾 Save review", type="primary", width="stretch")
-        c_note.caption("✎ columns are the Key QA's.  Saved reviews are kept until the "
-                       "app restarts — there is no permanent archive yet; export to "
-                       "Excel to keep them.")
-        edited = st.data_editor(
-            base, key=_editor_key(data), hide_index=True, width="stretch",
-            height=min(38 + 35 * len(base), 460),
-            disabled=[c for c in base.columns
-                      if c not in ("Verdict", "Category", "TestRail case", "Review", "Comment")],
-            column_config={
-                "Incident": st.column_config.LinkColumn("Incident", display_text=r".*/browse/(.*)"),
-                "Summary": st.column_config.TextColumn("Summary", width="medium"),
-                "AI confidence": st.column_config.ProgressColumn(
-                    "AI conf.", min_value=0.0, max_value=1.0, format="%.2f"),
-                "Verdict": st.column_config.SelectboxColumn("Verdict ✎", options=list(lai.VERDICTS)),
-                "Category": st.column_config.SelectboxColumn(
-                    "Category ✎", options=list(lai.CATEGORIES)),
-                "TestRail case": st.column_config.TextColumn(
-                    "TestRail case ✎", help="C-numbers, comma separated",
-                    validate=r"^\s*(C?\d+(\s*,\s*C?\d+)*)?\s*$"),
-                "Review": st.column_config.SelectboxColumn(
-                    "Review ✎", options=list(ls.REVIEW_STATUSES), required=True),
-                "Comment": st.column_config.TextColumn("Comment ✎"),
-            })
-    if save:
-        _save(data, records, base, edited, (reviewer or "").strip())
-
-
-def _save(data: lk.ReleaseLeakage, records: dict[str, ls.Record], base: pd.DataFrame,
-          edited: pd.DataFrame, reviewer: str) -> None:
-    if not reviewer:
-        st.warning("Add your name first — it is what the audit trail records.")
-        return
-    store, saved = ls.store(), 0
-    for key in base.index:
-        b, e, rec = base.loc[key], edited.loc[key], records[key]
-        final = {"uat_detectability": e["Verdict"] or "", "category": e["Category"] or "",
-                 "testrail_case": ", ".join(f"C{x}" for x in
-                                            re.findall(r"\d+", e["TestRail case"] or ""))}
-        changed = final != {k: rec.final.get(k, "") for k in ls.FINAL_FIELDS}
-        status, comment = e["Review"], (e["Comment"] or "").strip()
-        if changed and status in (ls.PENDING, ls.CONFIRMED):
-            ai_final = {k: (rec.ai or {}).get(k, "") for k in ls.FINAL_FIELDS}
-            status = ls.CONFIRMED if final == ai_final else ls.CHANGED
-        if changed or status != b["Review"] or comment:
-            store.review(data.group.project, key, reviewer, status, final, comment)
-            saved += 1
-    if saved:
-        ver_key = f"lk_ver_{data.group.project}"
-        st.session_state[ver_key] = st.session_state.get(ver_key, 0) + 1
-        st.toast(f"Saved {saved} review{'s' if saved != 1 else ''}.", icon="💾")
-        st.rerun(scope="fragment")
-    else:
-        st.info("Nothing to save: no value, status or comment was changed.")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
+                 height=min(38 + 35 * len(rows), 460), column_config={
+                     "Incident": st.column_config.LinkColumn(
+                         "Incident", display_text=r".*/browse/(.*)"),
+                     "Summary": st.column_config.TextColumn("Summary", width="medium"),
+                     "Confidence": st.column_config.ProgressColumn(
+                         "Confidence", min_value=0.0, max_value=1.0, format="%.2f")})
 
 
 def _case_rows(pairs: list[tuple[lm.CaseInfo, str, str]]) -> pd.DataFrame:
@@ -356,10 +353,10 @@ def _inspector(data: lk.ReleaseLeakage, records: dict[str, ls.Record], ctx: dict
             f"Environment: {row['environment']}" if row["environment"] else "",
             f"Root cause (EU): {row['root_cause']}" if row["root_cause"] else "",
         ) if x))
-        st.markdown(f"**{html.escape(row['summary'])}**")
+        st.markdown(f"<b>{html.escape(row['summary'].strip())}</b>", unsafe_allow_html=True)
         for field, label in (("description", "Description"), ("steps", "Steps to reproduce"),
                              ("actual", "Actual results"), ("expected", "Expected results")):
-            with st.expander(label + ("" if row[field] else " — not filled")):
+            with st.expander(label + ("" if row[field] else " (not filled)")):
                 st.text(row[field] or "—")
         if row["links"]:
             st.caption("Linked: " + " · ".join(
@@ -405,10 +402,6 @@ def _inspector(data: lk.ReleaseLeakage, records: dict[str, ls.Record], ctx: dict
             st.dataframe(_case_rows([(c, "Candidate", "") for c in rest]).drop(columns="Why"),
                          hide_index=True, width="stretch", column_config={
                              "Case": st.column_config.LinkColumn("Case", display_text=r".*/view/(\d+)")})
-    if rec.events or rec.past_ai:
-        st.markdown("**History**")
-        st.dataframe(pd.DataFrame(lx.audit_rows({key: rec})).drop(columns="Incident"),
-                     hide_index=True, width="stretch")
 
 
 # ── insights ─────────────────────────────────────────────────────────────────
@@ -449,7 +442,7 @@ def short_names(names: list[str]) -> dict[str, str]:
 def _trend_chart(group: lk.Group, rels: list[lk.Release]) -> None:
     st.markdown("**Leakage ratio by release**")
     try:
-        with st.spinner("Reading the last releases from Jira…"):
+        with st.spinner("Reading past releases…"):
             history = lk.trend(group, rels, _today())
     except Exception as exc:
         logger.exception("Leakage: release history of %s unavailable", group.project)
@@ -569,7 +562,7 @@ def _all_bus(today) -> pd.DataFrame:
 
 
 def _all_bus_view() -> None:
-    with st.spinner("Reading every BU's latest release from Jira…"):
+    with st.spinner("Reading every BU…"):
         df = _all_bus(_today())
     st.dataframe(df, hide_index=True, width="stretch", column_config={
         "Leakage ratio": st.column_config.NumberColumn(
@@ -584,7 +577,7 @@ def _all_bus_view() -> None:
 @st.fragment
 def render() -> None:
     if not jira_client.available():
-        st.info("Leakage reads releases and incidents from Jira — add JIRA_URL, "
+        st.info("Leakage reads releases and incidents from Jira: add JIRA_URL, "
                 "ATLASSIAN_USER and ATLASSIAN_API_KEY to the app secrets.")
         return
     _scope, bu = global_filter.current()
@@ -595,9 +588,6 @@ def render() -> None:
                 f"Every BU's latest release is below.")
         _all_bus_view()
         return
-    if group.shared:
-        st.caption(f"{group.project} serves {', '.join(group.bus)}: its releases and "
-                   f"incidents cannot be split per Business Unit, so they are shown together.")
     try:
         rels = lk.releases(group)
     except Exception as exc:
@@ -612,14 +602,13 @@ def render() -> None:
     if release is None:
         return
     try:
-        with st.spinner("Reading the release from Jira…"):
+        with st.spinner("Reading the release…"):
             data = lk.analyse(group, rels, release.name, _today())
     except Exception as exc:
         logger.exception("Leakage: %s %s unavailable", group.project, release.name)
         st.warning(f"The release could not be read from Jira ({exc}). The counts are not "
                    f"shown rather than shown as zero; try again in a few minutes.")
         return
-    _window_caption(data)
 
     store = ls.store()
     index, ctx = None, {r["key"]: ([], []) for r in data.leaks}
@@ -629,7 +618,7 @@ def render() -> None:
             ctx = _context(group.bus, _rows_json(data.leaks))
         except Exception:
             logger.exception("Leakage: TestRail matching unavailable")
-            st.caption("TestRail cases are not loaded yet — matching will appear once "
+            st.caption("TestRail cases are not loaded yet: matching appears once "
                        "the dashboard data has finished loading.")
         _auto_ai(data, ctx)
     records = {r["key"]: store.get(group.project, r["key"]) for r in data.leaks}
@@ -641,21 +630,25 @@ def render() -> None:
             data, records, gaps, {"Exported at": ls.now(),
                                   "AI models": ", ".join(sorted({r.ai_model for r in records.values()
                                                                  if r.ai_model})),
-                                  "Categories": "proposed, to validate with the QA team"}),
+                                  "Categories": "proposed, to validate with the QA team",
+                                  "Window": (f"{data.window.start} to "
+                                             f"{'today' if data.window.open_ended else data.window.end}"
+                                             if data.window else "not released")}),
         file_name=f"leakage_{group.project}_{release.name}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key=f"lk_xlsx_{group.project}", width="stretch")
 
-    _cards(data, finals, gaps, records)
+    _cards(data, finals, gaps)
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     view = st.segmented_control("View", _VIEWS, default=_VIEWS[0], required=True,
                                 key="lk_view", label_visibility="collapsed") or _VIEWS[0]
+    slot = None
     if view == _VIEWS[0]:
         if not data.leaks:
-            st.caption("No leaked incident to review in this window.")
+            st.caption("No leaked incident in this window.")
         else:
-            _ai_status(data, ctx, records)
-            _review_table(data, records, gaps)
+            slot = _ai_status(data, ctx, records)
+            _incident_table(data, records, gaps)
             _inspector(data, records, ctx, index)
     elif view == _VIEWS[1]:
         _insights(data, rels, finals, gaps, records)
@@ -671,3 +664,5 @@ def render() -> None:
                                      "Root cause (Jira)": "root_cause"})
     else:
         _all_bus_view()
+    if slot is not None:
+        _follow(data, slot)                  # last: the whole tab is already drawn

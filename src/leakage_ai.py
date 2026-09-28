@@ -3,9 +3,9 @@ TestRail case should have caught it.
 
 One Gemini call per batch of incidents (gemini_client.ANALYSIS_CHAIN, the
 strongest models first), answering in a fixed JSON schema.  What comes back
-is a PROPOSAL: the Key QA confirms or changes it, and both are kept (see
-leakage_store).  The numbers of the tab never depend on it — the leakage
-ratio is counted from Jira alone; the AI only explains the incidents.
+is a PROPOSAL, labelled as the AI's wherever it is shown (see leakage_store).
+The numbers of the tab never depend on it — the leakage ratio is counted
+from Jira alone; the AI only explains the incidents.
 
 The categories below were written for this feature on 2026-09-28 and are
 PROPOSED, not the team's official taxonomy (none was supplied): they are the
@@ -18,6 +18,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 
 from . import gemini_client
@@ -61,6 +63,7 @@ CATEGORIES = tuple(c for c, _v, _m in TAXONOMY)
 VERDICT_OF = {c: v for c, v, _m in TAXONOMY}
 
 BATCH = 6
+WORKERS = 3
 _TEXT_LIMITS = {"description": 1500, "steps": 800, "actual": 600, "expected": 600}
 
 
@@ -245,7 +248,7 @@ def validate(verdict: dict, allowed_cases: set[int]) -> dict:
         "missing_information": [str(x) for x in verdict.get("missing_information") or []],
         "corrective_actions": [str(x) for x in (verdict.get("corrective_actions") or [])[:3]],
         "testrail_matches": matches[:3],
-        # The proposal for the Key QA's "TestRail case" column: only a match
+        # The proposal for the "TestRail case" column: only a match
         # the AI is reasonably sure of — a guess is not coverage.
         "testrail_case": f"C{best['case_id']}" if best else "",
         "flags": flags,
@@ -253,49 +256,66 @@ def validate(verdict: dict, allowed_cases: set[int]) -> dict:
     }
 
 
-def classify(rows: list[dict], context: dict[str, tuple[list, list]]
-             ) -> tuple[dict[str, dict], str | None, list[str]]:
-    """({key: validated verdict}, model that answered, errors).
+def _one_batch(batch: list[dict], context: dict[str, tuple[list, list]], config,
+               cooling: dict[str, float]) -> tuple[dict[str, dict], str | None, list[str]]:
+    types = gemini_client.types
+    prompt = "\n\n".join(incident_block(r, *context[r["key"]]) for r in batch)
+    result = gemini_client.generate(
+        [types.Content(role="user", parts=[types.Part(text=prompt)])],
+        config, gemini_client.ANALYSIS_CHAIN, cooling)
+    if result.model is None:
+        return {}, None, [gemini_client.failure_message(result.error)]
+    try:
+        verdicts = _json_payload(result.text).get("verdicts") or []
+    except (ValueError, AttributeError):
+        keys = ", ".join(r["key"] for r in batch)
+        return {}, result.model, [f"{result.model} answered with unreadable JSON for {keys}."]
+    wanted = {r["key"] for r in batch}
+    got: dict[str, dict] = {}
+    for v in verdicts:
+        key = str(v.get("key", "")).strip().upper()
+        if key in wanted:
+            linked, cands = context[key]
+            allowed = {c.case_id for c, _w in linked} | {c.case_id for c in cands}
+            got[key] = validate(v, allowed)
+    missing = wanted - got.keys()
+    errors = [f"No verdict came back for {', '.join(sorted(missing))}."] if missing else []
+    return got, result.model, errors
+
+
+def classify(rows: list[dict], context: dict[str, tuple[list, list]], *,
+             on_batch: Callable[[dict[str, dict], str], None] | None = None,
+             cooling: dict[str, float] | None = None,
+             workers: int = WORKERS) -> tuple[dict[str, dict], str | None, list[str]]:
+    """({key: validated verdict}, first model that answered, errors).
 
     `context[key]` = (linked [(CaseInfo, why)], candidates [CaseInfo]).
-    Batches of BATCH incidents; a failed batch is reported and skipped, the
-    others still count."""
+    Batches of BATCH incidents, up to `workers` at a time (one call took
+    20-40 s on the live app; three in parallel stay well inside a free
+    tier's requests per minute).  `on_batch(verdicts, model)` is called as
+    each batch lands, so results appear while the rest are still running.
+    A failed batch is reported and skipped; the others still count."""
     if not gemini_client.ready():
         return {}, None, ["Gemini is not configured (GEMINI_API_KEY)."]
-    types = gemini_client.types
-    config = types.GenerateContentConfig(
+    config = gemini_client.types.GenerateContentConfig(
         system_instruction=system_instruction(),
         response_mime_type="application/json",
         response_schema=response_schema(),
         temperature=0.1,
     )
+    cooling = gemini_client.shared_cooldowns() if cooling is None else cooling
+    batches = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
     out: dict[str, dict] = {}
     errors: list[str] = []
-    model_used: str | None = None
-    for i in range(0, len(rows), BATCH):
-        batch = rows[i:i + BATCH]
-        prompt = "\n\n".join(incident_block(r, *context[r["key"]]) for r in batch)
-        result = gemini_client.generate(
-            [types.Content(role="user", parts=[types.Part(text=prompt)])],
-            config, gemini_client.ANALYSIS_CHAIN, gemini_client.shared_cooldowns())
-        if result.model is None:
-            errors.append(gemini_client.failure_message(result.error))
-            break                              # every model refused: stop asking
-        model_used = model_used or result.model
-        try:
-            verdicts = _json_payload(result.text).get("verdicts") or []
-        except (ValueError, AttributeError):
-            errors.append(f"{result.model} answered with unreadable JSON for "
-                          f"{', '.join(r['key'] for r in batch)}.")
-            continue
-        wanted = {r["key"] for r in batch}
-        for v in verdicts:
-            key = str(v.get("key", "")).strip().upper()
-            if key in wanted:
-                linked, cands = context[key]
-                allowed = {c.case_id for c, _w in linked} | {c.case_id for c in cands}
-                out[key] = validate(v, allowed)
-        missing = wanted - out.keys()
-        if missing:
-            errors.append(f"No verdict came back for {', '.join(sorted(missing))}.")
-    return out, model_used, errors
+    models: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(batches)))) as pool:
+        futures = [pool.submit(_one_batch, b, context, config, cooling) for b in batches]
+        for future in as_completed(futures):
+            got, model, errs = future.result()
+            out.update(got)
+            errors.extend(e for e in errs if e not in errors)
+            if model and model not in models:
+                models.append(model)
+            if on_batch is not None and got:
+                on_batch(got, model or "")
+    return out, (models[0] if models else None), errors

@@ -86,6 +86,21 @@ class TestFallbackPolicy:
         assert res.model == "good" and m.calls == ["best", "good"]
         assert cooling["best"] - gc.time.time() > 23 * 3600
 
+    def test_every_outcome_is_noted_for_the_page(self, fake_gemini):
+        """So a page can say which model answered and why a stronger one did not."""
+        fake_gemini({"best": Exception("429 quota limit: 0"), "good": "ok", "last": "no"})
+        gc.model_status().clear()
+        gc.generate([], None, self.CHAIN, {})
+        status = gc.model_status()
+        assert status["best"][0].startswith("no quota") and status["good"][0] == "answered"
+        assert "last" not in status
+
+    def test_when_every_model_is_resting_it_says_so_not_nothing(self, fake_gemini):
+        fake_gemini({"best": "ok", "good": "ok", "last": "ok"})
+        later = gc.time.time() + 60
+        res = gc.generate([], None, self.CHAIN, {m: later for m in self.CHAIN})
+        assert res.model is None and "resting" in gc.failure_message(res.error)
+
     def test_not_configured_says_so(self, monkeypatch):
         monkeypatch.setattr(gc, "api_key", lambda: None)
         res = gc.generate([], None, self.CHAIN, {})

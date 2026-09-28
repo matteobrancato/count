@@ -27,7 +27,7 @@ using the same cached data the dashboard renders.
 | **📋 Backlog** | Every Business Unit side by side on the chosen run (Big No-Regression, Small No-Regression, Production Sanity): totals, frameworks, outstanding work, Automation save and coverage, with a CSV export |
 | **🔎 BU Detail** | The BU picked in the top bar: every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports, coverage, Automation save, frameworks and the pivot |
 | **📐 Coverage** | Coverage per functional area (TestRail section), as a pie + bar pair, with drill-down links back into TestRail |
-| **🐞 Leakage** | Defect leakage per release, counted as Delivery's quality report does: pick a fixVersion (released or planned) of the BU's Jira project, and see the leakage ratio and its High/Highest variant against their 25% / 10% limits, the UAT issues and the leaked incidents, each excluded one with its reason. Every leaked incident gets an AI proposal (UAT-detectable or not, a category, the TestRail case that should have caught it, the coverage gap) that the Key QA confirms or changes in the table; insights by release, category, component and gap; an all-BU view; an Excel export with Jira data, AI proposals and Key QA decisions side by side. Jira and Gemini only — no TestRail request |
+| **🐞 Leakage** | Defect leakage per release, counted as Delivery's quality report does: pick a fixVersion (released or planned) of the BU's Jira project, and see the leakage ratio and its High/Highest variant against their 25% / 10% limits, the UAT issues and the leaked incidents, each excluded one with its reason. Every leaked incident gets an AI proposal (UAT-detectable or not, a category, the TestRail case that should have caught it, the coverage gap), analysed in the background with live progress; insights by release, category, component and gap; an all-BU view; an Excel export with Jira data and the AI proposals. Jira and Gemini only — no TestRail request |
 
 **🧭 Overview** is a window opened from the utility bar next to the tabs: cross-BU
 totals — Smoke Suite, All Automated Cases and Production Sanity — by country and
@@ -83,7 +83,7 @@ app.py                      Streamlit entry point: credential gate, top bar
 │   ├── leakage.py          Leakage per release: releases, windows, Delivery's rules
 │   ├── leakage_match.py    Incident → the TestRail case that should have caught it
 │   ├── leakage_ai.py       The AI proposal per incident (Gemini, validated JSON)
-│   ├── leakage_store.py    AI proposals + Key QA reviews (in memory, for now)
+│   ├── leakage_store.py    AI proposals + analysis runs (in memory, for now)
 │   ├── leakage_export.py   The release's analysis as an Excel workbook
 │   ├── automation_save.py  Automation save: coefficient × configurations
 │   └── ui/
@@ -298,7 +298,7 @@ it runs in seconds and is safe to execute before every push.
 between the Backlog and Coverage tabs); `tests/test_helpers.py` covers input
 parsing, the scope/BU state machine, Jira's graceful degradation and how the
 app loads its data; `tests/test_leakage.py` the leakage rules, the TestRail
-matching, the AI's answer and the review trail.  Run them on the pinned
+matching, the AI's answer and the analysis runs.  Run them on the pinned
 Streamlit (`requirements.txt`): the widgets use its current API.
 
 Dev tooling is deliberately kept out of `requirements.txt` so it never ships to

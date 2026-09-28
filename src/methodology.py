@@ -130,9 +130,9 @@ a category (proposed by the dashboard, to be validated by the QA team), a
 rationale with the evidence it used, and the TestRail case that should have
 covered it — chosen among cases linked to the incident or similar to it, never
 presented as coverage below 0.6 confidence. The coverage gap (manual,
-automated, no test case) follows that case's status in the Backlog. The Key QA
-confirms or changes every proposal; both are kept, with who and when, and the
-Excel export carries them side by side.
+automated, no test case) follows that case's status in the Backlog. These are
+proposals, labelled as the AI's everywhere they appear, including the Excel
+export.
 
 **Freshness** — the numbers are loaded from TestRail once a day, by the first
 visit of the day, and then served from cache for the rest of it, so every
@@ -215,8 +215,8 @@ METHODOLOGY_FOR_LLM = """
   root cause, non-defect root causes, app components/labels).  Ratio = leaked
   ÷ UAT issues (limit 25%); High & Highest = leaked High/Highest ÷ ALL UAT
   issues (limit 10%).  EE20 and SD20 are multi-BU groups — never split them or
-  attribute them to a single BU.  The AI's verdicts are proposals the Key QA
-  confirms or changes: always say which one you are quoting.
+  attribute them to a single BU.  The AI's verdicts are proposals: always
+  say that a verdict or category comes from the AI.
 - Testim rows take their countries from "Testim Country Coverage", NOT from
   multi_countries: only the countries named there count as automated.  Sole
   exception, Watsons Turkey (one country): a BLANK Testim Country Coverage falls
