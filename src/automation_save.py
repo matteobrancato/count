@@ -11,7 +11,9 @@ BU has today, so the figures follow the automation as it grows:
     backlog would add         = coefficient × backlog configurations
 
 A "configuration" is one baseline row — case × country × device — the unit
-every other number on the Backlog tab is counted in.
+every other number on the Backlog tab is counted in.  The saving is also split
+by the configuration's device (Desktop, Mobile): the same coefficient times
+each device's automated configurations, so the two parts add up to the whole.
 
 Secrets (Streamlit Cloud):
 
@@ -36,7 +38,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import streamlit as st
 
@@ -63,6 +65,9 @@ class Saving:
     automated: int
     backlog: int
     total: int
+    # (device, saved) for each device the BU has configurations on; empty
+    # when the split is not known.
+    by_device: tuple[tuple[str, float], ...] = field(default=())
 
 
 def _secrets_table() -> Mapping:
@@ -102,14 +107,17 @@ def config_for(bu: str, scope: str, table: Mapping | None = None) -> Config:
     return Config(unit, as_of, default, is_default=default is not None)
 
 
-def compute(coefficient: float, automated: int, backlog: int, total: int) -> Saving:
-    """Turn the coefficient into the figures a manager reads."""
+def compute(coefficient: float, automated: int, backlog: int, total: int,
+            automated_by_device: Mapping[str, int] | None = None) -> Saving:
+    """Turn the coefficient into the figures a manager reads.
+    `automated_by_device` splits `automated` by device ({"Desktop": n, ...})."""
     return Saving(
         coefficient=coefficient,
         effort=coefficient * total,
         saved=coefficient * automated,
         backlog_gain=coefficient * backlog,
         automated=automated, backlog=backlog, total=total,
+        by_device=tuple((d, coefficient * n) for d, n in (automated_by_device or {}).items()),
     )
 
 

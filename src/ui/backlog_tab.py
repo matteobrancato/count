@@ -1369,23 +1369,40 @@ def _save_context(cfg: automation_save.Config) -> str:
                      if p)
 
 
-def _summary_saves(display: pd.DataFrame, scope: str
+def _automated_by_device(expanded: pd.DataFrame | None) -> dict[str, int]:
+    """Automated configurations per device, for the Automation save split:
+    Desktop, and Mobile for every other row (a Mobile App baseline's iOS and
+    Android rows are all mobile).  Only the devices the BU has rows on."""
+    if expanded is None or expanded.empty or "device" not in expanded.columns:
+        return {}
+    desktop = expanded["device"].eq("Desktop")
+    automated = expanded["category"].eq("automated")
+    return {name: int((mask & automated).sum())
+            for name, mask in (("Desktop", desktop), ("Mobile", ~desktop)) if mask.any()}
+
+
+def _summary_saves(display: pd.DataFrame, scope: str,
+                   expanded_by_bu: dict[tuple[str, str], pd.DataFrame] | None = None,
                    ) -> tuple[dict[str, automation_save.Saving | None], str]:
     """The All-BU table's Automation save column: one figure per row, from the
-    same Total / Automated / Backlog the row shows, so the two can never drift."""
+    same Total / Automated / Backlog the row shows, so the two can never drift,
+    split by device from the BU's classified rows."""
     saves: dict[str, automation_save.Saving | None] = {}
     unit = ""
     for _, r in display.iterrows():
-        cfg = automation_save.config_for(str(r["BU"]), scope)
+        bu = str(r["BU"])
+        cfg = automation_save.config_for(bu, scope)
         unit = unit or cfg.unit
-        saves[str(r["BU"])] = (
+        saves[bu] = (
             None if cfg.coefficient is None
-            else automation_save.compute(cfg.coefficient, int(r["Automated"]),
-                                         int(r["Backlog"]), int(r["Total"])))
+            else automation_save.compute(
+                cfg.coefficient, int(r["Automated"]), int(r["Backlog"]), int(r["Total"]),
+                _automated_by_device((expanded_by_bu or {}).get((bu, scope)))))
     return saves, unit
 
 
-def _automation_save_line(bu: str, scope: str, s: dict) -> None:
+def _automation_save_line(bu: str, scope: str, s: dict,
+                          expanded: pd.DataFrame | None = None) -> None:
     """The manual effort automation saves per release cycle, and what the
     backlog would add (see `src/automation_save.py`).  Same one-line shape as
     the coverage line."""
@@ -1395,7 +1412,7 @@ def _automation_save_line(bu: str, scope: str, s: dict) -> None:
                    f"{html.escape(bu)} yet.")
         return
     sv = automation_save.compute(cfg.coefficient, s["automated"], s["backlog"],
-                                 s["total"])
+                                 s["total"], _automated_by_device(expanded))
     f = automation_save.fmt
     noun = "configuration" if sv.backlog == 1 else "configurations"
     per = f"**Per configuration** `{automation_save.fmt_coefficient(sv.coefficient)}`"
@@ -1403,8 +1420,10 @@ def _automation_save_line(bu: str, scope: str, s: dict) -> None:
         # Said out loud: a reader must not take the shared default for a
         # figure measured on this BU.
         per += " (default)"
+    saved = (", ".join(f"{d} `{f(v)}`" for d, v in sv.by_device) if sv.by_device
+             else f"`{f(sv.saved)}`")
     parts = [
-        f"**⏱ Automation save:** `{f(sv.saved)}` saved",
+        f"**⏱ Automation save:** {saved} saved",
         f"**Manual effort, all tests** `{f(sv.effort)}`",
         f"**Backlog would add** `+{f(sv.backlog_gain)}` ({sv.backlog:,} {noun})",
         per,
@@ -1499,7 +1518,7 @@ def _detail_view(
     # against that baseline only — never beside Small NR or Production Sanity,
     # where its coefficient would be divided by the wrong count.
     if run == RUN_BIG:
-        _automation_save_line(bu, scope, s)
+        _automation_save_line(bu, scope, s, expanded)
 
     st.divider()
 
@@ -1559,6 +1578,16 @@ def _backlog_pct_html(backlog: int, total: int) -> str:
         f"title='Backlog is {pct:.1f}% of the baseline Total "
         f"(healthy \u2264 {_BACKLOG_THRESHOLD_PCT:.0f}%).'>{pct:.1f}%</span>"
     )
+
+
+def _save_figures(sv: automation_save.Saving) -> str:
+    """The saved effort, one line per device (Desktop, Mobile), or the whole
+    figure when the split is not known."""
+    if not sv.by_device:
+        return f'<span class="strong">{automation_save.fmt(sv.saved)}</span>'
+    return ('<span class="save-split">'
+            + "".join(f"<i>{d}</i><b>{automation_save.fmt(v)}</b>" for d, v in sv.by_device)
+            + "</span>")
 
 
 def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
@@ -1685,7 +1714,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             save_td = (
                 '<td class="mut"><span class="sub">Not configured</span></td>'
                 if sv is None else
-                f'<td><span class="strong">{automation_save.fmt(sv.saved)}</span>'
+                f'<td>{_save_figures(sv)}'
                 f'<span class="sub">of {automation_save.fmt(sv.effort)}</span></td>'
             )
         sel_cls  = " class='sel'" if selected_bu and str(r["BU"]) == selected_bu else ""
@@ -1759,7 +1788,7 @@ def render() -> None:
     loaded = _load_run(run, scope)
     if loaded is None:
         return
-    summary, _expanded, _auto = loaded
+    summary, expanded_by_bu, _auto = loaded
 
     # ── Summary table ─────────────────────────────────────────────────────────
     # Scope-filter: Microservices is computed alongside Website (so the KPI-strip
@@ -1785,7 +1814,7 @@ def render() -> None:
 
     # Automation save rides on the regression it was measured on — never beside
     # Small NR or Production Sanity (same rule as the detail line below).
-    saves, save_unit = (_summary_saves(display, scope) if run == RUN_BIG
+    saves, save_unit = (_summary_saves(display, scope, expanded_by_bu) if run == RUN_BIG
                         else (None, ""))
     export = display
     if saves is not None:
@@ -1794,6 +1823,9 @@ def render() -> None:
         export = display.assign(**{
             f"Automation save{suffix}": [round(sv.saved, 2) if sv else None
                                          for sv in per_row],
+            **{f"Automation save, {d.lower()}{suffix}": [
+                round(dict(sv.by_device).get(d, 0.0), 2) if sv else None for sv in per_row]
+               for d in ("Desktop", "Mobile")},
             f"Manual effort, all tests{suffix}": [round(sv.effort, 2) if sv else None
                                                   for sv in per_row],
         })

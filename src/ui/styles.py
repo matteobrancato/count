@@ -844,6 +844,28 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     letter-spacing: 0;
     text-transform: none;
 }}
+/* Automation save, split by device: label · figure, one line each. */
+.bl-summary .save-split {{
+    display: inline-grid;
+    grid-template-columns: auto auto;
+    gap: 0 8px;
+    align-items: baseline;
+}}
+.bl-summary .save-split i {{
+    font-style: normal;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: {c['muted']};
+    text-align: left;
+}}
+.bl-summary .save-split b {{
+    font-weight: 700;
+    color: {c['ink']};
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}}
 .bl-summary .sub {{
     display: block;
     margin-top: 1px;

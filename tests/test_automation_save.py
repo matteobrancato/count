@@ -207,3 +207,64 @@ class TestTheSummaryTable:
         from src.ui import backlog_tab as bl
         out = bl._summary_table_html(self._display(), ["Total", "Automated", "Backlog"])
         assert "Automation save" not in out
+
+
+class TestTheDeviceSplit:
+    """Desktop and Mobile: the same coefficient times each device's automated
+    configurations, so the two parts always add up to the figure they split."""
+
+    @staticmethod
+    def _rows(devices_and_categories):
+        return pd.DataFrame([{"case_id": i, "device": d, "category": c}
+                             for i, (d, c) in enumerate(devices_and_categories)])
+
+    def test_the_parts_add_up_to_the_whole(self):
+        s = sv.compute(0.005, 1_800, 50, 2_000, {"Desktop": 1_200, "Mobile": 600})
+        assert dict(s.by_device) == pytest.approx({"Desktop": 6.0, "Mobile": 3.0})
+        assert sum(v for _d, v in s.by_device) == pytest.approx(s.saved)
+
+    def test_rows_are_split_by_device(self):
+        from src.ui import backlog_tab as bl
+        rows = self._rows([("Desktop", "automated"), ("Desktop", "backlog"),
+                           ("Mobile", "automated"), ("Mobile", "automated")])
+        assert bl._automated_by_device(rows) == {"Desktop": 1, "Mobile": 2}
+        # a Mobile App baseline: iOS and Android are mobile, and no desktop line
+        mapp = self._rows([("iOS", "automated"), ("Android", "backlog")])
+        assert bl._automated_by_device(mapp) == {"Mobile": 1}
+        assert bl._automated_by_device(None) == {}
+
+    def test_the_table_shows_one_line_per_device(self):
+        from src.ui import backlog_tab as bl
+        display = TestTheSummaryTable._display()
+        saves = {"Drogas": sv.compute(0.005, 1_800, 50, 2_000,
+                                      {"Desktop": 1_200, "Mobile": 600}),
+                 "Marionnaud": None}
+        out = bl._summary_table_html(display, ["Total", "Automated", "Backlog"],
+                                     saves=saves, save_unit="MD per release cycle")
+        assert "<i>Desktop</i><b>6.0</b><i>Mobile</i><b>3.0</b>" in out
+        assert "of 10.0" in out
+
+    def test_the_detail_line_shows_the_split(self):
+        from streamlit.testing.v1 import AppTest
+
+        def page():
+            import pandas as pd
+
+            from src import automation_save
+            from src.ui import backlog_tab
+            original = automation_save.config_for
+            automation_save.config_for = (
+                lambda bu, scope: automation_save.Config("MD", "", 0.5))
+            try:
+                rows = pd.DataFrame({"device": ["Desktop", "Mobile", "Mobile"],
+                                     "category": ["automated"] * 3})
+                backlog_tab._automation_save_line(
+                    "Drogas", "website", {"automated": 3, "backlog": 0, "total": 3}, rows)
+            finally:
+                automation_save.config_for = original
+
+        at = AppTest.from_function(page, default_timeout=30)
+        at.run()
+        assert not at.exception
+        text = " ".join(m.value for m in at.markdown)
+        assert "Desktop `0.5`, Mobile `1.0` saved" in text

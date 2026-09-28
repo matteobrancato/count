@@ -104,7 +104,9 @@ another Business Unit's country, in which case the row is not counted.
 cycle. The dashboard multiplies it by the BU's configurations today — all of
 them for the manual effort of the whole regression, the automated ones for the
 effort saved, the Backlog ones for what automating the backlog would add — so
-the figures follow the automation as it grows. Unit and date are shown beside
+the figures follow the automation as it grows. The effort saved is shown split
+by the configuration's device, Desktop and Mobile (a Mobile App baseline is all
+mobile); the two parts add up to the whole. Unit and date are shown beside
 them; a coefficient shared by several BUs is marked "(default)". Shown on the
 Big No-Regression baseline only. A BU with no coefficient shows no figure.
 
