@@ -1,9 +1,17 @@
-"""Gemini access for Dexter: one client, one fallback policy.
+"""Gemini access for every AI feature: one client, one fallback policy, and
+the model chain each feature walks.
 
 Try the best model first, step down when Google refuses one, remember the
-refusal for the rest of the session.  It lives in its own module so any future
-AI feature calls the same `generate()` instead of growing a second copy of the
-policy — two copies drift the first time one of them is fixed.
+refusal.  One `generate()` for Dexter and the Leakage analysis alike — two
+copies of a retry policy drift the first time one of them is fixed.
+
+The chains (checked against ai.google.dev on 2026-09-28): 2.0 Flash is shut
+down, the 2.5 family is limited to projects that already used it, and 3.1 Pro
+has no free tier.  The free tier's quota is per MODEL, so the two chains are
+built not to compete: the Leakage analysis — the one that matters — starts
+from the strongest models, and Dexter, which only reads numbers out of a
+snapshot, starts from the lite models with the largest quota.  They meet only
+at the tail, when everything else is exhausted (a test keeps it that way).
 
 Gemini exposes no "remaining quota" endpoint, so the policy is REACTIVE: it
 asks the best model and learns from the refusal —
@@ -11,7 +19,8 @@ asks the best model and learns from the refusal —
   * ``limit: 0``            no free-tier quota on this model  → skip for 24 h
   * 429 / RESOURCE_EXHAUSTED rate limited                     → skip for Google's retryDelay
   * 503 / UNAVAILABLE        overloaded                        → skip for 30 s
-  * 404 / NOT_FOUND          model does not exist              → skip for the session
+  * 404 / NOT_FOUND          model does not exist (shut down)  → skip for the session
+  * 403 / PERMISSION_DENIED  model not open to this project    → skip for 24 h
   * anything else            a real error (bad request, …)     → stop, report it
 
 The cooldowns are kept in a dict the caller owns (session state), shared by
@@ -41,6 +50,35 @@ except ImportError:                                                     # pragma
 
 # Session-state key holding {model: unix time the cooldown ends}.
 COOLDOWN_KEY = "ai_exhausted_models"
+
+# The strongest first.  3.1 Pro answers only on a paid plan: on the free tier
+# it refuses with `limit: 0` once and is skipped for a day, so a paid key
+# would be used automatically and a free one costs one refused call a day.
+ANALYSIS_CHAIN: list[str] = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+]
+
+# Dexter answers from a snapshot of numbers: a lite model reads it well and
+# has the largest free quota, and it leaves the strong models to the analysis.
+DEXTER_CHAIN: list[str] = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+]
+
+
+@st.cache_resource(show_spinner=False)
+def shared_cooldowns() -> dict[str, float]:
+    """Cooldowns for the whole process, not one session: a quota refusal is
+    about the API key, so every visitor should skip the refused model."""
+    return {}
 
 _RETRY_DELAY_RE = re.compile(
     r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s",
@@ -132,6 +170,13 @@ def generate(contents, config, models: list[str],
             if "404" in err_str or "NOT_FOUND" in err_str:
                 cooling[model] = now + 9_999_999
                 logger.info("Model %s not found — trying next", model)
+                continue
+            if "403" in err_str or "PERMISSION_DENIED" in err_str:
+                # A model Google keeps for other projects (the 2.5 family is
+                # limited to past users).  Not an error in the request: the
+                # next model may well answer.
+                cooling[model] = now + 24 * 3600
+                logger.info("Model %s not open to this project — trying next", model)
                 continue
             # A different error will not be cured by another model — stop
             # rather than burn the rest of the chain on it.

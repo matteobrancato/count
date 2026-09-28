@@ -76,6 +76,16 @@ class TestFallbackPolicy:
         res = gc.generate([], None, self.CHAIN, {"best": gc.time.time() + 60})
         assert res.model == "good" and m.calls == ["good"]
 
+    def test_a_model_closed_to_this_project_steps_down_too(self, fake_gemini):
+        """The 2.5 family answers 403 to projects that never used it: that is
+        about the model, not the request, so the next one must be asked."""
+        m = fake_gemini({"best": Exception("403 PERMISSION_DENIED model not available"),
+                         "good": "ok", "last": "no"})
+        cooling: dict = {}
+        res = gc.generate([], None, self.CHAIN, cooling)
+        assert res.model == "good" and m.calls == ["best", "good"]
+        assert cooling["best"] - gc.time.time() > 23 * 3600
+
     def test_not_configured_says_so(self, monkeypatch):
         monkeypatch.setattr(gc, "api_key", lambda: None)
         res = gc.generate([], None, self.CHAIN, {})
@@ -86,10 +96,9 @@ class TestDexterUsesThePolicy:
     """Dexter's behaviour must not change: same chain, same retry parsing, and
     its reply path goes through generate()."""
 
-    def test_dexters_chain_is_unchanged(self):
+    def test_dexter_walks_its_own_chain(self):
         from src.ui import chat_assistant as ca
-        assert ca._FALLBACK_CHAIN == ["gemini-2.5-flash", "gemini-2.5-flash-lite",
-                                      "gemini-2.0-flash"]
+        assert ca._FALLBACK_CHAIN == gc.DEXTER_CHAIN
 
     def test_dexter_uses_the_shared_implementation(self):
         import inspect
@@ -107,3 +116,25 @@ class TestDexterUsesThePolicy:
 
         from src.ui import chat_assistant as ca
         assert "gemini_client.COOLDOWN_KEY" in inspect.getsource(ca._generate_pending_response)
+
+
+class TestTheChains:
+    """Checked against ai.google.dev on 2026-09-28."""
+
+    SHUT_DOWN = frozenset({"gemini-2.0-flash", "gemini-2.0-flash-lite",
+                           "gemini-3-pro-preview", "gemini-3.1-flash-lite-preview"})
+
+    def test_no_chain_names_a_shut_down_model(self):
+        for chain in (gc.ANALYSIS_CHAIN, gc.DEXTER_CHAIN):
+            assert not set(chain) & self.SHUT_DOWN, chain
+
+    def test_the_analysis_starts_from_the_strongest_models(self):
+        assert gc.ANALYSIS_CHAIN[:2] == ["gemini-3.1-pro-preview", "gemini-3.8-flash"]
+
+    def test_dexter_never_competes_for_the_analysis_models(self):
+        """The free tier's quota is per model: Dexter must not spend the
+        models the Leakage analysis relies on.  They may share only the tail,
+        when everything else is exhausted."""
+        head = set(gc.ANALYSIS_CHAIN[:4])
+        assert not head & set(gc.DEXTER_CHAIN)
+        assert not set(gc.DEXTER_CHAIN[:2]) & set(gc.ANALYSIS_CHAIN)

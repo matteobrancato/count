@@ -244,7 +244,8 @@ TESTRAIL_API_KEY = "your_api_key"
 
 # Optional — Dexter, the AI assistant (free key: https://aistudio.google.com/apikey)
 GEMINI_API_KEY   = "your_gemini_key"
-GEMINI_MODEL     = "gemini-2.5-flash"   # omit to use the built-in fallback chain
+# GEMINI_MODEL   = "gemini-3.5-flash"   # leave it OUT: when set, Dexter uses
+#                  only that model and loses the fallback chain (src/gemini_client.py)
 
 # Optional — Jira: the Leakage tab
 JIRA_URL           = "https://your-site.atlassian.net"

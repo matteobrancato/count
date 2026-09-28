@@ -63,11 +63,9 @@ _AVATARS = {"user": "🧑", "assistant": "✨"}
 # When `GEMINI_MODEL` is NOT explicitly set in secrets, we walk this chain on
 # each request — picking the first model that's not currently rate-limited.
 # Ordered preferred → most-likely-available.  The first one to reply wins.
-_FALLBACK_CHAIN: list[str] = [
-    "gemini-2.5-flash",       # best quality on free tier (10 RPM · 250 RPD)
-    "gemini-2.5-flash-lite",  # higher free quota — great resilience (15 RPM · 1000 RPD)
-    "gemini-2.0-flash",       # older, sometimes spare quota (15 RPM · 200 RPD)
-]
+# The chain lives in gemini_client, next to the Leakage analysis's, so the
+# rule that the two do not compete for the same model is kept in one place.
+_FALLBACK_CHAIN: list[str] = list(gemini_client.DEXTER_CHAIN)
 
 
 def _configured_model() -> str | None:
