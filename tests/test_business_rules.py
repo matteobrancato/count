@@ -3142,7 +3142,7 @@ class TestNoImportCanRotInsideATry:
     @staticmethod
     def _imports(path):
         import ast
-        tree = ast.parse(open(path).read())
+        tree = ast.parse(open(path, encoding="utf-8").read())
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                 for alias in node.names:
@@ -3377,7 +3377,7 @@ class TestPreBuildsNeverBlockAClick:
         import pathlib
 
         def reach(path, root):
-            tree = ast.parse(pathlib.Path(path).read_text())
+            tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
             funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
             seen, todo = set(), [root]
             while todo:

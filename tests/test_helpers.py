@@ -315,7 +315,7 @@ class TestTheNumbersLoadOncePerDay:
     def test_nothing_refreshes_on_a_timer(self):
         """The 15-minute watchdog is gone; nothing may bring it back quietly."""
         import pathlib
-        assert "run_every" not in pathlib.Path("app.py").read_text()
+        assert "run_every" not in pathlib.Path("app.py").read_text(encoding="utf-8")
 
     def test_no_dashboard_cache_expires_within_the_day(self):
         """A cache that lapses mid-day turns one fast visit into a slow one.
@@ -328,7 +328,7 @@ class TestTheNumbersLoadOncePerDay:
         allowed_short = {"fetch_story", "_acceptance_field_ids", "fetch_page"}
         offenders = []
         for f in [pathlib.Path("app.py"), *pathlib.Path("src").rglob("*.py")]:
-            for node in ast.walk(ast.parse(f.read_text())):
+            for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
                 if not isinstance(node, ast.FunctionDef):
                     continue
                 for dec in node.decorator_list:
@@ -357,7 +357,7 @@ class TestTheLoaderStaysOpen:
     def test_every_label_update_keeps_the_box_open(self):
         import ast
         import pathlib
-        tree = ast.parse(pathlib.Path("app.py").read_text())
+        tree = ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
         # Every `.update(...)` on the object `st.status(...)` was bound to.
         bound = {item.optional_vars.id for n in ast.walk(tree) if isinstance(n, ast.With)
                  for item in n.items
@@ -382,7 +382,7 @@ class TestOnlyTheOpenTabRuns:
     def test_the_tabs_are_lazy(self):
         import ast
         import pathlib
-        tree = ast.parse(pathlib.Path("app.py").read_text())
+        tree = ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and ast.unparse(n.func) == "st.tabs"]
         assert len(calls) == 1

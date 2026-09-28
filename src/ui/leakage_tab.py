@@ -4,7 +4,7 @@ Follows the global BU selector; the scope selector does not apply (Jira tracks
 incidents per project, not per website / app scope — the Web / App split comes
 from the incidents' own components).  All the logic lives in `src/leakage.py`.
 
-Cost: one Jira read of the last year's incidents, cached 30 minutes and shared
+Cost: one Jira read of the last year's incidents, cached for the day and shared
 by every session; the match with TestRail uses cases already downloaded for
 the Backlog tab, so this tab never calls TestRail.
 """
@@ -199,7 +199,8 @@ def render() -> None:
 
     top_left, top_right = st.columns([2.2, 1.8], vertical_alignment="center")
     top_left.caption(f"Every Jira “{lk.ISSUE_TYPE}”, in any environment, by the "
-                     "Jira project of each Business Unit. Refreshed every 30 minutes.")
+                     "Jira project of each Business Unit. Refreshed once a day, with the "
+                     "rest of the dashboard.")
     period = top_right.segmented_control(
         "Period", list(lk.PERIODS), default="90 days", key="lk_period",
         label_visibility="collapsed") or "90 days"
