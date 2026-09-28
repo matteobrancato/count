@@ -1,18 +1,19 @@
-"""Group KPI strip — the 5-second executive summary under the header.
+"""Group KPIs — the two cross-BU figures, as chips in the top bar.
 
-One compact row of chips with RAG dots, always visible above the tabs:
-
-    🟡 Coverage 66.2% (all BUs) · 🔴 Backlog 1,369 (12.1%)
-    · 🏆 Best: Drogas 95.2% · 🔴 Focus: ICI Paris XL 35.3%
+    🟡 Coverage 79.4% all BUs   🟢 Backlog 837 3.3%
 
 "Coverage" here means AUTOMATED / REGRESSION-BASELINE (the big_regr rows —
 exactly the Backlog tab's numbers and Cov. % basis), NOT automated over the
 whole case universe: that total-universe figure mixes BUs with huge unlabelled
 suites and reads misleadingly low, and management steers on the baseline.
 
+Only the two aggregates the page shows nowhere else.  "Best" and "Focus" (the
+top and bottom BU) were dropped on 2026-09-28: the All-BU table right below
+shows every BU's coverage in RAG colour, so they repeated it in less detail.
+
 All aggregates come straight from the Backlog pipeline (`_backlog_data`), so
-the strip always agrees with the All-BU table.  It deliberately ignores the
-scope/BU filter: it is the cross-BU picture (the filter drives the detail tabs).
+the chips always agree with the All-BU table.  They deliberately ignore the
+scope/BU filter: they are the cross-BU picture.
 
 Rendering is two-phase in app.py: a same-size skeleton holds the slot during
 the first load and is replaced when the data is warm — plain markdown, no
@@ -69,19 +70,18 @@ def _chip(dot: str, label: str, value: str, sub: str = "", tooltip: str = "") ->
 
 
 def render_skeleton() -> None:
-    """Shimmering placeholder with the SAME footprint as the real strip —
-    rendered during the first load so the page layout doesn't shift (and the
-    strip can't visually merge with the filter bar) when the chips arrive."""
+    """Shimmering placeholder with the SAME footprint as the real chips, so
+    the top bar does not shift when they arrive after the first load."""
     st.markdown(
-        "<div class='kpi-card'><div class='kpi-row'>"
-        + "".join("<span class='kpi-skeleton'></span>" for _ in range(4))
-        + "</div></div>",
-        unsafe_allow_html=True,
+        "<div class='kpi-row'>"
+        + "".join("<span class='kpi-skeleton'></span>" for _ in range(2))
+        + "</div>",
+        unsafe_allow_html=True, width="content",
     )
 
 
 def render() -> None:
-    """Render the strip; hides itself (no gap) if the aggregates aren't ready."""
+    """Render the chips; hides itself (no gap) if the aggregates aren't ready."""
     try:
         k = _kpis()
     except Exception:                                                   # noqa: BLE001
@@ -91,43 +91,18 @@ def render() -> None:
     if not k["per_bu"] or not base or not base["total"]:
         return
 
-    chips: list[str] = []
-
     pct = base["auto"] / base["total"] * 100
-    dot, _c = coverage_health(pct)
-    chips.append(_chip(
-        # Same noun as every tab ("Coverage"); the scope that makes this number
-        # different from a single BU's is stated in the sub-label, not in a
-        # second name for the same metric.
-        dot, "Coverage", f"{pct:.1f}%",
-        sub=f"all BUs · {base['auto']:,} / {base['total']:,} rows",
-        tooltip=(f"Automated share of the big_regr baseline rows, all BUs — "
-                 f"same numbers as the Backlog tab. Target {COVERAGE_TARGET:.0f}%."),
-    ))
-
     kpct = base["backlog"] / base["total"] * 100
-    dot, _c = backlog_health(kpct)
-    chips.append(_chip(
-        dot, "Backlog", f"{base['backlog']:,}",
-        sub=f"{kpct:.1f}% of baseline",
-        tooltip=(f"Baseline rows whose case is automated NOWHERE — a script to "
-                 f"write from scratch. Rows of cases already automated in another "
-                 f"country/device are counted separately as Partially Automated. "
-                 f"Healthy ≤ {BACKLOG_OK_PCT:.0f}%."),
-    ))
-
-    best, worst = k["per_bu"][0], k["per_bu"][-1]
-    chips.append(_chip("🏆", "Best", f"{best['bu']} {best['pct']:.1f}%",
-                       tooltip="Highest regression-baseline coverage."))
-    dot, _c = coverage_health(worst["pct"])
-    chips.append(_chip(dot, "Focus", f"{worst['bu']} {worst['pct']:.1f}%",
-                       tooltip="Lowest regression-baseline coverage — needs attention."))
-
-    # NOTE: the strip is a company-wide figure (Website + Microservices, all BUs)
-    # and deliberately ignores the scope / BU filter below it.  That is stated in
-    # the "How numbers are calculated" panel rather than as a chip here — inline
-    # it added noise to the one row executives actually read.
-    st.markdown(
-        f"<div class='kpi-card'><div class='kpi-row'>{''.join(chips)}</div></div>",
-        unsafe_allow_html=True,
-    )
+    chips = [
+        _chip(coverage_health(pct)[0], "Coverage", f"{pct:.1f}%", sub="all BUs",
+              tooltip=(f"Automated share of the big_regr baseline rows, all BUs: "
+                       f"{base['auto']:,} of {base['total']:,} rows — same numbers "
+                       f"as the Backlog tab. Target {COVERAGE_TARGET:.0f}%.")),
+        _chip(backlog_health(kpct)[0], "Backlog", f"{base['backlog']:,}",
+              sub=f"{kpct:.1f}%",
+              tooltip=(f"Baseline rows whose case is automated NOWHERE — a script "
+                       f"to write from scratch — {kpct:.1f}% of the baseline, all "
+                       f"BUs. Healthy ≤ {BACKLOG_OK_PCT:.0f}%.")),
+    ]
+    st.markdown(f"<div class='kpi-row'>{''.join(chips)}</div>",
+                unsafe_allow_html=True, width="content")

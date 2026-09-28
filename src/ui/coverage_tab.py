@@ -639,7 +639,7 @@ def _render_coverage_section(
                        f"belong to cases automated elsewhere (Partially "
                        f"Automated there).")
         _cov_help = ("Automated rows ÷ baseline rows — the SAME basis as the "
-                     "Backlog tab and the KPI strip, so all three agree.")
+                     "Backlog tab and the KPI chips, so all three agree.")
     else:
         # Total / Production Sanity have no baseline row expansion, so they stay
         # on the unique-case basis — labelled, not silently mixed.

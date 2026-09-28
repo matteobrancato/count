@@ -46,7 +46,7 @@ shown: the big number is rows, the small caption is unique cases.
 | **Unknown** | no automation status filled in, so we can't say — shown only when it happens, and it means a field is missing in TestRail |
 
 **Coverage** — one definition everywhere: automated **rows** ÷ baseline rows.
-The Backlog tab, the Coverage tab and the KPI strip all show the same figure for
+The Backlog tab, the Coverage tab and the KPI chips all show the same figure for
 the same Business Unit.
 
 * **Coverage vs Automatable** excludes the Not Applicable rows.
@@ -139,7 +139,7 @@ METHODOLOGY_FOR_LLM = """
   even if a script exists, because the test changed under it.  Never describe
   those rows as "not automated" — they are automated but out of date.
 - Coverage % = automated ROWS ÷ baseline ROWS.  ONE definition: the Backlog tab,
-  the Coverage tab and the KPI strip always agree for the same BU.  Never quote
+  the Coverage tab and the KPI chips always agree for the same BU.  Never quote
   a case-based percentage as "coverage".
 - A "row" is case × country × device: a case automated on Desktop AND Mobile in
   3 countries is 6 rows.  So row counts are larger than unique-case counts, and

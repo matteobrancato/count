@@ -238,16 +238,8 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
-/* ── Group KPI strip (under the header, above the filter bar) ─────────────────
-   The 5-second "state of the world" for managers — chips with RAG dots. */
-.kpi-card {{
-    background: {c['surface']};
-    border: 1px solid {c['border']};
-    border-radius: 14px;
-    padding: 10px 16px;
-    margin: 2px 0 6px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}}
+/* ── Group KPI chips (right end of the top bar) ───────────────────────────────
+   The two cross-BU figures for managers — chips with RAG dots. */
 .kpi-row {{
     display: flex;
     flex-wrap: nowrap;             /* one clean line, always */
@@ -290,40 +282,21 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     to   {{ background-position: -200% 0; }}
 }}
 
-/* ── Global scope + BU control bar (between header and tabs) ─────────────────
-   One standardized selector every tab reads from — a light filter card.
-   Symmetric padding + hard vertical centring of BOTH columns (radio and
-   selectbox have different natural heights, which made the bar look lopsided). */
-.st-key-global_filter {{
-    background: {c['surface']};
-    border: 1px solid {c['border']};
-    border-radius: 14px;
-    padding: 8px 16px;
-    margin: 2px 0 6px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+/* ── Top bar: brand (title + KPI chips) · scope + BU controls ────────────────
+   One row of chrome above the tabs (it replaced a KPI card and a filter card).
+   Wraps on a narrow window instead of overflowing. */
+.st-key-topbar, .st-key-topbar_controls {{
+    flex-wrap: wrap !important;
+    row-gap: 8px !important;
 }}
-.st-key-global_filter [data-testid="stHorizontalBlock"] {{
-    align-items: center !important;
-}}
-.st-key-global_filter [data-testid="stElementContainer"] {{
-    margin: 0 !important;
-}}
-.st-key-global_filter [data-testid="stRadio"] > div {{
-    gap: 22px !important;                /* even spacing between the 3 options */
-    align-items: center !important;
-}}
-.st-key-global_filter [data-testid="stRadio"] label {{
-    margin: 0 !important;
-    padding: 0 !important;
-}}
-.st-key-global_filter [data-testid="stRadio"] label p {{
-    font-size: 13.5px;
-    font-weight: 600;
-    line-height: 1 !important;
-}}
-.st-key-global_filter [data-testid="stSelectbox"] {{
-    margin: 0 !important;
-}}
+.st-key-topbar {{ padding: 2px 0 6px; }}
+.st-key-topbar [data-testid="stElementContainer"] {{ margin: 0 !important; }}
+.st-key-topbar [data-testid="stSelectbox"] {{ margin: 0 !important; }}
+/* The KPI chips are the line under the title: tight to it, and a size
+   smaller than the title so the two read as one block. */
+.st-key-brand_text {{ gap: 4px !important; }}
+.st-key-brand_text .kpi-chip {{ padding: 1px 9px; font-size: 11.5px; gap: 5px; }}
+.st-key-brand_text .kpi-skeleton {{ height: 20px; width: 130px; }}
 
 /* ── Secondary export button (right-aligned under the summary table) ────────
    A quiet action: small, muted, brand-tinted only on hover. */
@@ -382,6 +355,41 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     margin: 0 !important;
 }}
 .st-key-freshness [data-testid="stPopover"] button:hover p {{
+    color: {c['brand']} !important;
+    text-decoration: underline !important;
+}}
+/* The Overview trigger is a button (it opens a dialog), dressed exactly like
+   the two popover links next to it. */
+.st-key-freshness [class*="st-key-overview_open"] {{ width: auto !important; }}
+.st-key-freshness [class*="st-key-overview_open"] button {{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    line-height: 1 !important;
+}}
+.st-key-freshness [class*="st-key-overview_open"] button p {{
+    font-size: 11px !important;
+    color: {c['muted']} !important;
+    font-weight: 500 !important;
+    margin: 0 !important;
+    line-height: 20px !important;
+    white-space: nowrap !important;
+}}
+.st-key-freshness [class*="st-key-overview_open"] button:hover,
+.st-key-freshness [class*="st-key-overview_open"] button:focus,
+.st-key-freshness [class*="st-key-overview_open"] button:focus-visible,
+.st-key-freshness [class*="st-key-overview_open"] button:active {{
+    transform: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    background: transparent !important;
+}}
+.st-key-freshness [class*="st-key-overview_open"] button:hover p {{
     color: {c['brand']} !important;
     text-decoration: underline !important;
 }}

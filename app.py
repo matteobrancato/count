@@ -91,29 +91,47 @@ def _relative_time(ts: float) -> str:
     return f"{round(delta / 86400)}d ago"
 
 
-def _header() -> None:
-    # Compact header: the page already stacks a KPI band + a filter band before
-    # any content, so the title stays tight to leave the data above the fold.
-    st.markdown(
-        f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:2px'>"
-        f"<div style='width:38px;height:38px;border-radius:11px;flex:0 0 auto;"
-        f"display:flex;align-items:center;justify-content:center;font-size:20px;"
-        f"background:linear-gradient(135deg,{COLORS['brand']} 0%,{COLORS['brand_strong']} 100%);"
-        f"box-shadow:0 3px 10px rgba(46,91,255,0.28)'>🧪</div>"
-        f"<div>"
-        f"<h1 style='margin:0;padding:0;line-height:1.05;white-space:nowrap;"
-        f"font-size:24px'>Automation Coverage</h1>"
-        f"<div style='color:{COLORS['muted']};font-size:12px;margin-top:1px'>"
-        f"Live view of TestRail&rsquo;s automation coverage across Business Units."
-        f"</div></div></div>",
-        unsafe_allow_html=True,
-    )
+_LOGO = (
+    f"<div style='width:38px;height:38px;border-radius:11px;"
+    f"display:flex;align-items:center;justify-content:center;font-size:20px;"
+    f"background:linear-gradient(135deg,{COLORS['brand']} 0%,{COLORS['brand_strong']} 100%);"
+    f"box-shadow:0 3px 10px rgba(46,91,255,0.28)'>🧪</div>"
+)
+# A <span>, not an <h1>: Streamlit gives a markdown block a -1rem bottom margin
+# that a <p> is meant to pay back, and a bare block element does not — the
+# title then collapsed onto the KPI line under it.  Inline text is wrapped in
+# a <p>, which restores the balance (same fix as the utility bar's label).
+_TITLE = ("<span style='font-size:24px;font-weight:700;line-height:1.1;"
+          "white-space:nowrap;letter-spacing:-0.01em'>Automation Coverage</span>")
+
+
+def _header():
+    """Logo and title, with the cross-BU KPI chips as the line under the title
+    (where a decorative subtitle used to be).  Returns the st.empty slot the
+    chips live in, so a cold start can swap the skeleton for the real chips."""
+    with st.container(key="brand", horizontal=True, width="content",
+                      vertical_alignment="center", gap="small"):
+        st.markdown(_LOGO, unsafe_allow_html=True, width="content")
+        with st.container(key="brand_text", width="content", gap=None):
+            st.markdown(_TITLE, unsafe_allow_html=True, width="content")
+            return st.empty()
+
+
+@st.dialog("🧭 Overview", width="large")
+def _overview_dialog() -> None:
+    """Cross-BU automated totals — a window, not a tab.  Its body runs only
+    while it is open: as a tab it re-ran on every visit, and it answers a
+    question people ask now and then, not the one they open the page for."""
+    if not _is_warm():
+        st.caption("Available once the data has finished loading.")
+        return
+    overview_tab.render()
 
 
 def _freshness_label(scope: str = "website") -> None:
     """Utility bar pinned (`.st-key-freshness`) to the tab-bar's top-right:
 
-        ℹ️ How numbers are calculated · 🧹 Data quality · Updated 3m ago ↻
+        ℹ️ How numbers are calculated · 🧹 Data quality · Updated 3m ago ↻ · 🧭 Overview
 
     The two disclosures are popovers styled as plain text links (underline on
     hover) so they carry no visual weight until needed — they used to be
@@ -214,6 +232,11 @@ def _freshness_label(scope: str = "website") -> None:
         if st.button("↻", key="refresh_mini"):
             freshness.clear_everything()
             st.rerun()
+        # Styled as the two text links above (`.st-key-overview_open`).  A
+        # button + dialog rather than a popover: a popover's body runs on every
+        # rerun, open or not, and the Overview is not free to draw.
+        if st.button("🧭 Overview", key="overview_open"):
+            _overview_dialog()
 
 
 # -------------------------------------------------------------------- credentials gate
@@ -222,6 +245,7 @@ def _creds_ok() -> bool:
         tr.TestRailCredentials.from_secrets()
         return True
     except tr.TestRailError as exc:
+        _header()          # the brand without chips: there is nothing to count
         st.error(str(exc))
         st.code(
             '# .streamlit/secrets.toml\n'
@@ -259,12 +283,13 @@ def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
 # (tab label, renderer, animation container key).  One table instead of six
 # hand-written calls, so adding or reordering a tab is a one-line change.
 _SECTIONS = [
-    ("📋 Backlog",        backlog_tab.render,     "backlog_anim"),
-    ("📐 Coverage",       coverage_tab.render,    ""),          # wraps itself
-    ("🧭 Overview",       overview_tab.render,    "overview_anim"),
-    # Jira only: one read of the last year's incidents, cached for the day and
-    # matched to TestRail through cases already downloaded — no TestRail call.
-    ("🐞 Leakage",        leakage_tab.render,     ""),
+    ("📋 Backlog",        backlog_tab.render,        "backlog_anim"),
+    # The Business Unit picked in the top bar, one BU at a time.
+    ("🔎 BU Detail",      backlog_tab.render_detail, "detail_anim"),
+    ("📐 Coverage",       coverage_tab.render,       ""),          # wraps itself
+    # Jira only, matched to TestRail through cases already downloaded — the
+    # tab never calls TestRail.  (The Overview is a window in the utility bar.)
+    ("🐞 Leakage",        leakage_tab.render,        ""),
 ]
 
 
@@ -325,9 +350,8 @@ def _warm_up(cold: bool, kpi_slot) -> None:
 # -------------------------------------------------------------------- main
 def main() -> None:
     _t_main = time.perf_counter()
-    with _timed("Styles + header"):
+    with _timed("Styles"):
         styles.inject()   # global design system — purely cosmetic, must run first.
-        _header()
     if not _creds_ok():
         st.stop()
 
@@ -366,28 +390,33 @@ def main() -> None:
     # NOTE on load UX: we create the tab bar FIRST (instant skeleton), then warm
     # the whole cache inside the active tab below (not in a blocking pre-fetch
     # before st.tabs(), which used to leave the tab area blank/white).  So the
-    # page chrome is visible immediately, the loader sits on the data area, and
-    # every tab is pre-loaded — switching tabs stays instant.
+    # page chrome is visible immediately and the loader sits on the data area.
 
-    # Group KPI strip — an st.empty slot directly under the header.  Warm runs
-    # fill it immediately; on a cold start a same-size shimmering skeleton holds
-    # the space and is REPLACED after the warm-up, so the layout never shifts
-    # (inserting content above already-rendered elements mid-run is what made
-    # the strip visually merge with the filter bar).
-    kpi_slot = st.empty()
-    try:
-        with kpi_slot.container(), _timed("KPI strip"):
-            if cold:
-                kpi_strip.render_skeleton()
-            else:
-                kpi_strip.render()
-    except Exception:  # noqa: BLE001
-        logger.exception("KPI strip failed to render")
-
-    # Global scope + BU selector — the single control bar every tab reads from
-    # (detail views follow it; all-BU overviews intentionally ignore the BU).
-    with _timed("Global filter"):
-        global_filter.render()
+    # ONE top bar: the brand (title, with the two cross-BU KPI chips as the
+    # line under it) on the left, the scope / BU controls every tab reads on
+    # the right.  It replaced three stacked bands — title, KPI card, filter
+    # card — that pushed the data a third of a screen down.  Horizontal
+    # containers wrap, so a narrow window gets two tidy rows, not an overflow.
+    #
+    # The KPI chips sit in an st.empty slot: warm runs fill it immediately; on
+    # a cold start a same-size shimmering skeleton holds the space and is
+    # REPLACED after the warm-up, so the layout never shifts.
+    with st.container(key="topbar", horizontal=True, vertical_alignment="center",
+                      horizontal_alignment="distribute", gap="medium"):
+        with _timed("Header"):
+            kpi_slot = _header()
+        try:
+            with kpi_slot.container(), _timed("KPI strip"):
+                if cold:
+                    kpi_strip.render_skeleton()
+                else:
+                    kpi_strip.render()
+        except Exception:  # noqa: BLE001
+            logger.exception("KPI strip failed to render")
+        with st.container(key="topbar_controls", horizontal=True, width="content",
+                          vertical_alignment="center", gap="small"), \
+                _timed("Global filter"):
+            global_filter.render()
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.

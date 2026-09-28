@@ -1409,12 +1409,11 @@ def _automation_save_line(bu: str, scope: str, s: dict) -> None:
         f"**Backlog would add** `+{f(sv.backlog_gain)}` ({sv.backlog:,} {noun})",
         per,
     ]
-    line = " &nbsp;·&nbsp; ".join(parts)
+    # Unit and date in a small ⓘ at the end of the line: needed to read the
+    # figures right, not worth a third of the line's width on every visit.
     context = _save_context(cfg)
-    if context:
-        line += (f" &nbsp;<span style='color:{COLORS['muted']}'>— "
-                 f"{html.escape(context)}</span>")
-    st.markdown(line, unsafe_allow_html=True)
+    st.markdown(" &nbsp;·&nbsp; ".join(parts), unsafe_allow_html=True,
+                help=f"Figures in {context}." if context else None)
 
 
 def _detail_view(
@@ -1670,7 +1669,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         if abs(real - cov) >= 0.05:
             ex_html = (
                 f"<span class='cov-ex' title='Coverage over the WHOLE baseline, "
-                f"partial gaps included — the figure the KPI strip, the Coverage "
+                f"partial gaps included — the figure the KPI chips, the Coverage "
                 f"tab and Dexter show.'>{real:.1f}%</span>"
             )
         cov_cell = (
@@ -1701,16 +1700,15 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             f'<tbody>{"".join(body_rows)}</tbody></table></div>')
 
 
-@st.fragment
-def render() -> None:
-    # Scope drives which baseline we show: Mobile App uses a priority-based
-    # baseline (separate pipeline), everything else the big_regr label baseline.
-    scope, bu = global_filter.current()
+def _run_picker(scope: str) -> str:
+    """One run at a time.  Everything below it — table, tiles, coverage,
+    frameworks, pivot — reports on the run picked here, so no two populations
+    share a page.  The picker takes the width it needs; the rest of the row
+    carries what the chosen run actually is, rather than being left over.
 
-    # One run at a time.  Everything below — table, tiles, coverage, frameworks,
-    # pivot — reports on the run picked here, so no two populations share a page.
-    # The picker takes the width it needs; the rest of the row carries what the
-    # chosen run actually is, rather than being left over.
+    Drawn by both the Backlog and the BU Detail tab with the SAME key, so the
+    choice follows you from one to the other (only the open tab runs, so the
+    key is never on screen twice)."""
     c_pick, c_what = st.columns([5, 6], vertical_alignment="center")
     with c_pick:
         run = st.segmented_control(
@@ -1725,7 +1723,12 @@ def render() -> None:
             f"display:block;text-align:right'>{_RUN_MEANING.get(run, '')}</span>",
             unsafe_allow_html=True,
         )
+    return run
 
+
+def _load_run(run: str, scope: str):
+    """(summary, expanded_by_bu, auto_by_bu) for the run, or None after saying
+    why there is nothing to show."""
     spinner = ("📱 Computing Mobile App backlog — first load can take ~30-60s, "
                "then it's cached…" if scope == "mobile_app"
                else f"Computing {run}…")
@@ -1741,7 +1744,22 @@ def render() -> None:
         }.get(run, "No baseline data found. Ensure cases have the "
                    "big_regr_desktop / big_regr_mobile labels in TestRail.")
              + "  New values appear at the next data refresh (↻ next to the tabs).")
+        return None
+    return summary, expanded_by_bu, auto_by_bu
+
+
+@st.fragment
+def render() -> None:
+    """The Backlog tab: every Business Unit side by side, nothing else — the
+    detail of one BU lives in its own tab (`render_detail`)."""
+    # Scope drives which baseline we show: Mobile App uses a priority-based
+    # baseline (separate pipeline), everything else the big_regr label baseline.
+    scope, bu = global_filter.current()
+    run = _run_picker(scope)
+    loaded = _load_run(run, scope)
+    if loaded is None:
         return
+    summary, _expanded, _auto = loaded
 
     # ── Summary table ─────────────────────────────────────────────────────────
     # Scope-filter: Microservices is computed alongside Website (so the KPI-strip
@@ -1818,15 +1836,20 @@ def render() -> None:
                                     saves=saves, save_unit=save_unit),
                 unsafe_allow_html=True)
 
-    st.divider()
 
-    # ── Detail — follows the GLOBAL scope + BU selector ───────────────────────
-    section_title("Detail by Business Unit")
+@st.fragment
+def render_detail() -> None:
+    """The BU Detail tab: the Business Unit picked in the top bar, on the run
+    picked here — tiles with their rows, coverage, automation save, frameworks
+    and the pivot."""
+    scope, bu = global_filter.current()
+    run = _run_picker(scope)
+    loaded = _load_run(run, scope)
+    if loaded is None:
+        return
+    _summary, expanded_by_bu, auto_by_bu = loaded
     exp = expanded_by_bu.get((bu, scope))
     if exp is None or exp.empty:
         st.info(f"No {run} rows for **{bu}** in this scope.")
         return
     _detail_view(bu, scope, expanded_by_bu, auto_by_bu, run=run)
-
-    # (The TestRail hygiene checklist now lives in the utility bar next to
-    # "Updated …" — see `_freshness_label` in app.py.)

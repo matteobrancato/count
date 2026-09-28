@@ -3,7 +3,7 @@
 A Streamlit dashboard that connects to **TestRail** and gives a live,
 multi-dimensional view of test automation coverage across Business Units,
 countries, devices and frameworks — plus production leakage from Jira and an
-AI assistant that turns acceptance criteria into test cases.
+AI assistant that answers questions about the numbers.
 
 ---
 
@@ -24,10 +24,15 @@ using the same cached data the dashboard renders.
 
 | Tab | Purpose |
 |---|---|
-| **📋 Backlog** | The regression baseline for the selected BU: every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports, followed by the all-BU summary table |
+| **📋 Backlog** | Every Business Unit side by side on the chosen run (Big No-Regression, Small No-Regression, Production Sanity): totals, frameworks, outstanding work, Automation save and coverage, with a CSV export |
+| **🔎 BU Detail** | The BU picked in the top bar: every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports, coverage, Automation save, frameworks and the pivot |
 | **📐 Coverage** | Coverage per functional area (TestRail section), as a pie + bar pair, with drill-down links back into TestRail |
-| **🧭 Overview** | Cross-BU totals — Smoke Suite, All Automated Cases and Production Sanity — broken down by country and device, over any subset of BUs. These are *automated* counts, not baseline coverage: for that, read the Backlog tab |
 | **🐞 Leakage** | Every Jira "Production Incident" per Business Unit (by Jira project; EE20 and SD20 shown as multi-BU groups): count vs the previous period, Highest & High, web vs app, a 6-month trend, and how many hit an area an automated TestRail test covers. Jira only — no TestRail request |
+
+**🧭 Overview** is a window opened from the utility bar next to the tabs: cross-BU
+totals — Smoke Suite, All Automated Cases and Production Sanity — by country and
+device, over any subset of BUs. These are *automated* counts, not baseline
+coverage: for that, read the Backlog tab.
 
 A floating chat button (bottom-left, every tab) opens **Dexter**.
 
@@ -35,12 +40,12 @@ A floating chat button (bottom-left, every tab) opens **Dexter**.
 
 ## Scopes and the global filter
 
-One control bar sits between the header and the tab bar and is the only
-scope/BU selector in the app — tabs read it via `global_filter.current()` and
-never render their own:
+Two controls in the top bar, to the right of the title, are the only scope/BU
+selector in the app — tabs read them via `global_filter.current()` and never
+render their own:
 
 ```
-[ 🌐 Website · 📱 Mobile App · 🧩 Microservices ]   [ Business Unit ▾ ]
+[ 🌐 Website | 📱 Mobile App | 🧩 Microservices ]   [ Business Unit ▾ ]
 ```
 
 Each scope keeps its own last-selected BU, so switching back and forth can never
@@ -56,8 +61,9 @@ comparisons by design and intentionally ignore the BU part of the selection.
 ## Architecture
 
 ```
-app.py                      Streamlit entry point: header, credential gate,
-                            KPI strip, global filter, 6 tabs, cache warm-up
+app.py                      Streamlit entry point: credential gate, top bar
+                            (title, KPI chips, global filter), 4 tabs, the
+                            Overview window, cache warm-up
 │
 ├── src/
 │   ├── testrail_client.py  TestRail API wrapper — pagination, retries, pacing,
@@ -78,10 +84,10 @@ app.py                      Streamlit entry point: header, credential gate,
 │   ├── automation_save.py  Automation save: coefficient × configurations
 │   └── ui/
 │       ├── global_filter.py  Scope + BU selector, shareable via URL
-│       ├── kpi_strip.py      Executive KPI row under the header
+│       ├── kpi_strip.py      The two cross-BU KPI chips under the title
 │       ├── backlog_tab.py    Backlog tab
 │       ├── coverage_tab.py   Coverage tab
-│       ├── overview_tab.py   Overview tab
+│       ├── overview_tab.py   Overview window (utility bar)
 │       ├── data_quality.py   TestRail hygiene checklist
 │       ├── chat_assistant.py Dexter — the Gemini assistant
 │       ├── leakage_tab.py    Leakage tab
@@ -136,7 +142,7 @@ Each baseline row is classified — first match wins:
 
 **Coverage**
 One definition everywhere: **automated rows ÷ baseline rows**. The Backlog tab,
-the Coverage tab and the KPI strip always report the same figure for the same BU
+the Coverage tab and the KPI chips always report the same figure for the same BU
 — a property locked by `tests/test_business_rules.py::TestCoverageAgreesWithBacklog`
 rather than left to coincidence. Two variants are shown alongside it, never
 instead of it:

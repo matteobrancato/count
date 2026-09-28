@@ -1,9 +1,9 @@
 """Global scope + Business-Unit selector, shared by every tab.
 
-One control bar (rendered once in app.py, between the header and the tab bar)
-replaces the per-tab dropdowns that had each invented their own pattern:
+Two inline controls, drawn once by app.py inside the top bar next to the
+title, replace the per-tab dropdowns that had each invented their own pattern:
 
-    [ 🌐 Website · 📱 Mobile App · 🧩 Microservices ]   [ Business Unit ▾ ]
+    [ 🌐 Website | 📱 Mobile App | 🧩 Microservices ]  [ Business Unit ▾ ]
 
 Tabs read the selection via `current()` — they never render their own scope/BU
 widgets.  The BU list adapts to the chosen scope, and each scope remembers its
@@ -84,23 +84,31 @@ def _publish_to_url(scope: str, bu: str) -> None:
 
 
 def render() -> tuple[str, str]:
-    """Render the global control bar; returns (scope, bu)."""
+    """Draw the scope and BU controls where the caller is (app.py places them
+    in the top bar); returns (scope, bu).
+
+    A segmented control rather than a radio: the same three choices in a third
+    of the height, and it reads as the page's main switch.  `required` keeps
+    one scope always selected — a click on the active one cannot clear it.
+    """
     _seed_from_url()
     scopes = scopes_available()
     labels = [_SCOPE_LABELS[s] for s in scopes]
-    with st.container(key="global_filter"):
-        c1, c2 = st.columns([2.2, 3], vertical_alignment="center")
-        chosen = c1.radio("Scope", labels, horizontal=True,
-                          key="global_scope", label_visibility="collapsed")
-        scope = scopes[labels.index(chosen)]
-        bus = bus_for_scope(scope)
-        if bus:
-            # Per-scope key: each scope remembers its own BU, and a BU that
-            # doesn't exist in the new scope can never be selected.
-            c2.selectbox("Business Unit", bus,
-                         key=f"global_bu_{scope}", label_visibility="collapsed")
-        else:
-            c2.caption("No Business Units in this scope.")
+    # Seeded here, not passed as `default`: the URL seed may already have set
+    # the key, and a widget given both raises a warning on every run.
+    if st.session_state.get("global_scope") not in labels:
+        st.session_state["global_scope"] = labels[0]
+    st.segmented_control("Scope", labels, key="global_scope", required=True,
+                         label_visibility="collapsed", width="content")
+    scope = current()[0]
+    bus = bus_for_scope(scope)
+    if bus:
+        # Per-scope key: each scope remembers its own BU, and a BU that
+        # doesn't exist in the new scope can never be selected.
+        st.selectbox("Business Unit", bus, key=f"global_bu_{scope}",
+                     label_visibility="collapsed", width=220)
+    else:
+        st.caption("No Business Units in this scope.")
     scope, bu = current()
     _publish_to_url(scope, bu)
     return scope, bu

@@ -130,10 +130,12 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
 
 
 # --------------------------------------------------------------------- render
-@st.fragment
 def render() -> None:
-    # Section title removed (redundant with the "Overview" tab label).
-    # Scope comes from the GLOBAL control bar, like every other tab.
+    """The Overview window's body.  Not a fragment of its own: app.py calls it
+    inside an st.dialog, which already reruns on its own, and the dialog body
+    runs only while the window is open — so, unlike the tab it used to be, it
+    costs nothing on every other click."""
+    # Scope comes from the GLOBAL control bar, like every other section.
     scope, _bu = global_filter.current()
     scope_lbl  = global_filter.scope_label(scope)
 

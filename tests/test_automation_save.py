@@ -146,15 +146,20 @@ class TestOnTheTab:
             default_timeout=30)
         at.run()
         assert not at.exception
-        return " ".join(m.value for m in at.markdown) + " ".join(c.value for c in at.caption)
+        return (" ".join(m.value for m in at.markdown)
+                + " ".join(c.value for c in at.caption)
+                + " HELP: " + " ".join(m.help or "" for m in at.markdown))
 
     def test_configured_figures_are_shown_with_their_unit_and_date(self):
         text = self._render(sv.Config("MD per release cycle", "2026-09", 0.005))
-        assert "`9.0` saved" in text
-        assert "**Manual effort, all tests** `10.0`" in text
-        assert "`+0.25`" in text and "50 configurations" in text
-        assert "**Per configuration** `0.00500`" in text and "(default)" not in text
-        assert "MD per release cycle, as of 2026-09" in text
+        line, help_text = text.split(" HELP: ")
+        assert "`9.0` saved" in line
+        assert "**Manual effort, all tests** `10.0`" in line
+        assert "`+0.25`" in line and "50 configurations" in line
+        assert "**Per configuration** `0.00500`" in line and "(default)" not in line
+        # Unit and date sit in the line's small info popup, not in the line.
+        assert "MD per release cycle, as of 2026-09" in help_text
+        assert "MD per release cycle" not in line and "—" not in line
 
     def test_a_default_coefficient_is_labelled_as_such(self):
         text = self._render(sv.Config("MD per release cycle", "", 0.003, True))
