@@ -139,5 +139,21 @@ class MemoryStore:
 
 
 @st.cache_resource(show_spinner=False)
+def _registry() -> dict:
+    return {}
+
+
 def store() -> MemoryStore:
-    return MemoryStore()
+    """The process-wide store.
+
+    Not cached directly: Streamlit keys a cached resource on the function's
+    source, so after a deploy that reloads the modules (deploy_guard) it
+    handed back the store built from the OLD class — without the methods the
+    new code calls ("'MemoryStore' object has no attribute 'run'", live on
+    2026-09-28).  An object of another class is replaced; what it held was
+    kept in memory only, and is analysed again."""
+    registry = _registry()
+    current = registry.get("store")
+    if not isinstance(current, MemoryStore):
+        current = registry["store"] = MemoryStore()
+    return current

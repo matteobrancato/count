@@ -445,6 +445,16 @@ class TestStore:
         assert rec.ai["category"] == "two" and rec.past_ai[0]["ai"]["category"] == "one"
         assert rec.final["category"] == "two"
 
+    def test_a_store_left_by_older_code_is_replaced(self, monkeypatch):
+        """After a deploy reloads the modules, the cached registry can still
+        hold a store built from the old class, without today's methods."""
+        class OldStore:                      # what the previous deploy left
+            pass
+        registry = {"store": OldStore()}
+        monkeypatch.setattr(ls, "_registry", lambda: registry)
+        fresh = ls.store()
+        assert isinstance(fresh, ls.MemoryStore) and ls.store() is fresh
+
     def test_the_record_is_a_copy(self):
         s = ls.MemoryStore()
         s.put_ai("EE20", "A-1", {"category": "one"}, "m", "h")
