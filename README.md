@@ -24,9 +24,9 @@ using the same cached data the dashboard renders.
 
 | Tab | Purpose |
 |---|---|
-| **📋 Backlog** | Every Business Unit side by side on the chosen run (Big No-Regression, Small No-Regression, Production Sanity): totals, frameworks, outstanding work, Automation save and coverage, with a CSV export |
+| **📋 Backlog** | Every Business Unit side by side on the chosen run (Big No-Regression, Small No-Regression, Production Sanity, Extended Production Sanity — the last with each BU's cases and the Jira bugs they cite): totals, frameworks, outstanding work, Automation save and coverage, with a CSV export |
 | **🔎 Detail** | The BU picked in the top bar: every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports, coverage, Automation save, frameworks and the pivot |
-| **📐 Coverage** | Coverage per functional area (TestRail section), as a pie + bar pair, with drill-down links back into TestRail |
+| **📐 Coverage** | Coverage per functional area (TestRail section), as a pie + bar pair, with drill-down links back into TestRail — for the regression baseline, Production Sanity, Extended Production Sanity, or the two sanity suites combined |
 | **🐞 Leakage** | Which parts of production keep leaking, so they can be automated. Defect leakage per release, counted as Delivery's quality report does: pick a fixVersion (released or planned) of the BU's Jira project, and see the leakage ratio and its High/Highest variant against their 25% / 10% limits, the UAT issues and the excluded incidents behind the counts, and the leaked incidents. Every leaked incident gets an AI proposal (UAT-detectable or not, a category, the TestRail case that should have caught it, the coverage gap), analysed in the background with live progress; an Excel export with Jira data and the AI proposals. Two sub-tabs appear beside it while it is open: **📈 Trend** (the BU's last six releases: the ratio, the Jira components that leak, and what automation covers of what leaks) and **🌍 All BUs** (every BU's latest release and trend, and the leaks no automated test covers — the candidates for an extended production suite). Jira and Gemini only — no TestRail request |
 
 **🧭 Overview** is a window opened from the utility bar next to the tabs: cross-BU

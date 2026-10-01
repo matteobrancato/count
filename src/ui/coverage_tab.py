@@ -8,22 +8,25 @@ Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
   * Coverage % on the baseline view divides EXPANDED ROWS, reusing the Backlog
     tab's own classified frame — so both tabs report one number for a BU, by
     construction rather than by coincidence (locked by tests/test_business_rules
-    ::TestCoverageAgreesWithBacklog).  Production Sanity is on the same row
-    basis; only the Total view, which has no baseline to expand, stays
-    case-based and is labelled "Coverage by Case".
+    ::TestCoverageAgreesWithBacklog).  Every view is on that row basis.
 
-Three stacked views per BU
-──────────────────────────
-  1. **All Automated Cases** — coverage over the full non-deprecated universe.
-  2. **No-Regression Baseline Only** — restricted to cases tagged with
-     `big_regr_desktop` / `big_regr_mobile` (the regression baseline used by the
-     Backlog tab), with device-specific label matching.
-  3. **Production Sanity Only** — cases carrying the `prod_sanity` LABEL,
+Four views per BU, one at a time
+────────────────────────────────
+  1. **No-Regression** — cases tagged `big_regr_desktop` / `big_regr_mobile`
+     (the regression baseline used by the Backlog tab), with device-specific
+     label matching.
+  2. **Production Sanity** — cases carrying the `prod_sanity` LABEL,
      expanded and classified through the SAME pipeline as the regression
-     baseline, so its numbers match the Backlog tab's Production Sanity block
+     baseline, so its numbers match the Backlog tab's Production Sanity run
      row for row.
+  3. **Extended Production Sanity** — the same for `ext_prod_sanity`.
+  4. **Production + Extended Sanity** — cases carrying either label, each
+     counted once.
 
-All three views share the same renderer (`_render_coverage_section`) so the
+(A "Total" view over every case was removed on 2026-10-01: nobody used it,
+and it was the only one counting cases instead of rows.)
+
+All views share the same renderer (`_render_coverage_section`) so the
 layout is identical — only the input subset changes.
 
 Layout per view
@@ -43,7 +46,12 @@ import pandas as pd
 import streamlit as st
 
 from .. import testrail_client as tr
-from ..bu_rules import ALL_RULES, filter_conditional_tokens
+from ..bu_rules import (
+    ALL_RULES,
+    EXT_PROD_SANITY_LABEL,
+    PROD_SANITY_LABEL,
+    filter_conditional_tokens,
+)
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, section_title
@@ -531,12 +539,13 @@ def _filter_to_bu_countries(
 
 def _baseline_like_backlog(
     non_dep: pd.DataFrame, auto_bu: pd.DataFrame, rules_bu: list,
-    member_label: str | None = None,
+    member_label: str | tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[int], pd.DataFrame]:
     """A baseline computed EXACTLY like the Backlog tab.
 
-    *member_label* picks which one: None for the regression baseline, the
-    `prod_sanity` label for Production Sanity.  Both go through the same
+    *member_label* picks which one: None for the regression baseline, a
+    label for a sanity baseline (`prod_sanity`, `ext_prod_sanity`), or both
+    for the combined one.  Both go through the same
     expansion and the same classification, which is what stops one word from
     carrying two numbers across two tabs.
 
@@ -593,12 +602,13 @@ def _render_coverage_section(
     depth_offset: int = 0,
     show_tool_facet: bool = True,
     show_target: bool = False,
-    expanded: pd.DataFrame | None = None,
+    expanded: pd.DataFrame,
 ) -> None:
     """Render the full coverage block (metrics + table + charts) for a subset.
 
-    Pulled out of `_coverage_for` so all three views (Total / baseline / prod
-    sanity) share one layout — only the input subset changes.  The function
+    Pulled out of `_coverage_for` so every view shares one layout — only the
+    input subset changes.  *expanded* is the subset's classified rows (case ×
+    country × device), the Backlog tab's own.  The function
     renders no widgets of its own (the view radio and granularity slider live in
     `_coverage_for`), so it needs no per-call widget key.
 
@@ -617,50 +627,33 @@ def _render_coverage_section(
     # same BU read 91.9% on one tab and 95.2% on the other.  Same rows now.
     auto_unique = int(non_dep["case_id"].isin(auto_ids).sum())
     cases_total = int(non_dep["case_id"].nunique())
-    by_row      = expanded is not None and not expanded.empty
 
+    # Same four words, same four numbers as the Backlog tab — a manager
+    # comparing the two tabs should never have to translate a label.
     c1, c2, c3, c4 = st.columns(4)
-    if by_row:
-        # Same four words, same four numbers as the Backlog tab — a manager
-        # comparing the two tabs should never have to translate a label.
-        total     = int(len(expanded))
-        auto_rows = int((expanded["category"] == "automated").sum())
-        backlog   = int((expanded["category"] == "backlog").sum())
-        partial   = int((expanded["category"] == "partially_automated").sum())
-        cov_pct   = (auto_rows / total * 100) if total else 0.0
-        c1.metric("Total", f"{total:,}",
-                  help=f"Baseline rows: case × country × device — the same rows "
-                       f"the Backlog tab counts. {cases_total:,} unique cases.")
-        c2.metric("Automated", f"{auto_rows:,}",
-                  help=f"{auto_unique:,} unique cases.")
-        c3.metric("Backlog", f"{backlog:,}",
-                  help=f"Not automated in ANY country or device — the same "
-                       f"figure as the Backlog tab. A further {partial:,} rows "
-                       f"belong to cases automated elsewhere (Partially "
-                       f"Automated there).")
-        _cov_help = ("Automated rows ÷ baseline rows — the SAME basis as the "
-                     "Backlog tab and the KPI chips, so all three agree.")
-    else:
-        # Total / Production Sanity have no baseline row expansion, so they stay
-        # on the unique-case basis — labelled, not silently mixed.
-        total     = cases_total
-        cov_pct   = (auto_unique / total * 100) if total else 0.0
-        c1.metric("Total Cases", f"{total:,}")
-        c2.metric("Automated Cases", f"{auto_unique:,}")
-        c3.metric("Automated Rows", f"{len(auto_bu):,}",
-                  help="Expanded rows: Desktop + Mobile — a case automated "
-                       "on both devices counts twice.")
-        _cov_help = ("Automated cases ÷ total cases.  This view has no baseline "
-                     "row expansion (that is defined on the regression baseline "
-                     "only), so it counts cases — hence the label.")
-
-    _cov_label = "Coverage" if by_row else "Coverage by Case"
+    total     = int(len(expanded))
+    auto_rows = int((expanded["category"] == "automated").sum())
+    backlog   = int((expanded["category"] == "backlog").sum())
+    partial   = int((expanded["category"] == "partially_automated").sum())
+    cov_pct   = (auto_rows / total * 100) if total else 0.0
+    c1.metric("Total", f"{total:,}",
+              help=f"Baseline rows: case × country × device — the same rows "
+                   f"the Backlog tab counts. {cases_total:,} unique cases.")
+    c2.metric("Automated", f"{auto_rows:,}",
+              help=f"{auto_unique:,} unique cases.")
+    c3.metric("Backlog", f"{backlog:,}",
+              help=f"Not automated in ANY country or device — the same "
+                   f"figure as the Backlog tab. A further {partial:,} rows "
+                   f"belong to cases automated elsewhere (Partially "
+                   f"Automated there).")
+    _cov_help = ("Automated rows ÷ baseline rows — the SAME basis as the "
+                 "Backlog tab and the KPI chips, so all three agree.")
     if show_target:
-        c4.metric(_cov_label, f"{cov_pct:.1f}%",
+        c4.metric("Coverage", f"{cov_pct:.1f}%",
                   delta=f"{cov_pct - COVERAGE_TARGET:+.1f}% vs {COVERAGE_TARGET:.0f}% target",
                   delta_color="normal", help=_cov_help)
     else:
-        c4.metric(_cov_label, f"{cov_pct:.1f}%", help=_cov_help)
+        c4.metric("Coverage", f"{cov_pct:.1f}%", help=_cov_help)
 
     # depth_offset (granularity) now comes from the control row in _coverage_for
     # so the picker can sit next to the view radio.
@@ -735,9 +728,8 @@ def _render_coverage_section(
                 width="large"),
             "total":        st.column_config.NumberColumn(
                 "Total",
-                help=("Baseline rows (case × country × device) in this area — "
-                      "the Backlog tab's basis." if by_row
-                      else "Unique non-deprecated cases in this area.")),
+                help="Baseline rows (case × country × device) in this area — "
+                     "the Backlog tab's basis."),
             "desktop":      st.column_config.NumberColumn("Desktop"),
             "mobile":       st.column_config.NumberColumn("Mobile"),
             "unspecified":  st.column_config.NumberColumn("Unspecified"),
@@ -753,9 +745,8 @@ def _render_coverage_section(
                      "links."),
             "coverage_pct": st.column_config.ProgressColumn(
                 "Coverage %", format="%.1f%%", min_value=0, max_value=100,
-                help=("Automated rows ÷ baseline rows per area — the Backlog "
-                      "tab's basis." if by_row
-                      else "Automated cases ÷ total cases per area.")),
+                help="Automated rows ÷ baseline rows per area — the Backlog "
+                     "tab's basis."),
         },
     )
 
@@ -776,17 +767,32 @@ def _render_coverage_section(
             st.caption("No `Automation Tool` values populated on matching cases.")
 
 
-# ── the three coverage subsets, selected by one radio (default: the baseline) ─
+# ── the coverage subsets, selected by one radio (default: the baseline) ──────
 # "No-Regression" is the internal name of the WEBSITE regression baseline, so it
 # is kept for website/microservices; Mobile App's baseline is priority-based and
 # has nothing to do with regression, hence the neutral label there.
-_VIEW_TOTAL = "🌐 Total"
 _VIEW_REGR  = "📋 No-Regression"
 _VIEW_REGR_MAPP = "📋 Baseline"
 _VIEW_PS    = "🚀 Production Sanity"
-_VIEW_OPTIONS = [_VIEW_TOTAL, _VIEW_REGR, _VIEW_PS]
-_VIEW_OPTIONS_MAPP = [_VIEW_TOTAL, _VIEW_REGR_MAPP, _VIEW_PS]
-_VIEW_DEFAULT_INDEX = 1                                  # the baseline view
+_VIEW_EXT   = "🧩 Extended Production Sanity"
+_VIEW_BOTH  = "🔗 Production + Extended Sanity"
+_VIEW_OPTIONS = [_VIEW_REGR, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
+_VIEW_OPTIONS_MAPP = [_VIEW_REGR_MAPP, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
+_VIEW_DEFAULT_INDEX = 0                                  # the baseline view
+
+# The sanity views: the label(s) that put a case in each (either of two, for
+# the combined one, a case carrying both counted once), and what to say when
+# none of the BU's cases carries them.
+_SANITY_VIEWS: dict[str, tuple[tuple[str, ...], str]] = {
+    _VIEW_PS:   ((PROD_SANITY_LABEL,),
+                 ("No Production Sanity cases for this BU yet: add the `prod_sanity` "
+                  "label in TestRail.")),
+    _VIEW_EXT:  ((EXT_PROD_SANITY_LABEL,),
+                 ("No Extended Production Sanity cases for this BU yet: add the "
+                  "`ext_prod_sanity` label in TestRail.")),
+    _VIEW_BOTH: ((PROD_SANITY_LABEL, EXT_PROD_SANITY_LABEL),
+                 "No case of this BU carries `prod_sanity` or `ext_prod_sanity` yet."),
+}
 
 # Section-depth picker: named levels beat raw 0-3 on a slider.
 _GRAN_LEVELS: list[int] = [0, 1, 2, 3]
@@ -827,7 +833,6 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
 
     non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
     non_dep, n_other_bu = _filter_to_bu_countries(non_dep, rules_bu)
-    auto_ids = set(auto_bu["case_id"].unique()) if not auto_bu.empty else set()
 
     # ── ONE view + granularity on ONE control row ─────────────────────────────
     # View radio (left) and the granularity picker (right) share a line so the
@@ -842,7 +847,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     # asking the reader to decode 0-3.
     is_mapp = scope == "mobile_app"
     options = _VIEW_OPTIONS_MAPP if is_mapp else _VIEW_OPTIONS
-    c_radio, c_gran = st.columns([3, 2], vertical_alignment="center")
+    c_radio, c_gran = st.columns([5, 2], vertical_alignment="center")
     with c_radio:
         view = st.radio(
             "Coverage view", options, index=_VIEW_DEFAULT_INDEX,
@@ -868,12 +873,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         depth_offset = int(depth_offset if depth_offset is not None else 0)
     is_baseline_view = view in (_VIEW_REGR, _VIEW_REGR_MAPP)
 
-    if view == _VIEW_TOTAL:
-        _render_coverage_section(
-            non_dep, auto_bu, auto_ids,
-            scope=scope, depth_offset=depth_offset, show_tool_facet=True,
-        )
-    elif is_baseline_view:
+    if is_baseline_view:
         nd_base, ab_base, ids_base, exp_base = _baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
         if nd_base.empty:
@@ -889,16 +889,14 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
                 show_target=True,        # the 80% target is defined on the baseline
                 expanded=exp_base,       # → same rows (and %) as the Backlog tab
             )
-    else:  # _VIEW_PS
-        from .backlog_tab import _LABEL_PROD_SANITY
+    else:  # a sanity view
+        labels, none_yet = _SANITY_VIEWS[view]
         nd_ps, ab_ps, ids_ps, exp_ps = _baseline_like_backlog(
-            non_dep, auto_bu, rules_bu, member_label=_LABEL_PROD_SANITY)
+            non_dep, auto_bu, rules_bu,
+            member_label=labels[0] if len(labels) == 1 else labels)
         if nd_ps.empty:
-            st.info(
-                "No Production Sanity cases found for this BU. Add the "
-                "`prod_sanity` label in TestRail — new labels appear at the "
-                "next data refresh (↻ next to the tabs)."
-            )
+            st.info(none_yet + " New labels appear at the next data refresh "
+                               "(↻ next to the tabs).")
         else:
             _render_coverage_section(
                 nd_ps, ab_ps, ids_ps,

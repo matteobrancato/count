@@ -31,6 +31,11 @@ JAVA_LABEL = "java"
 # It replaced the "Test Automation PRD Run" checkbox, which no longer counts.
 PROD_SANITY_LABEL = "prod_sanity"
 
+# The TestRail label of the Extended Production Sanity suite: tests that were
+# missing for production incidents, now automated for production.  Its own
+# population, beside Production Sanity (Matteo, 2026-10-01).
+EXT_PROD_SANITY_LABEL = "ext_prod_sanity"
+
 # TestRail checkbox marking the SUBSET of the big_regr baseline that also runs
 # in the Small / Release No-Regression run.  A subset, not a baseline of its
 # own: every Small NR case is a big_regr case too.

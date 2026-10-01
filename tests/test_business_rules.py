@@ -2278,10 +2278,15 @@ class TestRunsShareNoWidgetState:
         head = src[:src.index("_baseline_pivot")]
         assert "RUNS.index(run)" in head
 
-    def test_prod_sanity_tiles_export_prod_sanity_rows(self):
-        import inspect
-        src = inspect.getsource(bl._detail_view)
-        assert 'baseline=("prod_sanity" if run == RUN_PS' in src
+    def test_each_run_s_tiles_export_that_run_s_rows(self, monkeypatch):
+        # Until 2026-10-01 every run downloaded the regression rows.
+        frames = {run: {("Drogas", "website"): pd.DataFrame({"case_id": [i]})}
+                  for i, run in enumerate(bl.RUNS)}
+        monkeypatch.setattr(bl, "_run_data", lambda run, scope: (None, frames[run], {}))
+        monkeypatch.setattr(bl, "_evidence_frame", lambda exp, scope, bu: exp)
+        for i, run in enumerate(bl.RUNS):
+            out = bl._tile_evidence.__wrapped__("Drogas", "website", run)
+            assert out["case_id"].tolist() == [i], run
 
 
 class TestSmallNrFieldResolution:
@@ -3404,3 +3409,136 @@ class TestDexterPromisesOnlyWhatItCanDo:
         src = inspect.getsource(ca._render_chat_panel).lower()
         for word in ("runs, bugs", "flaky", "open bugs"):
             assert word not in src, word
+
+
+class TestExtendedProdSanity:
+    """Extended Production Sanity: cases labelled `ext_prod_sanity`, built
+    like Production Sanity, every BU listed, and its cases with the Jira bugs
+    their refs cite."""
+
+    _rule = staticmethod(TestProdSanityBaseline._rule)
+
+    def test_membership_comes_from_its_own_label(self):
+        raw = pd.DataFrame([
+            _case(case_id=1, labels=["big_regr_desktop", "prod_sanity"]),
+            _case(case_id=2, labels=["big_regr_desktop", "ext_prod_sanity"]),
+        ])
+        out = bl._expand_baseline(raw, [self._rule()], member_label="ext_prod_sanity")
+        assert set(out["case_id"]) == {2}
+
+    def test_the_combined_view_takes_either_label_once(self):
+        raw = pd.DataFrame([
+            _case(case_id=1, labels=["big_regr_desktop", "prod_sanity"]),
+            _case(case_id=2, labels=["big_regr_desktop", "ext_prod_sanity"]),
+            _case(case_id=3, labels=["big_regr_desktop", "prod_sanity", "ext_prod_sanity"]),
+            _case(case_id=4, labels=["big_regr_desktop"]),
+        ])
+        both = bl._expand_baseline(raw, [self._rule()],
+                                   member_label=("prod_sanity", "ext_prod_sanity"))
+        assert sorted(both["case_id"]) == [1, 2, 3]          # case 3 once, not twice
+
+    def test_it_is_a_run_of_its_own(self):
+        assert bl.RUNS[-1] == bl.RUN_EXT == "Extended Production Sanity"
+        assert "ext_prod_sanity" in bl._RUN_MEANING[bl.RUN_EXT]
+
+    def test_every_bu_is_listed_in_the_usual_order(self, monkeypatch):
+        monkeypatch.setattr(bl, "_scoped_bus", lambda: [
+            ("Drogas", "website"), ("Superdrug", "website"), ("Microservices", "next_gen")])
+        summary = pd.DataFrame([{**dict.fromkeys(bl._SUMMARY_COLUMNS, 0), "BU": "Superdrug",
+                                 "Scope": "Website", "Total": 2, "Automated": 2,
+                                 "Coverage %": 100.0, "Coverage excl. Partially %": 100.0}])
+        out = bl._with_every_bu(summary)
+        assert list(zip(out["BU"], out["Scope"])) == [
+            ("Drogas", "Website"), ("Superdrug", "Website"), ("Microservices", "Microservices")]
+        assert out.set_index("BU").loc["Drogas", "Total"] == 0
+        assert out.set_index("BU").loc["Superdrug", "Total"] == 2
+
+    def test_a_bu_with_no_case_shows_a_dash_not_a_red_zero(self):
+        df = pd.DataFrame([
+            {"BU": "Drogas", "Scope": "Website", "Total": 4, "Automated": 4, "Backlog": 0,
+             "Coverage %": 100.0, "Coverage excl. Partially %": 100.0},
+            {"BU": "Kruidvat", "Scope": "Website", "Total": 0, "Automated": 0, "Backlog": 0,
+             "Coverage %": 0.0, "Coverage excl. Partially %": 0.0},
+        ])
+        out = bl._summary_table_html(df, ["Total", "Automated", "Backlog"])
+        kruidvat = out[out.index("Kruidvat"):]
+        assert "—</span>" in kruidvat and "0.0%" not in kruidvat
+        assert "100.0%" in out                                  # a real row is untouched
+
+    def test_a_case_s_automation_reads_in_the_dashboard_s_words(self):
+        assert bl._case_automation(["automated", "automated"]) == "Automated"
+        assert bl._case_automation(["backlog"]) == "Backlog"
+        assert bl._case_automation(["automated", "backlog", "backlog"]) == "Automated on 1 of 3"
+
+    def test_one_bad_jira_key_does_not_hide_the_others(self, monkeypatch):
+        from src import jira_client as jc
+        calls = []
+
+        def search(jql, fields, max_pages=50):
+            calls.append(jql)
+            if "BAD-1" in jql:
+                raise jc.QueryRejected("Jira search answered 400")
+            keys = [k.strip('"') for k in jql[len("key in ("):-1].split(", ")]
+            return [{"key": k, "fields": {"summary": f"t {k}", "status": {"name": "Done"}}}
+                    for k in keys]
+
+        monkeypatch.setattr(jc, "available", lambda: True)
+        monkeypatch.setattr(jc, "search_all", search)
+        out = bl._jira_issues.__wrapped__(("SD20-1", "BAD-1", "TPS20-2"))
+        assert set(out) == {"SD20-1", "TPS20-2"}
+        assert out["SD20-1"] == {"summary": "t SD20-1", "status": "Done"}
+        assert calls[0] == 'key in ("SD20-1", "BAD-1", "TPS20-2")'      # one call first
+
+    def test_unreachable_jira_is_not_cached_as_no_bugs(self, monkeypatch):
+        from src import jira_client as jc
+        monkeypatch.setattr(jc, "available", lambda: True)
+
+        def down(*a, **k):
+            raise RuntimeError("Jira search answered 503")
+
+        monkeypatch.setattr(jc, "search_all", down)
+        with pytest.raises(RuntimeError):
+            bl._jira_issues.__wrapped__(("SD20-1",))
+
+    def test_cases_and_their_bugs_render_in_nested_dropdowns(self):
+        from streamlit.testing.v1 import AppTest
+
+        def page():
+            import pandas as pd
+
+            from src.ui import backlog_tab as bl
+            cases = {("Drogas", "website"): [
+                {"case_id": 11, "title": "Checkout", "automation": "Automated",
+                 "url": "https://t/index.php?/cases/view/11", "refs": ["DRG20-5", "XYZ-9"]},
+                {"case_id": 12, "title": "Search", "automation": "Automated",
+                 "url": "https://t/index.php?/cases/view/12", "refs": []}]}
+            saved = bl._ext_cases, bl._jira_issues
+            bl._ext_cases = lambda: cases
+            bl._jira_issues = lambda keys: {"DRG20-5": {"summary": "Voucher", "status": "Done"}}
+            try:
+                bl._ext_case_list(pd.DataFrame([{"BU": "Drogas", "Scope": "Website"},
+                                                {"BU": "Kruidvat", "Scope": "Website"}]))
+            finally:
+                bl._ext_cases, bl._jira_issues = saved
+
+        at = AppTest.from_function(page, default_timeout=30)
+        at.run()
+        assert not at.exception, at.exception
+        labels = [e.label for e in at.expander]
+        assert labels[0] == "**Drogas** · 2 cases" and "**Kruidvat** · 0 cases" in labels
+        # only the case with refs gets a dropdown, inside its BU's
+        assert [lb for lb in labels if lb.startswith("🐞")] == [
+            "🐞 C11 · Checkout · 2 Jira bugs"]
+        bugs = at.dataframe[1].value
+        assert bugs["Title"].tolist() == ["Voucher", "title not available"]
+
+
+    def test_coverage_offers_each_sanity_suite_and_both_and_no_total(self):
+        from src.ui import coverage_tab as cov
+        assert cov._VIEW_OPTIONS == ["📋 No-Regression", "🚀 Production Sanity",
+                                     "🧩 Extended Production Sanity",
+                                     "🔗 Production + Extended Sanity"]
+        assert cov._VIEW_DEFAULT_INDEX == 0                  # the baseline, as before
+        assert cov._SANITY_VIEWS[cov._VIEW_PS][0] == ("prod_sanity",)
+        assert cov._SANITY_VIEWS[cov._VIEW_EXT][0] == ("ext_prod_sanity",)
+        assert cov._SANITY_VIEWS[cov._VIEW_BOTH][0] == ("prod_sanity", "ext_prod_sanity")

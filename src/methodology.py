@@ -50,10 +50,9 @@ The Backlog tab, the Coverage tab and the KPI chips all show the same figure for
 the same Business Unit.
 
 * **Coverage vs Automatable** excludes the Not Applicable rows.
-* The Coverage tab's **Total** view has no baseline to expand — it spans every
-  case — so it counts cases and says **"Coverage by Case"** on the card, so the
-  basis is never in doubt. Production Sanity is a baseline of its own and is
-  counted in rows, exactly like the regression one.
+* Every Coverage tab view counts rows, exactly like the Backlog tab: the
+  regression baseline, Production Sanity, Extended Production Sanity, and the
+  two sanity suites combined.
 
 **Coverage excluding Partially Automated** — the same Coverage with the partial
 gaps taken out of the baseline: a test automated for NL but not BE is not held
@@ -79,6 +78,14 @@ in production. It is a baseline of its own, counted separately from the
 regression one: a case carrying both labels is counted in both, so the two
 totals are not meant to add up. (It used to be defined by the "Test
 Automation PRD Run" checkbox; that field no longer counts.)
+
+**Extended Production Sanity** — tests carrying the `ext_prod_sanity` label:
+tests found missing for production incidents and automated for production.
+Another baseline of its own, built and counted exactly like Production
+Sanity; every BU is listed, with 0 where none of its cases carries the label.
+Each case is listed with the Jira bugs its references cite. The Coverage
+tab also shows the two sanity suites combined, a case carrying both labels
+counted once.
 
 **Frameworks** — the three generations of tooling, oldest to newest: Java,
 Testim, then Playwright. A test can carry more than one, so each row is
@@ -171,9 +178,8 @@ METHODOLOGY_FOR_LLM = """
 - A "row" is case × country × device: a case automated on Desktop AND Mobile in
   3 countries is 6 rows.  So row counts are larger than unique-case counts, and
   the two must never be mixed in one ratio.
-- The only case-based figure is the Coverage tab's Total view, labelled
-  "Coverage by Case": it spans every case and has no baseline to expand.
-  Production Sanity is counted in ROWS, the same basis as the regression
+- Production Sanity and Extended Production Sanity are counted in ROWS, the
+  same basis as the regression
   baseline, so the Coverage tab and the Backlog tab report one number for it.
 - Countries: each BU runs in several countries; a case is attributed to a BU by
   the country tokens in its `multi_countries` field.  Suites shared between BUs
@@ -202,6 +208,9 @@ METHODOLOGY_FOR_LLM = """
 - Production Sanity = cases with the `prod_sanity` label, a SEPARATE baseline
   that may overlap the regression one — a case in both is counted in both,
   so never add the two totals together.
+- Extended Production Sanity = cases with the `ext_prod_sanity` label, another
+  separate baseline built the same way; "Production + Extended Sanity" on the
+  Coverage tab counts a case carrying both labels once.
 - Frameworks, oldest to newest: Java, Testim (Desktop/Mobile), Playwright.
   A test can carry more than one, so each row counts for the NEWEST framework
   covering it (Playwright > Testim > Java) — the three add up to Automated

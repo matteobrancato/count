@@ -397,7 +397,7 @@ class TestTheAIsAnswer:
                                     response_schema=lai.response_schema())
 
     def test_classify_reads_the_json_and_keeps_only_asked_keys(self, monkeypatch):
-        from src import gemini_client as gc
+        gc = lai.gemini_client       # the module classify() calls, even after a reload
         idx = _index()
         rows = [_incident("EE20-50", None)]
         answer = '```json\n{"verdicts": [' + __import__("json").dumps(_verdict()) + \
@@ -412,7 +412,7 @@ class TestTheAIsAnswer:
         """Thirteen incidents: three batches, each handed over as it lands."""
         import json as _json
 
-        from src import gemini_client as gc
+        gc = lai.gemini_client       # the module classify() calls, even after a reload
         idx = _index()
         rows = [_incident(f"EE20-{i}", None) for i in range(13)]
 
@@ -433,7 +433,7 @@ class TestTheAIsAnswer:
         assert sorted(landed) == [1, 6, 6]
 
     def test_when_every_model_refuses_it_says_so(self, monkeypatch):
-        from src import gemini_client as gc
+        gc = lai.gemini_client       # the module classify() calls, even after a reload
         monkeypatch.setattr(gc, "ready", lambda: True)
         monkeypatch.setattr(gc, "types", pytest.importorskip("google.genai.types"))
         monkeypatch.setattr(gc, "generate", lambda *a, **k: gc.Result(None, None, "429"))

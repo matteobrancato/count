@@ -57,10 +57,11 @@ import re
 import pandas as pd
 import streamlit as st
 
-from .. import automation_save
+from .. import automation_save, jira_client
 from .. import testrail_client as tr
 from ..bu_rules import (
     ALL_RULES,
+    EXT_PROD_SANITY_LABEL,
     MOBILE_APP_BUS,
     PROD_SANITY_LABEL,
     WEBSITE_BUS,
@@ -94,6 +95,8 @@ _LABEL_MOBILE  = "big_regr_mobile"
 # `is_prod_sanity`, so the Coverage tab's Production Sanity view and the
 # baseline here can never disagree.
 _LABEL_PROD_SANITY = PROD_SANITY_LABEL
+# Extended Production Sanity: one more independent baseline, built the same way.
+_LABEL_EXT_PROD_SANITY = EXT_PROD_SANITY_LABEL
 
 _STATUS_AUTO: set[str] = {
     "Automated", "Automated DEV", "Automated UAT", "Automated Prod",
@@ -200,7 +203,7 @@ def _pick_country_col(rules: list) -> str:
 
 
 def _expand_baseline(raw: pd.DataFrame, rules: list,
-                     *, member_label: str | None = None) -> pd.DataFrame:
+                     *, member_label: str | tuple[str, ...] | None = None) -> pd.DataFrame:
     """Expand baseline cases into (case_id × country_label × device) rows.
 
     *member_label* selects the baseline.  None keeps the regression one exactly
@@ -209,10 +212,14 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     still come from the big_regr ones when the case has them — so a case in both
     baselines expands to the same rows in each, and "5 of those 100" is literally
     true.  A case carrying only the new label has no big_regr labels to read, so
-    its devices come from the TestRail Device field instead.
+    its devices come from the TestRail Device field instead.  Several labels
+    (a tuple) take a case carrying ANY of them, once — the combined view of
+    Production Sanity and Extended Production Sanity.
     """
     _empty = pd.DataFrame(columns=["case_id", "country_label", "device",
                                    "_cat_base", "_tool_automated"])
+    members = ({member_label} if isinstance(member_label, str)
+               else set(member_label or ()))
 
     if raw.empty:
         return _empty
@@ -245,7 +252,7 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
         if member_label is None:
             if not (_LABEL_DESKTOP in labels or _LABEL_MOBILE in labels):
                 return []                              # not in the baseline
-        elif member_label not in labels:
+        elif members.isdisjoint(labels):
             return []
         if str(type_label).strip().upper() == "API":
             return ["API"]
@@ -758,7 +765,8 @@ def _carries_label(raw: pd.DataFrame, label: str) -> bool:
 RUN_BIG   = "Big No-Regression"
 RUN_SMALL = "Small No-Regression"
 RUN_PS    = "Production Sanity"
-RUNS = [RUN_BIG, RUN_SMALL, RUN_PS]
+RUN_EXT   = "Extended Production Sanity"
+RUNS = [RUN_BIG, RUN_SMALL, RUN_PS, RUN_EXT]
 
 # One sentence per run, shown beside the picker.  It fills the space the control
 # leaves and earns it: switching run changes every number on the page, and what
@@ -768,6 +776,8 @@ _RUN_MEANING = {
     RUN_SMALL: "The subset also ticked `small_nr` — the Release run.",
     RUN_PS:    "Cases labelled `prod_sanity`, counted separately from the "
                "regression baseline.",
+    RUN_EXT:   "Cases labelled `ext_prod_sanity`: tests that were missing for "
+               "production incidents, automated for production.",
 }
 
 
@@ -796,6 +806,8 @@ def _run_data(run: str, scope: str):
     """
     if run == RUN_PS:
         return _prod_sanity_data()
+    if run == RUN_EXT:
+        return _ext_prod_sanity_data()
     loader = _mapp_backlog_data if scope == "mobile_app" else _backlog_data
     summary, expanded_by_bu, auto_by_bu = loader()
     if run != RUN_SMALL:
@@ -847,6 +859,46 @@ def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFram
         return pd.DataFrame(), {}, {}
     return _build_summary(scope_data, _scoped_bus(),
                           member_label=_LABEL_PROD_SANITY)
+
+
+_SUMMARY_COLUMNS = ["BU", "Scope", "Total", "Automated", "Java", "TestIM", "Playwright",
+                    "Backlog", "Partially Automated", "To be Updated", "Not Applicable",
+                    "Unknown", "Coverage %", "Coverage excl. Partially %"]
+
+
+def _with_every_bu(summary: pd.DataFrame) -> pd.DataFrame:
+    """The summary with a zero row for every BU it lacks: a BU with no case in
+    the run stays on screen with 0 instead of disappearing."""
+    present = (set(zip(summary["BU"], summary["Scope"])) if not summary.empty else set())
+    zeros = [{**dict.fromkeys(_SUMMARY_COLUMNS, 0), "BU": bu,
+              "Scope": _SCOPE_DISPLAY.get(sc, "Website"),
+              "Coverage %": 0.0, "Coverage excl. Partially %": 0.0}
+             for bu, sc in _scoped_bus()
+             if (bu, _SCOPE_DISPLAY.get(sc, "Website")) not in present]
+    if not zeros:
+        return summary
+    order = {(bu, _SCOPE_DISPLAY.get(sc, "Website")): i for i, (bu, sc) in enumerate(_scoped_bus())}
+    full = pd.concat([summary, pd.DataFrame(zeros)], ignore_index=True).fillna(0)
+    return (full.assign(_o=[order.get(k, len(order)) for k in zip(full["BU"], full["Scope"])])
+            .sort_values("_o", kind="stable").drop(columns="_o").reset_index(drop=True))
+
+
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+def _ext_prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
+                                     dict[tuple[str, str], pd.DataFrame]]:
+    """The Extended Production Sanity baseline: cases labelled
+    `ext_prod_sanity`, built exactly like Production Sanity (and as separate
+    from the other runs), from the suites already downloaded.  Unlike it,
+    every BU is listed, with 0 where none of its cases carries the label."""
+    scope_data: dict[str, tuple] = {}
+    for scope in ("website", "next_gen"):
+        raw, auto, rules = _load_scope(scope)
+        if not raw.empty and _carries_label(raw, _LABEL_EXT_PROD_SANITY):
+            scope_data[scope] = (raw, auto, rules)
+    summary, expanded_by_bu, auto_by_bu = (
+        _build_summary(scope_data, _scoped_bus(), member_label=_LABEL_EXT_PROD_SANITY)
+        if scope_data else (pd.DataFrame(columns=_SUMMARY_COLUMNS), {}, {}))
+    return _with_every_bu(summary), expanded_by_bu, auto_by_bu
 
 
 @st.cache_data(ttl=DAY_TTL, show_spinner=False)
@@ -1184,8 +1236,7 @@ def _category_rows(expanded: pd.DataFrame, category: str,
 
 
 @st.cache_data(ttl=DAY_TTL, show_spinner=False)
-def _tile_evidence(bu: str, scope: str,
-                   baseline: str = "regression") -> pd.DataFrame:
+def _tile_evidence(bu: str, scope: str, run: str = RUN_BIG) -> pd.DataFrame:
     """The evidence behind a BU's tiles, built once per BU and refresh.
 
     Only the FRAME is cached.  Turning it into CSV bytes is left to the download
@@ -1198,10 +1249,13 @@ def _tile_evidence(bu: str, scope: str,
     (~460ms with ICI-sized data: the per-case metadata join, the dict build and
     the deciding-field pass).  Keyed like the rest of the data caches, so ↻
     clears it alongside the numbers.
+
+    The rows are the RUN's — the same frame its tiles count.  (Until
+    2026-10-01 they were always the regression rows: a Production Sanity or
+    Small No-Regression tile downloaded the Big No-Regression rows.)
     """
-    loader = _mapp_backlog_data if scope == "mobile_app" else _backlog_data
     try:
-        _summary, expanded_by_bu, _auto_by_bu = loader()
+        _summary, expanded_by_bu, _auto_by_bu = _run_data(run, scope)
     except Exception:                                                   # noqa: BLE001
         logger.exception("Tile evidence unavailable for %s (%s)", bu, scope)
         return pd.DataFrame()
@@ -1477,9 +1531,7 @@ def _detail_view(
     ]
     key_base = re.sub(r"[^A-Za-z0-9]+", "_",
                       f"{scope}_{bu}_{RUNS.index(run) if run in RUNS else 0}")
-    evidence = _tile_evidence(bu, scope,
-                              baseline=("prod_sanity" if run == RUN_PS
-                                        else "regression"))     # cached: one build per refresh
+    evidence = _tile_evidence(bu, scope, run)     # cached: one build per run and refresh
     for col, (cat, label, n, u, badge) in zip(st.columns(6), tiles):
         with col.container(key=f"tile_{key_base}_{cat}"):
             stat_card(st, label, n, u, badge_html=badge)
@@ -1708,6 +1760,11 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
             f'<span class="cov-val" style="color:{color}">{cov:.1f}%</span>'
             f'</div>{ex_html}</td>'
         )
+        if not int(r["Total"]):
+            # A BU with no case in the run (Extended Production Sanity lists
+            # every BU): no coverage to speak of, so no red 0.0% bar either.
+            cov_cell = (f'<td class="l"><span class="cov-val" '
+                        f'style="color:{COLORS["muted"]}">—</span></td>')
         save_td = ""
         if saves is not None:
             sv = saves.get(str(r["BU"]))
@@ -1867,6 +1924,118 @@ def render() -> None:
     st.markdown(_summary_table_html(display, num_cols, selected_bu=bu,
                                     saves=saves, save_unit=save_unit),
                 unsafe_allow_html=True)
+    if run == RUN_EXT:
+        _ext_case_list(display)
+
+
+# ── Extended Production Sanity: its cases, and the Jira bugs they answer ─────
+_CATEGORY_LABEL = {
+    "automated": "Automated", "backlog": "Backlog", "to_be_updated": "To be updated",
+    "partially_automated": "Partially automated", "not_applicable": "Not applicable",
+    "unknown": "Unknown",
+}
+_SCOPE_KEY = {v: k for k, v in _SCOPE_DISPLAY.items()} | {"Website": "website"}
+
+
+def _case_automation(categories: list[str]) -> str:
+    """One case over its configurations, in the dashboard's own categories:
+    "Automated", or "Automated on 2 of 4" when its configurations differ."""
+    if len(set(categories)) == 1:
+        return _CATEGORY_LABEL.get(categories[0], categories[0])
+    return f"Automated on {categories.count('automated')} of {len(categories)}"
+
+
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+def _ext_cases() -> dict[tuple[str, str], list[dict]]:
+    """{(bu, scope): [case]} for the Extended Production Sanity run: id,
+    title, TestRail link, automation and the Jira keys its refs cite — all
+    from data already downloaded."""
+    _summary, expanded_by_bu, _auto = _ext_prod_sanity_data()
+    meta = {}
+    for scope in {sc for _bu, sc in expanded_by_bu}:
+        raw, _a, _r = _load_scope(scope)
+        meta[scope] = (raw.drop_duplicates("case_id")
+                       .assign(case_id=lambda d: d["case_id"].astype(int))
+                       .set_index("case_id")[["title", "url", "refs"]])
+    out: dict[tuple[str, str], list[dict]] = {}
+    for (bu, scope), exp in expanded_by_bu.items():
+        cases = []
+        for cid, cats in exp.groupby(exp["case_id"].astype(int))["category"]:
+            info = meta[scope].loc[cid] if cid in meta[scope].index else None
+            cases.append({
+                "case_id": int(cid),
+                "title": str(info["title"] or "") if info is not None else "",
+                "url": str(info["url"] or "") if info is not None else "",
+                "automation": _case_automation(cats.tolist()),
+                "refs": jira_client.extract_issue_keys(
+                    str(info["refs"] or "") if info is not None else ""),
+            })
+        out[(bu, scope)] = cases
+    return out
+
+
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+def _jira_issues(keys: tuple[str, ...]) -> dict[str, dict]:
+    """{key: {"summary", "status"}} for the keys Jira resolves, in ONE JQL
+    search (read-only).  Jira rejects the whole query when one key does not
+    exist, so a rejected batch is split in two until the bad key is alone —
+    one wrong reference never hides the others.  Unreachable Jira raises,
+    so the failure is not cached for the day."""
+    if not keys or not jira_client.available():
+        return {}
+    try:
+        found = jira_client.search_all(
+            "key in ({})".format(", ".join(f'"{k}"' for k in keys)), ("summary", "status"))
+    except jira_client.QueryRejected:
+        if len(keys) == 1:
+            return {}
+        mid = len(keys) // 2
+        return {**_jira_issues(keys[:mid]), **_jira_issues(keys[mid:])}
+    return {i["key"]: {"summary": (i.get("fields") or {}).get("summary") or "",
+                       "status": ((i.get("fields") or {}).get("status") or {}).get("name", "")}
+            for i in found if i.get("key")}
+
+
+def _ext_case_list(display: pd.DataFrame) -> None:
+    """Below the Extended Production Sanity table: every BU as a dropdown with
+    its cases, and, for each case whose refs cite Jira bugs, a dropdown with
+    them.  (Streamlit 1.59 nests expanders.)"""
+    cases = _ext_cases()
+    keys = tuple(sorted({k for rows in cases.values() for c in rows for k in c["refs"]}))
+    try:
+        issues = _jira_issues(keys)
+    except Exception:
+        logger.exception("Jira unavailable for the Extended Production Sanity refs")
+        issues = {}
+    conf = jira_client._conf()
+    browse = f"{conf[0]}/browse/" if conf else ""
+    section_title("Cases by Business Unit", top=14)
+    for _, r in display.iterrows():
+        bu, scope = str(r["BU"]), _SCOPE_KEY.get(str(r["Scope"]), "website")
+        rows = cases.get((bu, scope), [])
+        with st.expander(f"**{bu}** · {len(rows)} case{'s' if len(rows) != 1 else ''}"):
+            if not rows:
+                st.caption("No case carries the `ext_prod_sanity` label yet.")
+                continue
+            st.dataframe(pd.DataFrame([{
+                "Case": c["url"] or None, "Title": c["title"],
+                "Automation": c["automation"], "Jira bugs": len(c["refs"]),
+            } for c in rows]), hide_index=True, width="stretch", column_config={
+                "Case": st.column_config.LinkColumn("Case", display_text=r".*/view/(\d+)"),
+                "Title": st.column_config.TextColumn("Title", width="large")})
+            for c in (c for c in rows if c["refs"]):
+                n = len(c["refs"])
+                with st.expander(f"🐞 C{c['case_id']} · {c['title'][:90]} · "
+                                 f"{n} Jira bug{'s' if n != 1 else ''}"):
+                    st.dataframe(pd.DataFrame([{
+                        "Bug": browse + k,
+                        "Title": issues.get(k, {}).get("summary") or "title not available",
+                        "Status": issues.get(k, {}).get("status", ""),
+                    } for k in c["refs"]]), hide_index=True, width="stretch", column_config={
+                        "Bug": (st.column_config.LinkColumn(
+                            "Bug", display_text=r".*/browse/(.*)") if browse
+                            else st.column_config.TextColumn("Bug")),
+                        "Title": st.column_config.TextColumn("Title", width="large")})
 
 
 @st.fragment
@@ -1882,6 +2051,7 @@ def render_detail() -> None:
     _summary, expanded_by_bu, auto_by_bu = loaded
     exp = expanded_by_bu.get((bu, scope))
     if exp is None or exp.empty:
-        st.info(f"No {run} rows for **{bu}** in this scope.")
+        st.info(f"No case of **{bu}** carries the `ext_prod_sanity` label yet."
+                if run == RUN_EXT else f"No {run} rows for **{bu}** in this scope.")
         return
     _detail_view(bu, scope, expanded_by_bu, auto_by_bu, run=run)

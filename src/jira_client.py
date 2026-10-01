@@ -165,6 +165,11 @@ def field_ids_by_name(names: tuple[str, ...]) -> dict[str, str]:
         return {}
 
 
+class QueryRejected(RuntimeError):
+    """Jira refused the JQL itself (400) — e.g. a key that does not exist —
+    as opposed to being unreachable."""
+
+
 def search_all(jql: str, fields: tuple[str, ...], max_pages: int = 50) -> list[dict]:
     """EVERY issue matching a JQL (raw Jira JSON), paginated 100 at a time.
 
@@ -188,6 +193,8 @@ def search_all(jql: str, fields: tuple[str, ...], max_pages: int = 50) -> list[d
             body["nextPageToken"] = token_next
         resp = requests.post(f"{base}/rest/api/3/search/jql", json=body,
                              auth=auth, timeout=30)
+        if resp.status_code == 400:
+            raise QueryRejected("Jira search answered 400")
         if not resp.ok:
             raise RuntimeError(f"Jira search answered {resp.status_code}")
         payload = resp.json()
