@@ -1795,13 +1795,15 @@ def _run_picker(scope: str) -> str:
     Drawn by both the Backlog and the Detail tab with the SAME key, so the
     choice follows you from one to the other (only the open tab runs, so the
     key is never on screen twice)."""
-    c_pick, c_what = st.columns([5, 6], vertical_alignment="center")
-    with c_pick:
+    # A horizontal container, not columns: the control takes the width its
+    # labels need and the description the rest, so it is the text that wraps.
+    # A fixed column share broke the control onto two lines when the fourth
+    # run arrived.
+    with st.container(horizontal=True, vertical_alignment="center", gap="medium"):
         run = st.segmented_control(
             "Run", RUNS, default=RUN_BIG, required=True,
             key=f"bl_run_{scope}", label_visibility="collapsed",
         ) or RUN_BIG
-    with c_what:
         # Inline <span>, not a block: a block element collapses against
         # Streamlit's -1rem markdown margin and lands below the control's centre.
         st.markdown(
