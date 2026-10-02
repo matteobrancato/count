@@ -646,6 +646,51 @@ class TestTab:
         assert any("GEMINI_API_KEY" in i.value for i in at.info)
 
 
+# ── the component heatmap ────────────────────────────────────────────────────
+class TestHeatmap:
+    """Each cell links to Jira's search on exactly the incidents it counts."""
+
+    @staticmethod
+    def _history(monkeypatch):
+        from datetime import date
+        monkeypatch.setattr(lk, "_base_url", lambda: "https://j")
+        rel1 = lk.Release("EE_SAP_Release_2026Q2.Apr", True, date(2026, 4, 27))
+        rel2 = lk.Release("EE_SAP_Release_2026Q2.Jun", True, date(2026, 6, 20))
+        components = [["Checkout"], ["Checkout", "Search"], []] + [[f"C{i}"] for i in range(8)]
+        leaks1 = [{**_incident(f"EE20-{i}", None), "components": c}
+                  for i, c in enumerate(components)]
+        # one incident in two of the small components: "Other" counts it once
+        leaks2 = [{**_incident("EE20-99", None), "components": ["X1", "X2"]}]
+        return [lk.ReleaseLeakage(EE, rel1, None, [], leaks1),
+                lk.ReleaseLeakage(EE, rel2, None, [], leaks2)]
+
+    def test_each_cell_links_to_its_own_incidents(self, monkeypatch):
+        from urllib.parse import unquote
+
+        from src.ui.leakage_tab import heatmap_cells
+        history = self._history(monkeypatch)
+        df, _order = heatmap_cells(history, {d.release.name: d.release.name[-3:]
+                                             for d in history})
+        cell = df[(df["component"] == "Checkout") & (df["release"] == "Apr")].iloc[0]
+        assert cell["n"] == 2
+        assert unquote(cell["url"]) == (
+            "https://j/issues/?jql=key in (EE20-0, EE20-1) ORDER BY created DESC")
+        none = df[df["component"] == "No component"].iloc[0]
+        assert "EE20-2" in unquote(none["url"]) and none["n"] == 1
+
+    def test_the_other_row_counts_an_incident_once(self, monkeypatch):
+        from urllib.parse import unquote
+
+        from src.ui.leakage_tab import heatmap_cells
+        history = self._history(monkeypatch)
+        df, order = heatmap_cells(history, {d.release.name: d.release.name[-3:]
+                                            for d in history})
+        assert order[-1] == "Other components" and len(order) == 9
+        other_jun = df[(df["component"] == "Other components") & (df["release"] == "Jun")]
+        assert other_jun["n"].tolist() == [1]
+        assert unquote(other_jun.iloc[0]["url"]).count("EE20-99") == 1
+
+
 # ── what a leak means for automation ─────────────────────────────────────────
 class TestBucket:
     @staticmethod

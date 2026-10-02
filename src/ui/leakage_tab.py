@@ -32,6 +32,7 @@ import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 
 import altair as alt
 import pandas as pd
@@ -678,25 +679,53 @@ def _ratio_chart(history: list[lk.ReleaseLeakage], short: dict[str, str]) -> Non
                     width="stretch")
 
 
+_OTHER_COMPONENTS = "Other components"
+
+
+def _jql_url(keys: list[str]) -> str | None:
+    """Jira's issue search on exactly these keys — the incidents a cell
+    counts, Delivery's exclusions already applied — or None without Jira."""
+    base = lk._base_url()
+    if not base or not keys:
+        return None
+    return f"{base}/issues/?jql=" + quote(f"key in ({', '.join(keys)}) ORDER BY created DESC")
+
+
+def heatmap_cells(history: list[lk.ReleaseLeakage],
+                  short: dict[str, str]) -> tuple[pd.DataFrame, list[str]]:
+    """(cells, component order) for the heatmap: one row per component and
+    release with its leaked incidents' count and a Jira link to them.  The
+    eight biggest components get a row each, the rest share one, where an
+    incident with two of them is counted once (the link lists it once)."""
+    keys: dict[tuple[str, str], dict[str, None]] = {}
+    for d in history:
+        for r in d.leaks:
+            for c in (r["components"] or ["No component"]):
+                keys.setdefault((c, d.release.name), {})[r["key"]] = None
+    totals: Counter = Counter()
+    for (c, _r), ks in keys.items():
+        totals[c] += len(ks)
+    top = [c for c, _n in totals.most_common(8)]
+    cells: dict[tuple[str, str], dict[str, None]] = {}
+    for (c, r), ks in keys.items():
+        cells.setdefault((c if c in top else _OTHER_COMPONENTS, r), {}).update(ks)
+    order = [*top, *([_OTHER_COMPONENTS] if len(totals) > len(top) else [])]
+    df = pd.DataFrame([{"component": c, "release": short[r], "n": len(ks),
+                        "url": _jql_url(list(ks))}
+                       for (c, r), ks in cells.items()])
+    return df, order
+
+
 def _component_heatmap(history: list[lk.ReleaseLeakage], short: dict[str, str]) -> None:
     """Leaked incidents per Jira component and release: the areas that keep
-    leaking are the ones an extended production suite should cover first."""
-    st.markdown("**Where incidents leak** · leaked incidents per Jira component")
-    counts = Counter((c, d.release.name) for d in history for r in d.leaks
-                     for c in (r["components"] or ["No component"]))
-    if not counts:
+    leaking are the ones an extended production suite should cover first.
+    A cell opens its incidents in Jira."""
+    st.markdown("**Where incidents leak** · leaked incidents per Jira component · "
+                "click a cell for its incidents in Jira")
+    df, order = heatmap_cells(history, short)
+    if df.empty:
         st.caption("No leaked incident in these releases.")
         return
-    totals = Counter()
-    for (c, _r), n in counts.items():
-        totals[c] += n
-    top = [c for c, _n in totals.most_common(8)]
-    rows: Counter = Counter()
-    for (c, r), n in counts.items():
-        rows[(c if c in top else "Other components", r)] += n
-    order = [*top, *(["Other components"] if len(totals) > len(top) else [])]
-    df = pd.DataFrame([{"component": c, "release": short[r], "n": n}
-                       for (c, r), n in rows.items()])
     releases = [short[d.release.name] for d in history]
     base = alt.Chart(df).encode(
         x=alt.X("release:N", sort=releases, title=None,
@@ -705,20 +734,27 @@ def _component_heatmap(history: list[lk.ReleaseLeakage], short: dict[str, str]) 
         y=alt.Y("component:N", sort=order, title=None,
                 axis=alt.Axis(labelColor=COLORS["text"], labelLimit=240, labelOverlap=False,
                               domain=False, ticks=False)),
+        href=alt.Href("url:N"),
         tooltip=[alt.Tooltip("component:N", title="Component"),
                  alt.Tooltip("release:N", title="Release"),
                  alt.Tooltip("n:Q", title="Leaked incidents")])
     # One hue, light to dark from zero; the count is written in every cell,
-    # white on the darker ones.
+    # white on the darker ones.  Both layers carry the link, so a click on the
+    # number opens it too.
     top_n = int(df["n"].max())
-    cells = base.mark_rect(cornerRadius=3, stroke=COLORS["surface"], strokeWidth=2).encode(
+    cells = base.mark_rect(cornerRadius=3, stroke=COLORS["surface"], strokeWidth=2,
+                           cursor="pointer").encode(
         color=alt.Color("n:Q", legend=None,
                         scale=alt.Scale(domain=[0, top_n], range=["#E0E7FF", COLORS["brand"]])))
-    labels = base.mark_text(fontSize=12, fontWeight=600).encode(
+    labels = base.mark_text(fontSize=12, fontWeight=600, cursor="pointer").encode(
         text="n:Q",
         color=alt.condition(alt.datum.n >= top_n * 0.6,
                             alt.value("#FFFFFF"), alt.value(COLORS["ink"])))
-    st.altair_chart((cells + labels).properties(height=max(90, 30 * len(order)))
+    # Links open in a new tab: by default Vega navigates the page itself,
+    # which here is the app's own frame.
+    st.altair_chart((cells + labels)
+                    .properties(height=max(90, 30 * len(order)),
+                                usermeta={"embedOptions": {"loader": {"target": "_blank"}}})
                     .configure_view(stroke=None), width="stretch")
 
 
