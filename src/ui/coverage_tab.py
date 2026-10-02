@@ -53,6 +53,7 @@ from ..bu_rules import (
     PROD_SANITY_LABEL,
     filter_conditional_tokens,
 )
+from ..freshness import DAY_TTL
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, section_title
@@ -72,6 +73,32 @@ def _load_scope(scope: str):
         return None, None, []
     result = evaluate_rules(tuple(r.name for r in rules))
     return result.raw_cases, result.automated, rules
+
+
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+def _bu_frames(scope: str, bu: str) -> tuple[str, pd.DataFrame, pd.DataFrame]:
+    """("ok" | "no scope data" | "no bu cases", the BU's non-deprecated cases
+    in its own countries, its automated rows deduplicated on case × country
+    × device).
+
+    Cached per BU for the day: `_load_scope` hands back a full deserialised
+    copy of every case of the scope, and the tab used to take one on every
+    click of a view or of the granularity, to keep one BU's rows."""
+    raw, auto, rules = _load_scope(scope)
+    if raw is None or raw.empty:
+        return "no scope data", pd.DataFrame(), pd.DataFrame()
+    rules_bu = [r for r in rules if r.bu == bu]
+    raw_bu = raw[raw["suite_id"].isin({r.suite_id for r in rules_bu})]
+    auto_bu = auto[auto["bu"] == bu] if not auto.empty else auto
+    # Dedup dual-framework rows on (case, country, device): a case automated
+    # by BOTH Java and Testim is one D+M row, not two.
+    if not auto_bu.empty:
+        auto_bu = auto_bu.drop_duplicates(subset=["case_id", "country_label", "device"])
+    if raw_bu.empty:
+        return "no bu cases", pd.DataFrame(), auto_bu
+    non_dep = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
+    non_dep, _n_other_bu = _filter_to_bu_countries(non_dep, rules_bu)
+    return "ok", non_dep, auto_bu
 
 
 # ── section helpers ──────────────────────────────────────────────────────────
@@ -811,30 +838,16 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     if scope == "mobile_app":
         with st.spinner("📱 Loading Mobile App data — first time can take "
                         "~30-60s, then it's cached…"):
-            raw, auto, rules = _load_scope(scope)
+            status, non_dep, auto_bu = _bu_frames(scope, bu_choice)
     else:
-        raw, auto, rules = _load_scope(scope)
-    if raw is None or raw.empty:
+        status, non_dep, auto_bu = _bu_frames(scope, bu_choice)
+    if status == "no scope data":
         st.info("No data loaded for this scope.")
         return
-
-    # `rules` is already filtered to *scope* by _load_scope, so no second scope check.
-    rules_bu  = [r for r in rules if r.bu == bu_choice]
-    bu_suites = {r.suite_id for r in rules_bu}
-
-    raw_bu  = raw[raw["suite_id"].isin(bu_suites)]
-    auto_bu = auto[auto["bu"] == bu_choice] if not auto.empty else auto
-    # Dedup dual-framework rows on (case, country, device): a case automated
-    # by BOTH Java and Testim is one D+M row, not two.
-    if not auto_bu.empty:
-        auto_bu = auto_bu.drop_duplicates(subset=["case_id", "country_label", "device"])
-
-    if raw_bu.empty:
+    if status == "no bu cases":
         st.info(f"No cases found for **{bu_choice}**.")
         return
-
-    non_dep  = raw_bu[raw_bu["deprecated"] == False]  # noqa: E712
-    non_dep, n_other_bu = _filter_to_bu_countries(non_dep, rules_bu)
+    rules_bu = [r for r in ALL_RULES if r.scope == scope and r.bu == bu_choice]
 
     # ── ONE view + granularity on ONE control row ─────────────────────────────
     # View radio (left) and the granularity picker (right) share a line so the

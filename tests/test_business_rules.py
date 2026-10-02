@@ -3571,3 +3571,23 @@ class TestSmoke:
         assert bl.RUNS[:3] == [bl.RUN_BIG, bl.RUN_SMALL, bl.RUN_SMOKE]
         assert "Highest" in bl._RUN_MEANING[bl.RUN_SMOKE]
 
+
+
+class TestCoverageReadsOneBu:
+    def test_the_slice_is_the_bu_s_own_cases_and_rows(self, monkeypatch):
+        """Cached per BU, so a click copies one BU's rows, not the scope's."""
+        from types import SimpleNamespace
+
+        from src.ui import coverage_tab as cov
+        rule = SimpleNamespace(bu="Drogas", scope="website", suite_id=1, countries_filter=[],
+                               country_field_label="multi_countries")
+        raw = pd.DataFrame({"case_id": [1, 2, 3], "suite_id": [1, 1, 2],
+                            "deprecated": [False, True, False], "multi_countries": [[]] * 3})
+        auto = pd.DataFrame({"case_id": [1, 1, 3], "bu": ["Drogas", "Drogas", "Kruidvat"],
+                             "country_label": ["LV", "LV", "NL"], "device": ["Desktop"] * 3})
+        monkeypatch.setattr(cov, "_load_scope", lambda scope: (raw, auto, [rule]))
+        status, cases, rows = cov._bu_frames.__wrapped__("website", "Drogas")
+        assert status == "ok"
+        assert cases["case_id"].tolist() == [1]                 # its suite, not deprecated
+        assert rows["case_id"].tolist() == [1]                  # its rows, deduplicated
+        assert cov._bu_frames.__wrapped__("website", "Nobody")[0] == "no bu cases"
