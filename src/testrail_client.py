@@ -723,13 +723,6 @@ def resolve_project_id(suite_id: int) -> int:
     return int(suite["project_id"])
 
 
-def clear_all_caches() -> None:
-    for fn in (fetch_case_fields, fetch_case_types, fetch_priorities,
-               fetch_suite, _fetch_sections_cached, _fetch_cases_cached,
-               _fetch_labels_cached):
-        fn.clear()
-
-
 # ----------------------------------------------------------------- startup pre-warm
 # Wall-clock of the last pre-warm, and how long it holds.  A day: the numbers
 # are reloaded once per business day (`freshness.roll_over_if_new_day`), which

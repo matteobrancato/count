@@ -81,7 +81,7 @@ html, body, .stApp {{
 [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] *:not(code):not(pre),
 [data-testid="stMetricValue"], [data-testid="stMetricLabel"],
 [data-testid="stWidgetLabel"] *, .stButton button p, .stButton button div,
-[data-baseweb="tab"] [data-testid="stMarkdownContainer"],
+[data-testid="stTab"] [data-testid="stMarkdownContainer"],
 h1, h2, h3, h4, h5, h6 {{
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
 }}
@@ -112,38 +112,33 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 }}
 
 /* ── Tabs — clean underline navigation ────────────────────────────────────── */
-/* Hide Streamlit's native grey baseline and draw a single one on the tab-list
-   itself, so the coloured active-highlight sits flush on the same line. */
-[data-baseweb="tab-list"] {{
-    gap: 2px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid {c['border']};
-}}
-[data-baseweb="tab-border"] {{
-    display: none !important;
-}}
-[data-baseweb="tab"] {{
+/* Streamlit 1.59 tabs: `[data-testid="stTab"]` in a `[role="tablist"]`, the
+   active one with aria-selected and a `.react-aria-SelectionIndicator` child.
+   (These rules targeted the old baseweb tabs until 2026-10-02, and had silently
+   stopped applying.)  The label lives in a markdown <p>, which sets its own
+   colour, so the colour is set on it. */
+[role="tablist"] {{ gap: 2px; }}
+[data-testid="stTab"] {{
     border-radius: 9px 9px 0 0;
-    padding: 9px 16px;
+    padding-left: 14px;
+    padding-right: 14px;
+    transition: background .15s ease;
+}}
+[data-testid="stTab"] [data-testid="stMarkdownContainer"] p {{
     color: {c['muted']};
     font-weight: 600;
-    font-size: 14px;
     /* Emoji sit taller than the text they follow; without room of their own the
        line box crops them and the label reads as cut off. */
     line-height: 1.5;
-    transition: color .15s ease, background .15s ease;
+    transition: color .15s ease;
 }}
-[data-baseweb="tab"]:hover {{
-    color: {c['ink']};
-    background: {c['brand_soft']};
-}}
-[data-baseweb="tab"][aria-selected="true"] {{
+[data-testid="stTab"]:hover {{ background: {c['brand_soft']}; }}
+[data-testid="stTab"]:hover [data-testid="stMarkdownContainer"] p {{ color: {c['ink']}; }}
+[data-testid="stTab"][aria-selected="true"] [data-testid="stMarkdownContainer"] p {{
     color: {c['brand']};
 }}
-[data-baseweb="tab-highlight"] {{
+[data-testid="stTab"] .react-aria-SelectionIndicator {{
     background-color: {c['brand']} !important;
-    height: 3px !important;
-    border-radius: 3px 3px 0 0;
 }}
 
 /* ── Buttons ──────────────────────────────────────────────────────────────── */
@@ -579,11 +574,6 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     font-weight: 600;
 }}
 [data-baseweb="tag"] span[role="presentation"] svg {{ fill: {c['brand_strong']}; }}
-/* Slider track + handle */
-[data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] {{
-    background: {c['brand']} !important;
-    border-color: {c['brand']} !important;
-}}
 
 /* ── Dropdown menus (selectbox / multiselect option panels) ───────────────── */
 /* Scoped to the menu/listbox inside a baseweb popover, so it never touches the
@@ -610,8 +600,7 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [data-testid="stSpinner"] {{ background: transparent !important; }}
 [data-testid="stSpinner"] > div {{ background: transparent !important; }}
 
-/* ── Radio / checkbox accents ─────────────────────────────────────────────── */
-[data-testid="stRadio"] label[data-baseweb="radio"] div:first-child,
+/* ── Checkbox accents ─────────────────────────────────────────────────────── */
 [data-testid="stCheckbox"] label span:first-child {{
     border-color: {c['border_2']};
 }}
@@ -1092,9 +1081,9 @@ def subtabs_css(parent: int, children: tuple[int, ...]) -> str:
     return f"""<style>
 [role="tablist"]:not(:has({open_((parent, *children))})) > {kids} {{ display: none; }}
 [role="tablist"] > {kids} {{
-    font-size: 13px;
     animation: count-subtab-in .34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }}
+[role="tablist"] > {kids} [data-testid="stMarkdownContainer"] p {{ font-size: 13px; }}
 {delays}
 /* A hairline before the first one says they belong to the tab on their left. */
 [role="tablist"] > {tab(children[0])} {{ margin-left: 2px; position: relative; }}
@@ -1103,7 +1092,9 @@ def subtabs_css(parent: int, children: tuple[int, ...]) -> str:
     border-left: 1px solid {c['border']};
 }}
 /* The parent keeps the brand colour while one of its sub-tabs is open. */
-[role="tablist"]:has({open_(children)}) > {tab(parent)} {{ color: {c['brand']}; }}
+[role="tablist"]:has({open_(children)}) > {tab(parent)} [data-testid="stMarkdownContainer"] p {{
+    color: {c['brand']};
+}}
 @keyframes count-subtab-in {{
     from {{ opacity: 0; transform: translateX(-8px); }}
     to   {{ opacity: 1; transform: none; }}
