@@ -3552,7 +3552,7 @@ class TestSmoke:
         raw = pd.DataFrame({"case_id": [1, 2, 3, 4],
                             "priority_label": ["Highest", "High", "highest", None]})
         monkeypatch.setattr(bl, "_load_scope", lambda scope: (raw, pd.DataFrame(), []))
-        assert bl._smoke_cases("website") == {1, 3}
+        assert bl._smoke_cases.__wrapped__("website") == {1, 3}
 
     def test_the_run_narrows_the_regression_rows(self, monkeypatch):
         exp = pd.DataFrame({"case_id": [1, 1, 2], "country_label": ["LV", "LT", "LV"],

@@ -783,6 +783,13 @@ _RUN_MEANING = {
 }
 
 
+# The subset runs' members are cached for the day like the data they come
+# from (cleared with it by ↻ and the daily rollover).  Uncached, every render
+# of the run read `_load_scope` — and a cache_data hit is a full deserialised
+# COPY of every case of the scope, only to keep a few hundred IDs.  Opening
+# the runs one after another stacked those copies; the app restarted right
+# after a sequence like that on 2026-10-02.
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _small_nr_cases(scope: str) -> set[int]:
     """Case IDs carrying the `small_nr` checkbox.
 
@@ -799,6 +806,7 @@ def _small_nr_cases(scope: str) -> set[int]:
     return set(raw.loc[raw["small_nr"].fillna(False), "case_id"].astype(int))
 
 
+@st.cache_data(ttl=DAY_TTL, show_spinner=False)
 def _smoke_cases(scope: str) -> set[int]:
     """Case IDs with priority Highest: Smoke is the regression baseline's
     Highest cases (Matteo, 2026-10-02) — a SUBSET, like Small NR.  "Highest"
