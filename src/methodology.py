@@ -79,6 +79,11 @@ regression one: a case carrying both labels is counted in both, so the two
 totals are not meant to add up. (It used to be defined by the "Test
 Automation PRD Run" checkbox; that field no longer counts.)
 
+**Smoke** — the regression baseline's cases with priority **Highest** in
+TestRail: a subset of Big No-Regression, counted on the same rows, so its
+coverage is the regression coverage of those cases. The Coverage tab breaks
+it down by area like the other views.
+
 **Extended Production Sanity** — tests carrying the `ext_prod_sanity` label:
 tests found missing for production incidents and automated for production.
 Another baseline of its own, built and counted exactly like Production
@@ -208,6 +213,8 @@ METHODOLOGY_FOR_LLM = """
 - Production Sanity = cases with the `prod_sanity` label, a SEPARATE baseline
   that may overlap the regression one — a case in both is counted in both,
   so never add the two totals together.
+- Smoke = the Big No-Regression rows whose case has priority Highest — a
+  subset of the regression baseline, like Small No-Regression.
 - Extended Production Sanity = cases with the `ext_prod_sanity` label, another
   separate baseline built the same way; "Production + Extended Sanity" on the
   Coverage tab counts a case carrying both labels once.

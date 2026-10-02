@@ -3535,10 +3535,39 @@ class TestExtendedProdSanity:
 
     def test_coverage_offers_each_sanity_suite_and_both_and_no_total(self):
         from src.ui import coverage_tab as cov
-        assert cov._VIEW_OPTIONS == ["📋 No-Regression", "🚀 Production Sanity",
+        assert cov._VIEW_OPTIONS == ["📋 No-Regression", "🔥 Smoke", "🚀 Production Sanity",
                                      "🧩 Extended Production Sanity",
                                      "🔗 Production + Extended Sanity"]
         assert cov._VIEW_DEFAULT_INDEX == 0                  # the baseline, as before
         assert cov._SANITY_VIEWS[cov._VIEW_PS][0] == ("prod_sanity",)
         assert cov._SANITY_VIEWS[cov._VIEW_EXT][0] == ("ext_prod_sanity",)
         assert cov._SANITY_VIEWS[cov._VIEW_BOTH][0] == ("prod_sanity", "ext_prod_sanity")
+
+
+class TestSmoke:
+    """Smoke = the regression baseline's cases with priority Highest: a subset
+    of Big No-Regression, filtered like Small No-Regression, never re-expanded."""
+
+    def test_highest_cases_are_the_members(self, monkeypatch):
+        raw = pd.DataFrame({"case_id": [1, 2, 3, 4],
+                            "priority_label": ["Highest", "High", "highest", None]})
+        monkeypatch.setattr(bl, "_load_scope", lambda scope: (raw, pd.DataFrame(), []))
+        assert bl._smoke_cases("website") == {1, 3}
+
+    def test_the_run_narrows_the_regression_rows(self, monkeypatch):
+        exp = pd.DataFrame({"case_id": [1, 1, 2], "country_label": ["LV", "LT", "LV"],
+                            "device": ["Desktop"] * 3,
+                            "category": ["automated", "backlog", "automated"]})
+        monkeypatch.setattr(bl, "_backlog_data", lambda: (
+            pd.DataFrame(), {("Drogas", "website"): exp}, {}))
+        monkeypatch.setattr(bl, "_smoke_cases", lambda scope: {1})
+        monkeypatch.setitem(bl._SUBSET_RUNS, bl.RUN_SMOKE, bl._smoke_cases)
+        summary, rows, _auto = bl._run_data(bl.RUN_SMOKE, "website")
+        assert rows[("Drogas", "website")]["case_id"].tolist() == [1, 1]
+        row = summary.iloc[0]
+        assert (row["Total"], row["Automated"], row["Coverage %"]) == (2, 1, 50.0)
+
+    def test_it_sits_after_the_regression_runs(self):
+        assert bl.RUNS[:3] == [bl.RUN_BIG, bl.RUN_SMALL, bl.RUN_SMOKE]
+        assert "Highest" in bl._RUN_MEANING[bl.RUN_SMOKE]
+

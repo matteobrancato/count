@@ -764,9 +764,10 @@ def _carries_label(raw: pd.DataFrame, label: str) -> bool:
 # and the page grew a section every time the business gained a run.
 RUN_BIG   = "Big No-Regression"
 RUN_SMALL = "Small No-Regression"
+RUN_SMOKE = "Smoke"
 RUN_PS    = "Production Sanity"
 RUN_EXT   = "Extended Production Sanity"
-RUNS = [RUN_BIG, RUN_SMALL, RUN_PS, RUN_EXT]
+RUNS = [RUN_BIG, RUN_SMALL, RUN_SMOKE, RUN_PS, RUN_EXT]
 
 # One sentence per run, shown beside the picker.  It fills the space the control
 # leaves and earns it: switching run changes every number on the page, and what
@@ -774,6 +775,7 @@ RUNS = [RUN_BIG, RUN_SMALL, RUN_PS, RUN_EXT]
 _RUN_MEANING = {
     RUN_BIG:   "Every case labelled `big_regr_desktop` or `big_regr_mobile`.",
     RUN_SMALL: "The subset also ticked `small_nr` — the Release run.",
+    RUN_SMOKE: "The subset with priority Highest.",
     RUN_PS:    "Cases labelled `prod_sanity`, counted separately from the "
                "regression baseline.",
     RUN_EXT:   "Cases labelled `ext_prod_sanity`: tests that were missing for "
@@ -797,12 +799,32 @@ def _small_nr_cases(scope: str) -> set[int]:
     return set(raw.loc[raw["small_nr"].fillna(False), "case_id"].astype(int))
 
 
+def _smoke_cases(scope: str) -> set[int]:
+    """Case IDs with priority Highest: Smoke is the regression baseline's
+    Highest cases (Matteo, 2026-10-02) — a SUBSET, like Small NR.  "Highest"
+    is matched the way the Overview's Smoke Suite matches it."""
+    try:
+        raw, _auto, _rules = _load_scope(scope)
+    except Exception:
+        logger.exception("Smoke membership unavailable for %s", scope)
+        return set()
+    if raw.empty or "priority_label" not in raw.columns:
+        return set()
+    highest = raw["priority_label"].fillna("").astype(str).str.lower().str.contains("highest")
+    return set(raw.loc[highest, "case_id"].astype(int))
+
+
+# The runs that are a subset of the regression baseline, and who is in them.
+_SUBSET_RUNS = {RUN_SMALL: _small_nr_cases, RUN_SMOKE: _smoke_cases}
+
+
 def _run_data(run: str, scope: str):
     """(summary, expanded_by_bu, auto_by_bu) for the selected run.
 
-    Small NR filters the regression payload instead of expanding a second time:
-    the subset shares every row with the baseline, so a second expansion could
-    only produce the same rows more slowly — or, worse, differently.
+    Small NR and Smoke filter the regression payload instead of expanding a
+    second time: a subset shares every row with the baseline, so a second
+    expansion could only produce the same rows more slowly — or, worse,
+    differently.
     """
     if run == RUN_PS:
         return _prod_sanity_data()
@@ -810,10 +832,11 @@ def _run_data(run: str, scope: str):
         return _ext_prod_sanity_data()
     loader = _mapp_backlog_data if scope == "mobile_app" else _backlog_data
     summary, expanded_by_bu, auto_by_bu = loader()
-    if run != RUN_SMALL:
+    members = _SUBSET_RUNS.get(run)
+    if members is None:
         return summary, expanded_by_bu, auto_by_bu
 
-    ids = _small_nr_cases(scope)
+    ids = members(scope)
     if not ids:
         return pd.DataFrame(), {}, {}
     small = {k: e[e["case_id"].astype(int).isin(ids)]
@@ -824,11 +847,15 @@ def _run_data(run: str, scope: str):
             continue
         st_ = _stats(exp, auto_by_bu.get((bu, sc),
                                          pd.DataFrame(columns=_AUTO_SLIM_COLS)))
+        # Same framework columns as the run it narrows (see `_build_summary`).
+        breakdown = ({"iOS": st_["ios"], "Android": st_["android"]}
+                     if sc == "mobile_app"
+                     else {"Java": st_["java"], "TestIM": st_["testim"],
+                           "Playwright": st_["playwright"]})
         rows.append({
             "BU": bu, "Scope": _SCOPE_DISPLAY.get(sc, "Website"),
             "Total": st_["total"], "Automated": st_["automated"],
-            "Java": st_["java"], "TestIM": st_["testim"],
-            "Playwright": st_["playwright"], "Backlog": st_["backlog"],
+            **breakdown, "Backlog": st_["backlog"],
             "Partially Automated": st_["partially_automated"],
             "To be Updated": st_["to_be_updated"],
             "Not Applicable": st_["not_applicable"], "Unknown": st_["unknown"],
@@ -1827,6 +1854,8 @@ def _load_run(run: str, scope: str):
         st.warning({
             RUN_SMALL: "No Small No-Regression rows yet — tick the `small_nr` "
                        "checkbox in TestRail.",
+            RUN_SMOKE: "No Smoke rows yet — no Big No-Regression case has "
+                       "priority Highest in TestRail.",
             RUN_PS:    "No Production Sanity rows yet — add the `prod_sanity` "
                        "label in TestRail.",
         }.get(run, "No baseline data found. Ensure cases have the "

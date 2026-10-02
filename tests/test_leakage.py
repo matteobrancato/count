@@ -653,7 +653,10 @@ class TestHeatmap:
     @staticmethod
     def _history(monkeypatch):
         from datetime import date
-        monkeypatch.setattr(lk, "_base_url", lambda: "https://j")
+
+        from src.ui import leakage_tab
+        # the module the tab holds, which a reload of src/ may have replaced
+        monkeypatch.setattr(leakage_tab.lk, "_base_url", lambda: "https://j")
         rel1 = lk.Release("EE_SAP_Release_2026Q2.Apr", True, date(2026, 4, 27))
         rel2 = lk.Release("EE_SAP_Release_2026Q2.Jun", True, date(2026, 6, 20))
         components = [["Checkout"], ["Checkout", "Search"], []] + [[f"C{i}"] for i in range(8)]

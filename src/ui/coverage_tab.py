@@ -10,11 +10,12 @@ Output mirrors the manual "coverage_outputs_<BU>.xlsx" Chiara produces:
     construction rather than by coincidence (locked by tests/test_business_rules
     ::TestCoverageAgreesWithBacklog).  Every view is on that row basis.
 
-Four views per BU, one at a time
+Five views per BU, one at a time
 ────────────────────────────────
   1. **No-Regression** — cases tagged `big_regr_desktop` / `big_regr_mobile`
      (the regression baseline used by the Backlog tab), with device-specific
      label matching.
+  1b. **Smoke** — the same baseline, cases with priority Highest only.
   2. **Production Sanity** — cases carrying the `prod_sanity` LABEL,
      expanded and classified through the SAME pipeline as the regression
      baseline, so its numbers match the Backlog tab's Production Sanity run
@@ -773,11 +774,12 @@ def _render_coverage_section(
 # has nothing to do with regression, hence the neutral label there.
 _VIEW_REGR  = "📋 No-Regression"
 _VIEW_REGR_MAPP = "📋 Baseline"
+_VIEW_SMOKE = "🔥 Smoke"
 _VIEW_PS    = "🚀 Production Sanity"
 _VIEW_EXT   = "🧩 Extended Production Sanity"
 _VIEW_BOTH  = "🔗 Production + Extended Sanity"
-_VIEW_OPTIONS = [_VIEW_REGR, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
-_VIEW_OPTIONS_MAPP = [_VIEW_REGR_MAPP, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
+_VIEW_OPTIONS = [_VIEW_REGR, _VIEW_SMOKE, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
+_VIEW_OPTIONS_MAPP = [_VIEW_REGR_MAPP, _VIEW_SMOKE, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
 _VIEW_DEFAULT_INDEX = 0                                  # the baseline view
 
 # The sanity views: the label(s) that put a case in each (either of two, for
@@ -847,33 +849,52 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
     # asking the reader to decode 0-3.
     is_mapp = scope == "mobile_app"
     options = _VIEW_OPTIONS_MAPP if is_mapp else _VIEW_OPTIONS
-    c_radio, c_gran = st.columns([5, 2], vertical_alignment="center")
-    with c_radio:
+    # A horizontal container, not columns: the views take the width their
+    # labels need and the granularity picker sits at the far right, moving
+    # under them on a narrow window instead of squeezing them onto two lines.
+    with st.container(horizontal=True, vertical_alignment="center",
+                      horizontal_alignment="distribute", gap="medium"):
         view = st.radio(
             "Coverage view", options, index=_VIEW_DEFAULT_INDEX,
             horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
             label_visibility="collapsed",
         )
-    with c_gran, st.container(
-        key="cov_gran_row", horizontal=True, vertical_alignment="center",
-        horizontal_alignment="right", gap="small",
-    ):
-        st.markdown(
-            f"<span title='{_GRAN_HELP}' style='font-size:13px;"
-            f"color:{COLORS['muted']};white-space:nowrap;cursor:help'>"
-            f"Granularity</span>",
-            unsafe_allow_html=True,
-        )
-        depth_offset = st.segmented_control(
-            "Granularity", _GRAN_LEVELS, default=0, required=True,
-            format_func=lambda v: _GRAN_LABELS[v],
-            key=f"cov_gran_seg_{scope}_{bu_choice}",
-            label_visibility="collapsed",
-        )
-        depth_offset = int(depth_offset if depth_offset is not None else 0)
+        with st.container(
+            key="cov_gran_row", horizontal=True, vertical_alignment="center",
+            horizontal_alignment="right", gap="small", width="content",
+        ):
+            st.markdown(
+                f"<span title='{_GRAN_HELP}' style='font-size:13px;"
+                f"color:{COLORS['muted']};white-space:nowrap;cursor:help'>"
+                f"Granularity</span>",
+                unsafe_allow_html=True,
+            )
+            depth_offset = st.segmented_control(
+                "Granularity", _GRAN_LEVELS, default=0, required=True,
+                format_func=lambda v: _GRAN_LABELS[v],
+                key=f"cov_gran_seg_{scope}_{bu_choice}",
+                label_visibility="collapsed",
+            )
+            depth_offset = int(depth_offset if depth_offset is not None else 0)
     is_baseline_view = view in (_VIEW_REGR, _VIEW_REGR_MAPP)
 
-    if is_baseline_view:
+    if view == _VIEW_SMOKE:
+        # The baseline's Highest cases, filtered BEFORE the expansion: rows are
+        # per case, so these are exactly the Backlog tab's Smoke rows.
+        highest = (non_dep["priority_label"].fillna("").astype(str).str.lower()
+                   .str.contains("highest") if "priority_label" in non_dep.columns
+                   else pd.Series(False, index=non_dep.index))
+        nd_sm, ab_sm, ids_sm, exp_sm = _baseline_like_backlog(
+            non_dep[highest], auto_bu, rules_bu)
+        if nd_sm.empty:
+            st.info("No regression case of this BU has priority Highest in TestRail.")
+        else:
+            _render_coverage_section(
+                nd_sm, ab_sm, ids_sm,
+                scope=scope, depth_offset=depth_offset, show_tool_facet=True,
+                expanded=exp_sm,
+            )
+    elif is_baseline_view:
         nd_base, ab_base, ids_base, exp_base = _baseline_like_backlog(
             non_dep, auto_bu, rules_bu)
         if nd_base.empty:
