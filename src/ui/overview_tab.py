@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from .. import metrics
-from ..bu_rules import ALL_RULES
+from ..bu_rules import ALL_RULES, MAPP_MARKETS, MAPP_PLATFORMS
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS
@@ -13,6 +13,10 @@ from .styles import COLORS
 # --------------------------------------------------------------------- helpers
 def _bu_country_map(scope: str) -> dict[str, list[str]]:
     """Return {bu: [country labels]} for rules matching a scope."""
+    if scope == "mobile_app":
+        # The app's markets, the same ones its baseline rows carry (`_mapp_rows`).
+        return {bu: list(MAPP_MARKETS.get(bu, (bu,)))
+                for bu in sorted({r.bu for r in ALL_RULES if r.scope == scope})}
     out: dict[str, set[str]] = {}
     for r in ALL_RULES:
         if r.scope != scope:
@@ -50,6 +54,22 @@ def _bu_country_picker(tree: dict[str, list[str]], key_prefix: str) -> dict[str,
                         picks.append(ctry)
                 selected[bu] = picks
     return selected
+
+
+def _mapp_rows(automated: pd.DataFrame) -> pd.DataFrame:
+    """The Mobile App's automated cases in its baseline's unit: one row per
+    case × platform (iOS and Android) × market of the BU, as the Backlog and
+    Coverage tabs count it (Matteo, 2026-10-06).  The rules engine emits one
+    row per OS in the "MAPP Automation Operating System" field, with the BU as
+    the only country — a field only two BUs fill."""
+    if automated.empty:
+        return automated
+    cases = (automated.drop_duplicates(subset=["bu", "case_id"])
+             .drop(columns=["country_label", "device"]))
+    grid = pd.DataFrame([(bu, m, p) for bu in cases["bu"].unique()
+                         for m in MAPP_MARKETS.get(bu, (bu,)) for p in MAPP_PLATFORMS],
+                        columns=["bu", "country_label", "device"])
+    return cases.merge(grid, on="bu").reset_index(drop=True)
 
 
 def _apply_selection(df: pd.DataFrame, selection: dict[str, list[str]]) -> pd.DataFrame:
@@ -95,9 +115,18 @@ def _breakdown_table(subset: pd.DataFrame, keys: list[str]) -> None:
 
 
 # --------------------------------------------------------------------- cards
+# The two platforms a card splits its total into, per scope.
+_PLATFORMS = {"mobile_app": (("🍎", "iOS"), ("🤖", "Android"))}
+_BROWSER = (("🖥", "Desktop"), ("📱", "Mobile"))
+
+
 def _metric_card(title: str, subset: pd.DataFrame, accent: str,
-                 tooltip: str = "") -> None:
+                 tooltip: str = "", scope: str = "website") -> None:
     tot = metrics.totals(subset)
+    split = " &nbsp;·&nbsp; ".join(
+        f'{icon} {name} <b style="color:{COLORS["text"]}">'
+        f'{int((subset["device"] == name).sum()) if not subset.empty else 0:,}</b>'
+        for icon, name in _PLATFORMS.get(scope, _BROWSER))
     tip = f' title="{tooltip}"' if tooltip else ""
     st.markdown(
         f"""
@@ -113,8 +142,7 @@ def _metric_card(title: str, subset: pd.DataFrame, accent: str,
                 {tot['total']:,}
             </div>
             <div style="font-size:13px;color:{COLORS['muted']};margin-top:6px">
-                🖥 Desktop <b style="color:{COLORS['text']}">{tot['desktop']:,}</b>
-                &nbsp;·&nbsp; 📱 Mobile <b style="color:{COLORS['text']}">{tot['mobile']:,}</b>
+                {split}
             </div>
         </div>
         """,
@@ -147,6 +175,8 @@ def render() -> None:
                     "then it's cached…" if scope == "mobile_app" else "Loading…"):
         result = evaluate_rules(tuple(r.name for r in rules))
     automated_all = result.automated
+    if scope == "mobile_app":
+        automated_all = _mapp_rows(automated_all)
     if automated_all.empty:
         st.info(f"No automated cases for {scope_lbl} yet.")
         return
@@ -177,14 +207,14 @@ def render() -> None:
     with c1:
         _metric_card(
             "Smoke Suite", smoke, COLORS["warning"],
-            tooltip="Automated cases whose Priority is Highest.",
+            tooltip="Automated cases whose Priority is Highest.", scope=scope,
         )
     with c2:
         _metric_card(
             "All Automated Cases", regr, COLORS["brand"],
             tooltip=("Every automated case (deduplicated) in this scope — "
                      "NOT the regression baseline. For the baseline figures "
-                     "see the Backlog tab."),
+                     "see the Backlog tab."), scope=scope,
         )
     with c3:
-        _metric_card("Production Sanity", sanity, COLORS["success"])
+        _metric_card("Production Sanity", sanity, COLORS["success"], scope=scope)

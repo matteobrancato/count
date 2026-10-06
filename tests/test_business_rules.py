@@ -3609,3 +3609,31 @@ class TestCoverageReadsOneBu:
         assert cases["case_id"].tolist() == [1]                 # its suite, not deprecated
         assert rows["case_id"].tolist() == [1]                  # its rows, deduplicated
         assert cov._bu_frames.__wrapped__("website", "Nobody")[0] == "no bu cases"
+
+
+class TestOverviewMobileApp:
+    """The Overview counts the Mobile App in the Backlog's unit (2026-10-06)."""
+
+    def test_each_automated_case_counts_per_platform_and_market(self):
+        from src.ui import overview_tab as ov
+        auto = pd.DataFrame([
+            # one case automated by two tools, its OS field saying iOS only
+            {"bu": "Drogas", "case_id": 1, "country_label": "Drogas", "device": "iOS",
+             "framework": "a", "priority_label": "Highest"},
+            {"bu": "Drogas", "case_id": 1, "country_label": "Drogas", "device": "iOS",
+             "framework": "b", "priority_label": "Highest"},
+            {"bu": "Watsons Turkey", "case_id": 2, "country_label": "Watsons Turkey",
+             "device": "Unspecified", "framework": "a", "priority_label": "High"},
+        ])
+        out = ov._mapp_rows(auto)
+        assert sorted(zip(out["case_id"], out["country_label"], out["device"])) == [
+            (1, "DRG LT", "Android"), (1, "DRG LT", "iOS"),
+            (1, "DRG LV", "Android"), (1, "DRG LV", "iOS"),
+            (2, "Watsons Turkey", "Android"), (2, "Watsons Turkey", "iOS")]
+        assert len(ov.metrics.select_smoke(out)) == 4          # the Highest case, 4 rows
+
+    def test_the_filter_lists_the_app_markets(self):
+        from src.ui import overview_tab as ov
+        tree = ov._bu_country_map("mobile_app")
+        assert tree["Drogas"] == ["DRG LV", "DRG LT"]
+        assert tree["Watsons Turkey"] == ["Watsons Turkey"]
