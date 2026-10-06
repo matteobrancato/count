@@ -941,7 +941,10 @@ def _mapp_backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFra
     """The Mobile-App baseline pipeline, kept SEPARATE from `_backlog_data` so the
     website/microservices numbers (KPI strip, All-BU table, Dexter) stay
     untouched.  Loaded lazily — mobile_app is deferred from the start-up warm-up,
-    so this only fetches when the user actually opens the Mobile App scope."""
+    so this only fetches when the user actually opens the Mobile App scope.
+    Rows are case × platform × market since 2026-10-06 (`_expand_mapp_baseline`);
+    Streamlit keys this cache on THIS function's source, so a change to the
+    expansion needs a change here too, or yesterday's rows are served."""
     raw, auto, rules = _load_scope("mobile_app")
     if raw.empty:
         return pd.DataFrame(), {}, {}
@@ -1286,7 +1289,9 @@ def _tile_evidence(bu: str, scope: str, run: str = RUN_BIG) -> pd.DataFrame:
 
     The rows are the RUN's — the same frame its tiles count.  (Until
     2026-10-01 they were always the regression rows: a Production Sanity or
-    Small No-Regression tile downloaded the Big No-Regression rows.)
+    Small No-Regression tile downloaded the Big No-Regression rows.)  Keyed
+    on this source like every cached function: changed with the Mobile App
+    rows on 2026-10-06 so the files follow the new counts at once.
     """
     try:
         _summary, expanded_by_bu, _auto_by_bu = _run_data(run, scope)
