@@ -114,19 +114,37 @@ class TestMobileAppBaseline:
                                   mapp_devices=["iOS"])])
         assert bl._expand_mapp_baseline(raw, [mapp_rule]).empty
 
-    def test_both_os_expands_to_two_rows(self, mapp_rule):
-        raw = pd.DataFrame([_case(suite_id=19110, priority_label="Highest",
-                                  mapp_devices=["iOS", "Android"])])
-        out = bl._expand_mapp_baseline(raw, [mapp_rule])
-        assert sorted(out["device"]) == ["Android", "iOS"]
-
-    def test_country_label_is_the_bu(self, mapp_rule):
-        """MAPP has no country dimension — it must match the automated set,
-        which emits country_label = rule.bu."""
+    @pytest.mark.parametrize("os_field", [["iOS"], ["iOS", "Android"], ["Unspecified"], []])
+    def test_every_case_runs_on_both_platforms_in_every_market(self, mapp_rule, os_field):
+        """The QA team's unit (2026-10-06): case × iOS/Android × market,
+        whatever the OS field says (only two BUs filled it)."""
         raw = pd.DataFrame([_case(suite_id=19110, priority_label="High",
-                                  mapp_devices=["iOS"])])
+                                  mapp_devices=os_field)])
         out = bl._expand_mapp_baseline(raw, [mapp_rule])
-        assert list(out["country_label"]) == ["Drogas"]
+        assert sorted(zip(out["country_label"], out["device"])) == [
+            ("DRG LT", "Android"), ("DRG LT", "iOS"), ("DRG LV", "Android"), ("DRG LV", "iOS")]
+
+    def test_a_one_market_bu_is_labelled_with_its_name(self, mapp_rule):
+        rule = SimpleNamespace(**{**vars(mapp_rule), "bu": "Watsons Turkey"})
+        raw = pd.DataFrame([_case(suite_id=9416, priority_label="Highest", mapp_devices=[])])
+        out = bl._expand_mapp_baseline(raw, [rule])
+        assert sorted(zip(out["country_label"], out["device"])) == [
+            ("Watsons Turkey", "Android"), ("Watsons Turkey", "iOS")]
+
+    def test_the_case_status_decides_every_row(self, mapp_rule):
+        """Status is case-level: an automated case is automated on every row,
+        with no help from the automated set (its rows carry the OS field)."""
+        raw = pd.DataFrame([
+            _case(case_id=1, suite_id=19110, priority_label="High", mapp_devices=["iOS"],
+                  **{"status_Automation Status": "Automated"}),
+            _case(case_id=2, suite_id=19110, priority_label="High", mapp_devices=[],
+                  **{"status_Automation Status": "Not automated"}),
+        ])
+        rule = SimpleNamespace(**{**vars(mapp_rule), "status_field_label": "Automation Status"})
+        out = bl._classify_expanded(bl._expand_mapp_baseline(raw, [rule]), pd.DataFrame())
+        by_case = out.groupby("case_id")["category"].agg(lambda c: sorted(set(c)))
+        assert by_case[1] == ["automated"] and by_case[2] == ["backlog"]
+        assert (out["case_id"] == 1).sum() == 4
 
 
 # ── ICI: LU counts only for Highest-priority cases ───────────────────────────

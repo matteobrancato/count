@@ -32,7 +32,7 @@ shown: the big number is rows, the small caption is unique cases.
 |---|---|---|
 | 🌐 Website | cases labelled `big_regr_desktop` / `big_regr_mobile` | from the label (Desktop / Mobile) |
 | 🧩 Microservices | the same labels, on API-type cases | `API` (an API test has no desktop/mobile) |
-| 📱 Mobile App | cases with **Priority High or Highest** (no label exists yet) | the mobile OS (iOS / Android) |
+| 📱 Mobile App | cases with **Priority High** (No Regression) **or Highest** (Smoke) | **both** platforms, iOS and Android, in **every market** of the BU: one row per case × platform × market |
 
 **How each baseline row is classified**
 
@@ -193,8 +193,9 @@ METHODOLOGY_FOR_LLM = """
     · Website      → cases labelled `big_regr_desktop` / `big_regr_mobile`;
                      device comes from the label (Desktop / Mobile).
     · Microservices→ same labels on API-type cases; device is always "API".
-    · Mobile App   → cases with Priority High or Highest (no label exists);
-                     device is the mobile OS (iOS / Android).
+    · Mobile App   → cases with Priority High (No Regression) or Highest
+                     (Smoke); every case counts on iOS AND Android in every
+                     market of the BU (e.g. Drogas LV + LT: 4 rows per case).
   Each (case × country × device) baseline row is classified as one of:
     · Automated     — status Automated / Automated DEV / UAT / Prod
     · To be updated — status "To be updated" (was automated, needs maintenance)

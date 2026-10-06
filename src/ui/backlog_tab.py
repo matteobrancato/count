@@ -42,8 +42,8 @@ Counts
 Scopes
 ──────
   website / next_gen : the big_regr label baseline described above.
-  mobile_app         : a PRIORITY-based baseline (High/Highest) with the mobile
-                       OS as device — see `_expand_mapp_baseline`.  It is served
+  mobile_app         : a PRIORITY-based baseline (High/Highest), counted per
+                       case × platform × market — see `_expand_mapp_baseline`.  It is served
                        by its own `_mapp_backlog_data()` so the website /
                        microservices numbers (KPI strip, Dexter) are
                        never affected by it.
@@ -62,6 +62,8 @@ from .. import testrail_client as tr
 from ..bu_rules import (
     ALL_RULES,
     EXT_PROD_SANITY_LABEL,
+    MAPP_MARKETS,
+    MAPP_PLATFORMS,
     MOBILE_APP_BUS,
     PROD_SANITY_LABEL,
     WEBSITE_BUS,
@@ -415,16 +417,21 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     """Mobile-App baseline expansion.
 
     Different from the website baseline:
-      * membership = Priority in {High, Highest} (no big_regr label);
-      * device     = mobile OS (iOS / Android; "Both" already pre-split into the
-                     `mapp_devices` list by rules_engine);
-      * status     = the standard "Automation Status" field;
-      * no country dimension — country_label is the BU name, matching the
-        automated set (rules_engine emits country_label = rule.bu for MAPP).
+      * membership = Priority in {High, Highest} (no big_regr label): High is
+        the No Regression run, Highest the Smoke;
+      * rows       = case × platform (iOS AND Android) × market of the BU
+        (`MAPP_MARKETS`), the QA team's unit — Matteo, 2026-10-06.  Until then
+        a case was one row per OS in the "MAPP Automation Operating System"
+        field and the BU's name as its only country; only two BUs filled that
+        field, so their cases counted twice and everyone else's once;
+      * status     = the standard "Automation Status" field, case-level, so
+        every row of a case takes the case's category — automated included,
+        decided here rather than by matching the automated set, whose rows
+        still carry the OS field and the BU name.
     """
     _empty = pd.DataFrame(columns=["case_id", "country_label", "device",
                                    "_cat_base", "_tool_automated"])
-    if raw.empty or "priority_label" not in raw.columns or "mapp_devices" not in raw.columns:
+    if raw.empty or "priority_label" not in raw.columns:
         return _empty
 
     bu = rules[0].bu if rules else "Mobile App"
@@ -447,35 +454,27 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
         tbu_mask     |= is_tbu
         backlog_mask |= s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "") & ~is_tbu
 
-    raw = raw.copy()
-    raw["_cat_base"] = "unknown"
-    raw.loc[backlog_mask, "_cat_base"] = "backlog"
-    raw.loc[tbu_mask,      "_cat_base"] = "to_be_updated"
-    raw.loc[na_mask,       "_cat_base"] = "not_applicable"
-
-    # Same flag the website baseline carries (see there for why).  MAPP has no
-    # country field of its own — `country_label` IS the BU — so a case with an
-    # automated status always matches its rule and this can never disagree with
-    # the automated set.  Computed anyway so `_classify_expanded` has one shape
-    # to reason about instead of two.
+    # The automated statuses are the rule's own (`AUTOMATED_FULL`), so this is
+    # exactly what the automated set decides for these cases.
     auto_mask = pd.Series(False, index=raw.index)
     for col in status_cols:
         auto_mask |= raw[col].isin(_STATUS_AUTO)
+
+    raw = raw.copy()
+    raw["_cat_base"] = "unknown"
+    raw.loc[auto_mask,     "_cat_base"] = "automated"
+    raw.loc[backlog_mask, "_cat_base"] = "backlog"
+    raw.loc[tbu_mask,      "_cat_base"] = "to_be_updated"
+    raw.loc[na_mask,       "_cat_base"] = "not_applicable"
     raw["_tool_automated"] = auto_mask
 
-    # Device expansion from the OS list (iOS / Android).
-    raw["_devs"] = raw["mapp_devices"].apply(lambda d: d if isinstance(d, list) else [])
-    raw = raw[raw["_devs"].map(len) > 0]
-    if raw.empty:
-        return _empty
-    raw = raw.explode("_devs").rename(columns={"_devs": "device_exp"})
-    raw["country_label"] = bu
-
+    grid = pd.DataFrame([(m, p) for m in MAPP_MARKETS.get(bu, (bu,)) for p in MAPP_PLATFORMS],
+                        columns=["country_label", "device"])
     return (
-        raw[["case_id", "country_label", "device_exp", "_cat_base",
-             "_tool_automated"]]
-        .drop_duplicates(subset=["case_id", "country_label", "device_exp"])
-        .rename(columns={"device_exp": "device"})
+        raw[["case_id", "_cat_base", "_tool_automated"]]
+        .drop_duplicates(subset="case_id")
+        .merge(grid, how="cross")
+        [["case_id", "country_label", "device", "_cat_base", "_tool_automated"]]
         .reset_index(drop=True)
     )
 

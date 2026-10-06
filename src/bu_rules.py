@@ -538,6 +538,21 @@ ALL_RULES: list[Rule] = build_rules()
 WEBSITE_BUS:    list[str] = sorted({r.bu for r in ALL_RULES if r.scope == "website"})
 MOBILE_APP_BUS: list[str] = sorted({r.bu for r in ALL_RULES if r.scope == "mobile_app"})
 
+# The Mobile App baseline's unit (Matteo, 2026-10-06, as the QA team's
+# "No regression - smoke per BU" sheet counts it): every High (No Regression)
+# and Highest (Smoke) case is run on BOTH platforms in EVERY market of the BU,
+# so it counts case × platform × market.  A BU not listed has one market,
+# labelled with the BU's own name.
+MAPP_PLATFORMS: tuple[str, ...] = ("iOS", "Android")
+MAPP_MARKETS: dict[str, tuple[str, ...]] = {
+    "Kruidvat":           ("KV NL", "KV BE"),
+    "Drogas":             ("DRG LV", "DRG LT"),
+    "ICI Paris XL":       ("IPXL NL", "IPXL BE"),
+    "The Perfume Shop":   ("TPS GB", "TPS IRE"),
+    "Superdrug / Savers": ("SD", "SV"),
+    "Marionnaud":         ("MFR", "MIT", "MAT"),
+}
+
 
 def rules_for_bu(bu: str, scope: Scope | None = None) -> list[Rule]:
     return [r for r in ALL_RULES if r.bu == bu and (scope is None or r.scope == scope)]

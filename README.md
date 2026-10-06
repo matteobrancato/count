@@ -131,7 +131,7 @@ never disagree with each other.
 |---|---|---|
 | 🌐 Website | cases labelled `big_regr_desktop` / `big_regr_mobile` | from the label (Desktop / Mobile) |
 | 🧩 Microservices | the same labels on API-type cases | `API` |
-| 📱 Mobile App | cases with Priority High or Highest (no label exists yet) | the mobile OS (iOS / Android) |
+| 📱 Mobile App | cases with Priority High (No Regression) or Highest (Smoke) | iOS and Android, in every market of the BU (case × platform × market) |
 
 Each baseline row is classified — first match wins:
 
