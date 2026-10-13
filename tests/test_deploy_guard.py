@@ -65,3 +65,45 @@ def test_stale_bytecode_is_trusted_only_at_first_sight(tmp_path):
     seen: dict[str, float] = {}
     assert dg.stale_modules({"src.y": mod}, seen) == ["src.y"]    # first sight
     assert dg.stale_modules({"src.y": mod}, seen) == []           # known now
+
+
+# ── computed caches: cleared on a deploy, downloads kept (2026-10-13) ────────
+def test_a_deploy_asks_the_outgoing_code_to_drop_its_computed_numbers():
+    calls = []
+    fresh = types.SimpleNamespace(clear_computed=lambda: calls.append(1) or 17)
+    assert dg.clear_computed({"src.freshness": fresh}) == 17
+    assert calls == [1]
+
+
+def test_old_code_without_the_hook_or_a_failing_hook_never_blocks_a_deploy():
+    assert dg.clear_computed({}) == 0
+    assert dg.clear_computed({"src.freshness": types.SimpleNamespace()}) == 0
+
+    def boom():
+        raise RuntimeError("cache backend down")
+    assert dg.clear_computed({"src.freshness": types.SimpleNamespace(clear_computed=boom)}) == 0
+
+
+def test_every_cache_is_either_downloaded_data_or_a_computed_number():
+    """A cache added under plain @st.cache_data is downloaded data and survives
+    a deploy; anything computed must use `computed_cache`, or new logic would
+    be served old numbers until the next full reload."""
+    import pathlib
+    import re
+    downloaded = {"_fetch_cases_cached", "_fetch_labels_cached", "_fetch_sections_cached",
+                  "fetch_case_fields", "fetch_case_types", "fetch_priorities", "fetch_suite",
+                  "field_ids_by_name", "project_versions", "uat_issues", "incidents",
+                  "_jira_issues", "stamp"}
+    found = set()
+    for path in pathlib.Path("src").rglob("*.py"):
+        found |= set(re.findall(r"@st\.cache_data\([^\n]*\)\ndef (\w+)",
+                                path.read_text(encoding="utf-8")))
+    assert found == downloaded
+
+
+def test_clear_computed_clears_what_was_registered(monkeypatch):
+    from src import freshness
+    cleared = []
+    fake = types.SimpleNamespace(clear=lambda: cleared.append(1))
+    monkeypatch.setattr(freshness, "_COMPUTED", [fake, fake])
+    assert freshness.clear_computed() == 2 and cleared == [1, 1]

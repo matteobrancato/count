@@ -21,9 +21,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-import streamlit as st
-
 from . import testrail_client as tr
+from .freshness import computed_cache
 
 
 def _norm(s: str) -> str:
@@ -186,7 +185,7 @@ def _parse_all_configs(raw_field: dict) -> tuple[dict, dict, list]:
 # and, when one of them met a 429, the whole expansion died with it: that is the
 # `get_case_types → 429` in the 2026-08-14 logs.  Custom fields change rarely,
 # and ↻ clears this with everything else.
-@st.cache_data(show_spinner="Resolving TestRail custom fields…", persist="disk")
+@computed_cache(show_spinner="Resolving TestRail custom fields…", persist="disk")
 def _build_registry_raw() -> dict:
     fields = tr.fetch_case_fields()
     types  = tr.fetch_case_types()

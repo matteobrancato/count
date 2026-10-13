@@ -70,6 +70,35 @@ def clear_everything() -> None:
     tr.reset_warm_state()
 
 
+# ── computed caches ───────────────────────────────────────────────────────────
+# Two kinds of cache: what was DOWNLOADED (TestRail and Jira payloads, the
+# stamp) and what the dashboard COMPUTES from it.  Streamlit keys a cache on
+# its own function's source, so a change to logic it CALLS — a rule, an
+# expansion — never reached it: the old numbers stayed until the next full
+# reload (three times in two weeks, the last on Trekpleister, 2026-10-13).
+# Computed caches are declared with `computed_cache`; on a deploy the guard
+# calls the OUTGOING code's `clear_computed`, so the new logic recomputes from
+# the payloads already downloaded instead of waiting for a ~13-minute reload.
+_COMPUTED: list = []
+
+
+def computed_cache(**kwargs):
+    """`st.cache_data(**kwargs)` for a value computed from downloaded data."""
+    def wrap(fn):
+        cached = st.cache_data(**kwargs)(fn)
+        _COMPUTED.append(cached)
+        return cached
+    return wrap
+
+
+def clear_computed() -> int:
+    """Drop every computed cache this process has loaded; the downloads stay.
+    Returns how many were cleared."""
+    for cached in _COMPUTED:
+        cached.clear()
+    return len(_COMPUTED)
+
+
 def roll_over_if_new_day() -> bool:
     """Clear everything if the numbers were fetched on an earlier business day.
 

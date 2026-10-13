@@ -37,7 +37,7 @@ import streamlit as st
 
 from .. import gemini_client
 from ..bu_rules import ALL_RULES, BU_ALIASES
-from ..freshness import DAY_TTL
+from ..freshness import DAY_TTL, computed_cache
 from ..methodology import METHODOLOGY_FOR_LLM
 from ..rules_engine import evaluate_rules
 from . import coverage_tab
@@ -344,7 +344,7 @@ def _regression_stats(expanded) -> dict:
     }
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _build_coverage_brief() -> str:
     """Build a compact markdown snapshot of CURRENT coverage for every BU.
 

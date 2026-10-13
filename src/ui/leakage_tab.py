@@ -45,7 +45,7 @@ from .. import leakage_ai as lai
 from .. import leakage_export as lx
 from .. import leakage_match as lm
 from .. import leakage_store as ls
-from ..freshness import DAY_TTL
+from ..freshness import DAY_TTL, computed_cache
 from . import global_filter
 from .styles import COLORS, section_title, stat_card
 
@@ -144,7 +144,7 @@ def _group_and_releases():
 
 
 # ── TestRail context, coverage and the AI ────────────────────────────────────
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _context(bus: tuple[str, ...], rows_json: str) -> dict[str, tuple[list, list]]:
     """{incident key: (linked [(CaseInfo, why)], candidates [CaseInfo])}."""
     index = lm.index_for(bus)

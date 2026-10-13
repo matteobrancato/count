@@ -11,9 +11,13 @@ source file is newer than the bytecode it was loaded from — or than it was the
 last time this guard looked, for a host that writes no bytecode — every src
 module is dropped from sys.modules, and the imports that follow load the
 deployed code.
-Caches survive — Streamlit keys them on each function's code, as when it
-reloads a module it watches itself.  Module-level state (the TestRail account
-pool, the pacer) starts afresh, as after a reboot.
+The downloaded data survives (TestRail and Jira payloads, the stamp).  The
+numbers computed from it do not: before dropping the modules, the guard asks
+the outgoing code to clear its computed caches (`src.freshness.clear_computed`),
+because Streamlit keys a cache on its own function's source and new logic in a
+function it calls would otherwise be served the old results until the next
+full reload.  Module-level state (the TestRail account pool, the pacer) starts
+afresh, as after a reboot.
 
 app.py calls `reload_after_deploy()` on every run, before its own imports from
 src/.  This module stays outside src/ so that it is never among the modules it
@@ -65,11 +69,26 @@ def stale_modules(modules: Mapping | None = None,
     return stale
 
 
+def clear_computed(modules: Mapping) -> int:
+    """Have the loaded code drop the numbers it computed; returns how many
+    caches it cleared (0 when that code has no such hook, as before
+    2026-10-13).  A failure is logged, never raised: a deploy must load."""
+    clear = getattr(modules.get(f"{PACKAGE}.freshness"), "clear_computed", None)
+    if clear is None:
+        return 0
+    try:
+        return int(clear())
+    except Exception:
+        logging.getLogger(__name__).exception("Clearing the computed caches failed")
+        return 0
+
+
 def reload_after_deploy() -> list[str]:
     """Drop every src module if any is stale; returns the stale ones."""
     seen = sys.__dict__.setdefault(_SEEN_ATTR, {})
     stale = stale_modules(seen=seen)
     if stale:
+        clear_computed(sys.modules)
         for name in [n for n in sys.modules if _ours(n)]:
             source = getattr(sys.modules[name], "__file__", None)
             try:

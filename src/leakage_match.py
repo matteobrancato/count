@@ -26,10 +26,9 @@ from collections import Counter
 from dataclasses import dataclass
 
 import pandas as pd
-import streamlit as st
 
 from . import jira_client
-from .freshness import DAY_TTL
+from .freshness import DAY_TTL, computed_cache
 
 TOP_CANDIDATES = 10
 # The AI's confidence at or above which a match counts as the covering case.
@@ -178,7 +177,7 @@ def gap(statuses: list[str]) -> str:
 
 
 # ── the index for a group, from the Backlog tab's cached frames ──────────────
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def index_for(bus: tuple[str, ...]) -> Index:
     """Cases of the given BUs (website scope), with their Backlog status."""
     from .ui.backlog_tab import _backlog_data, _filter_bu, _load_scope

@@ -53,7 +53,7 @@ from ..bu_rules import (
     PROD_SANITY_LABEL,
     filter_conditional_tokens,
 )
-from ..freshness import DAY_TTL
+from ..freshness import DAY_TTL, computed_cache
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, section_title
@@ -75,7 +75,7 @@ def _load_scope(scope: str):
     return result.raw_cases, result.automated, rules
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _bu_frames(scope: str, bu: str) -> tuple[str, pd.DataFrame, pd.DataFrame]:
     """("ok" | "no scope data" | "no bu cases", the BU's non-deprecated cases
     in its own countries, its automated rows deduplicated on case × country

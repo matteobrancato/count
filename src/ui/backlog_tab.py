@@ -69,7 +69,7 @@ from ..bu_rules import (
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
-from ..freshness import DAY_TTL
+from ..freshness import DAY_TTL, computed_cache
 from ..rules_engine import evaluate_rules
 from . import global_filter
 from .styles import (
@@ -747,7 +747,7 @@ def _build_summary(
     return pd.DataFrame(rows), expanded_by_bu, auto_by_bu
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                              dict[tuple[str, str], pd.DataFrame]]:
     """The heavy 11-BU baseline pipeline (expand + classify + stats), computed
@@ -808,7 +808,7 @@ _RUN_MEANING = {
 # COPY of every case of the scope, only to keep a few hundred IDs.  Opening
 # the runs one after another stacked those copies; the app restarted right
 # after a sequence like that on 2026-10-02.
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _small_nr_cases(scope: str) -> set[int]:
     """Case IDs carrying the `small_nr` checkbox.
 
@@ -825,7 +825,7 @@ def _small_nr_cases(scope: str) -> set[int]:
     return set(raw.loc[raw["small_nr"].fillna(False), "case_id"].astype(int))
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _smoke_cases(scope: str) -> set[int]:
     """Case IDs with priority Highest: Smoke is the regression baseline's
     Highest cases (Matteo, 2026-10-02) — a SUBSET, like Small NR.  "Highest"
@@ -892,7 +892,7 @@ def _run_data(run: str, scope: str):
     return pd.DataFrame(rows), small, auto_by_bu
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                  dict[tuple[str, str], pd.DataFrame]]:
     """The Production Sanity baseline, kept SEPARATE from `_backlog_data`.
@@ -937,7 +937,7 @@ def _with_every_bu(summary: pd.DataFrame) -> pd.DataFrame:
             .sort_values("_o", kind="stable").drop(columns="_o").reset_index(drop=True))
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _ext_prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                      dict[tuple[str, str], pd.DataFrame]]:
     """The Extended Production Sanity baseline: cases labelled
@@ -955,7 +955,7 @@ def _ext_prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.Data
     return _with_every_bu(summary), expanded_by_bu, auto_by_bu
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _mapp_backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                   dict[tuple[str, str], pd.DataFrame]]:
     """The Mobile-App baseline pipeline, kept SEPARATE from `_backlog_data` so the
@@ -1292,7 +1292,7 @@ def _category_rows(expanded: pd.DataFrame, category: str,
     return _rows_for_category(_evidence_frame(expanded, scope), category)
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _tile_evidence(bu: str, scope: str, run: str = RUN_BIG) -> pd.DataFrame:
     """The evidence behind a BU's tiles, built once per BU and refresh.
 
@@ -2008,7 +2008,7 @@ def _case_automation(categories: list[str]) -> str:
     return f"Automated on {categories.count('automated')} of {len(categories)}"
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _ext_cases() -> dict[tuple[str, str], list[dict]]:
     """{(bu, scope): [case]} for the Extended Production Sanity run: id,
     title, TestRail link, automation and the Jira keys its refs cite — all

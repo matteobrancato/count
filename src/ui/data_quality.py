@@ -29,7 +29,7 @@ import re
 import pandas as pd
 import streamlit as st
 
-from ..freshness import DAY_TTL
+from ..freshness import DAY_TTL, computed_cache
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def _tokens(mc) -> set[str]:
     return set(mc) if isinstance(mc, list) else set()
 
 
-@st.cache_data(ttl=DAY_TTL, show_spinner=False)
+@computed_cache(ttl=DAY_TTL, show_spinner=False)
 def _scan(scope: str = "website") -> dict[str, pd.DataFrame]:
     """All applicable checks for *scope*.  Raises on failure so st.cache_data
     never caches an error (retried next rerun).
