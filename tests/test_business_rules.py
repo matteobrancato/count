@@ -834,6 +834,18 @@ class TestFrameworkPrecedence:
             for cid, country, device, fw in rows
         ])
 
+    def test_two_bus_on_the_same_case_keep_their_own_frameworks(self):
+        """KV and TP share suite 722 and both call their Dutch rows NL: a TP
+        Java row must not take the TestIM of KV's row on the same case."""
+        auto = pd.DataFrame([
+            {"bu": "Kruidvat", "case_id": 1, "country_label": "NL", "device": "Desktop",
+             "framework": "testim_desktop"},
+            {"bu": "Trekpleister", "case_id": 1, "country_label": "NL", "device": "Desktop",
+             "framework": "java"},
+        ])
+        out = eng._apply_framework_precedence(auto, self._raw((1, ["big_regr_desktop"])))
+        assert out["framework"].tolist() == ["testim_desktop", "java"]
+
     def test_label_promotes_java_to_playwright(self):
         out = eng._apply_framework_precedence(
             self._auto((1, "NL", "Desktop", "java")),
@@ -3662,6 +3674,12 @@ class TestTrekpleisterOwnsItsAutomation:
     def test_there_are_no_testim_rules_for_trekpleister(self):
         from src.bu_rules import ALL_RULES
         assert {r.framework for r in ALL_RULES if r.bu == "Trekpleister"} == {"java", "playwright"}
+
+    def test_tp_s_own_field_counts_on_any_case_type(self):
+        """Functional cases automated for TP count, like ICI's and TPS's."""
+        from src.bu_rules import ALL_RULES
+        tp = next(r for r in ALL_RULES if r.name == "TKP JAVA")
+        assert tp.type_filter == []
 
     def test_a_kv_testim_script_does_not_make_a_tp_row_partial(self):
         # the TestIM fields are not TP's any more, so they cannot speak for it

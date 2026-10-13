@@ -231,6 +231,12 @@ def build_rules() -> list[Rule]:
         countries_filter=TKP_TOKENS,
         country_labels=TKP_LABELS,
         implicit_country="NL",
+        # No type restriction, like ICI and TPS: the baseline admits a case by
+        # its big_regr label whatever its Type, so the Rule's Regression-only
+        # default left 25 Functional cases with "Automation Status TP" =
+        # Automated (46 rows) unable to count as automated — they read
+        # "partially automated" instead (2026-10-13).
+        type_filter=[],
     ))
     # No TestIM rules for Trekpleister (removed 2026-10-13).  TP is a site of
     # its own with one country, but its cases live in KV's suite, and the two

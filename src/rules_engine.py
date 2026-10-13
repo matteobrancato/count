@@ -336,7 +336,13 @@ def _apply_framework_precedence(automated: pd.DataFrame,
         fw = fw.where(~is_pw, "playwright")
         prio = prio.where(~is_pw, _FRAMEWORK_PRIORITY["playwright"])
 
-    keys = ["case_id", "country_label", "device"]
+    # Per BU too: Kruidvat and Trekpleister share suite 722 and both label
+    # their Dutch rows "NL", so without the BU a TP row took the framework of
+    # the KV row on the same case (six TP rows read TestIM, a tool TP has
+    # never used — 2026-10-13).
+    keys = ["bu", "case_id", "country_label", "device"]
+    if "bu" not in automated.columns:
+        keys = keys[1:]
     if not set(keys) <= set(automated.columns):
         return automated.assign(framework=fw)
 
