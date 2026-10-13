@@ -3637,3 +3637,47 @@ class TestOverviewMobileApp:
         tree = ov._bu_country_map("mobile_app")
         assert tree["Drogas"] == ["DRG LV", "DRG LT"]
         assert tree["Watsons Turkey"] == ["Watsons Turkey"]
+
+
+class TestTrekpleisterOwnsItsAutomation:
+    """TP shares KV's suite: only TP's own field and Playwright on TP say a
+    script exists for a TP row (2026-10-13)."""
+
+    @staticmethod
+    def _rules():
+        tp_java = SimpleNamespace(bu="Trekpleister", scope="website", suite_id=722,
+                                  countries_filter=["TP"], country_labels={"TP": "NL"},
+                                  status_field_label="Automation Status TP",
+                                  country_field_label="multi_countries", labels_filter=[])
+        tp_pw = SimpleNamespace(**{**vars(tp_java), "status_field_label": "Automation Status",
+                                   "labels_filter": ["playwright"]})
+        return [tp_java, tp_pw]
+
+    def _category(self, **over):
+        raw = pd.DataFrame([_case(suite_id=722, multi_countries=["KVN", "TP"],
+                                  **{"status_Automation Status TP": "Not automated", **over})])
+        out = bl._classify_expanded(bl._expand_baseline(raw, self._rules()), pd.DataFrame())
+        return out["category"].tolist()
+
+    def test_there_are_no_testim_rules_for_trekpleister(self):
+        from src.bu_rules import ALL_RULES
+        assert {r.framework for r in ALL_RULES if r.bu == "Trekpleister"} == {"java", "playwright"}
+
+    def test_a_kv_testim_script_does_not_make_a_tp_row_partial(self):
+        # the TestIM fields are not TP's any more, so they cannot speak for it
+        assert self._category(**{"status_Automation Status Testim Desktop": "Automated UAT"}) == [
+            "backlog"]
+
+    def test_the_generic_status_needs_the_playwright_label(self):
+        assert self._category(**{"status_Automation Status": "Automated"}) == ["backlog"]
+        assert self._category(labels=["big_regr_desktop", "playwright"],
+                              **{"status_Automation Status": "Automated"}) == ["partially_automated"]
+
+    def test_an_ungated_field_still_counts(self):
+        rule = SimpleNamespace(bu="ICI Paris XL", scope="website", suite_id=30122,
+                               countries_filter=["IPXL NL"], country_labels={"IPXL NL": "NL"},
+                               status_field_label="Automation Status",
+                               country_field_label="multi_countries", labels_filter=[])
+        raw = pd.DataFrame([_case(suite_id=30122, multi_countries=["IPXL NL"],
+                                  **{"status_Automation Status": "Automated"})])
+        assert bool(bl._expand_baseline(raw, [rule])["_tool_automated"].all())

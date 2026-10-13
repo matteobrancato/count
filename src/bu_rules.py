@@ -232,11 +232,14 @@ def build_rules() -> list[Rule]:
         country_labels=TKP_LABELS,
         implicit_country="NL",
     ))
-    rules += _testim_pair("Trekpleister", "TKP", KV_SUITE, TKP_TOKENS,
-                          country_labels=TKP_LABELS,
-                          implicit_country="NL",
-                          type_filter=[],
-                          country_field_label="Testim Country Coverage")
+    # No TestIM rules for Trekpleister (removed 2026-10-13).  TP is a site of
+    # its own with one country, but its cases live in KV's suite, and the two
+    # TestIM status fields are shared with Kruidvat.  No case has ever named TP
+    # in "Testim Country Coverage": those scripts are Kruidvat's.  The rules
+    # only imported them — 69 TP rows read "partially automated" because KV
+    # had a TestIM script, and the implicit NL country attributed three KV
+    # scripts with an empty coverage field to TP.  TP's automation is its own
+    # field ("Automation Status TP") and Playwright (rule further down).
 
     # ==================================================================== IPXL
     # Uses the generic "Automation Status" field (not "Automation Status ICI").

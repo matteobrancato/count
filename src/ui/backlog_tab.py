@@ -142,6 +142,15 @@ def _read_status_cols(raw: pd.DataFrame, rules: list) -> list[str]:
     return [c for c in raw.columns if c in wanted]
 
 
+def _label_gates(rules: list, col: str) -> list[set[str]]:
+    """The label sets that let a case's value in status column *col* count,
+    one per rule reading that field; an empty set (an ungated rule) admits
+    every case.  Like the rules engine, a gate needs ALL its labels."""
+    return [{str(w).strip().lower() for w in getattr(r, "labels_filter", []) or []}
+            for r in rules
+            if f"status_{getattr(r, 'status_field_label', '')}" == col]
+
+
 def _is_to_update(series: pd.Series) -> pd.Series:
     """Boolean mask: status value equals a 'To be updated' label (normalised)."""
     return series.notna() & series.astype(str).str.strip().str.lower().isin(_STATUS_TO_UPDATE)
@@ -339,9 +348,20 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     #
     # Restricted to `status_cols` for the same reason the classification is:
     # another BU's field must never speak for this one's rows.
+    #
+    # And only on the cases a rule reading that field admits: a field read by a
+    # label-gated rule — Playwright on the generic "Automation Status" — speaks
+    # only for cases carrying the label, the gate the rules engine applies to
+    # the automated set.  Without it a generic "Automated" left on a case with
+    # no `playwright` label made rows "partially automated" (nine Trekpleister
+    # cases, 2026-10-13).
+    have = raw["labels"].map(
+        lambda ls: {str(x).strip().lower() for x in ls} if isinstance(ls, list) else set())
     auto_mask = pd.Series(False, index=raw.index)
     for col in status_cols:
-        auto_mask |= raw[col].isin(_STATUS_AUTO)
+        gates = _label_gates(rules, col)
+        admitted = have.map(lambda h, gates=gates: any(g <= h for g in gates))
+        auto_mask |= raw[col].isin(_STATUS_AUTO) & admitted
     raw["_tool_automated"] = auto_mask
 
     # ── Country expansion ─────────────────────────────────────────────────────
