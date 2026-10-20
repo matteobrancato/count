@@ -66,6 +66,7 @@ from ..bu_rules import (
     MAPP_PLATFORMS,
     MOBILE_APP_BUS,
     PROD_SANITY_LABEL,
+    SMALL_NR_FIELDS,
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
@@ -576,6 +577,47 @@ def _classify_expanded(expanded: pd.DataFrame, auto: pd.DataFrame) -> pd.DataFra
 
 
 # ── stats ─────────────────────────────────────────────────────────────────────
+# The three framework tiles, oldest to newest: (key in `_stats`, name shown).
+_FRAMEWORK_TILES = (("java", "Java"), ("testim", "TestIM"),
+                    ("playwright", "Playwright"))
+# Rule framework → tile.  `mobile_app` has none: its rows split by platform.
+_FRAMEWORK_OF = {"java": "Java", "testim_desktop": "TestIM",
+                 "testim_mobile": "TestIM", "playwright": "Playwright"}
+
+
+def _row_frameworks(expanded: pd.DataFrame,
+                    auto: pd.DataFrame | None) -> pd.Series:
+    """The framework tile each AUTOMATED baseline row counts for — "Java",
+    "TestIM" or "Playwright" — and "" for every other row.
+
+    The ONE implementation: the framework tiles count it and their downloads
+    filter on it, so a tile and its file cannot disagree.
+    `rules_engine._apply_framework_precedence` has already given every
+    (case, country, device) a single framework, the newest; should two ever
+    meet here, the newest still wins rather than the row counting twice.
+    """
+    out = pd.Series("", index=expanded.index, dtype=object)
+    if (expanded.empty or auto is None or auto.empty
+            or "framework" not in auto.columns):
+        return out
+    keys = ["case_id", "country_label", "device"]
+    newest = {name: i for i, (_key, name) in enumerate(reversed(_FRAMEWORK_TILES))}
+    fw = auto[keys + ["framework"]].copy()
+    fw["case_id"] = fw["case_id"].astype(int)
+    fw["_fw"] = fw["framework"].map(_FRAMEWORK_OF)
+    fw = (fw.dropna(subset=["_fw"])
+            .assign(_rank=lambda d: d["_fw"].map(newest))
+            .sort_values("_rank", kind="stable")
+            .drop_duplicates(keys))
+    rows = expanded[keys].copy()
+    rows["case_id"] = rows["case_id"].astype(int)
+    found = rows.merge(fw[keys + ["_fw"]], on=keys, how="left")["_fw"].to_numpy()
+    automated = expanded["category"].eq("automated").to_numpy()
+    out[:] = [f if a and isinstance(f, str) else ""
+              for f, a in zip(found, automated)]
+    return out
+
+
 def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     """Expanded row counts, unique case counts, and framework breakdown."""
     cats   = expanded["category"].value_counts()
@@ -601,32 +643,15 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     u_tbu   = _u("to_be_updated")
     u_na    = _u("not_applicable")
 
-    # Framework breakdown via merge (vectorised — no row-by-row apply).
-    # `rules_engine._apply_framework_precedence` has already given each row ONE
-    # framework (newest tool wins), so these three no longer overlap.
+    # Framework breakdown: one framework per automated row, from the same
+    # function the framework tiles' downloads filter on (`_row_frameworks`).
     counts_fw = {"java": (0, 0), "testim": (0, 0), "playwright": (0, 0)}
     if not auto.empty and n_auto > 0:
-        auto_exp = expanded[expanded["category"] == "automated"].copy()
-        auto_exp["case_id"] = auto_exp["case_id"].astype(int)
-
-        base = auto[["case_id", "country_label", "device", "framework"]].copy()
-        base["case_id"] = base["case_id"].astype(int)
-
-        for fw_name, fw_mask in [
-            ("java",       base["framework"] == "java"),
-            ("testim",     base["framework"].isin(["testim_desktop", "testim_mobile"])),
-            ("playwright", base["framework"] == "playwright"),
-        ]:
-            keys = (
-                base[fw_mask][["case_id", "country_label", "device"]]
-                .drop_duplicates()
-                .assign(**{f"_{fw_name}": True})
-            )
-            m    = auto_exp.merge(keys, on=["case_id", "country_label", "device"], how="left")
-            flag = f"_{fw_name}"
-            matched = m[m[flag].fillna(False)]
-            counts_fw[fw_name] = (int(m[flag].sum()),
-                                  int(matched["case_id"].nunique()))
+        fw = _row_frameworks(expanded, auto)
+        for key, name in _FRAMEWORK_TILES:
+            on = fw.eq(name)
+            counts_fw[key] = (int(on.sum()),
+                              int(expanded.loc[on, "case_id"].astype(int).nunique()))
     n_java, u_java             = counts_fw["java"]
     n_testim, u_testim         = counts_fw["testim"]
     n_playwright, u_playwright = counts_fw["playwright"]
@@ -1141,12 +1166,16 @@ def _deciding_field(case: dict, device: str, category: str,
 
 
 def _evidence_frame(expanded: pd.DataFrame, scope: str,
-                    bu: str = "") -> pd.DataFrame:
+                    bu: str = "", auto: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every baseline row with the TestRail evidence behind its classification.
 
     Built ONCE per BU (see `_tile_evidence`): the per-case metadata join, the
     dict build and the deciding-field pass are the expensive part, and doing
     them per tile cost ~460ms on every rerun of the tab.
+
+    Given the automated rows (*auto*), each automated row also names the
+    framework tile it counts for — the column the framework downloads filter
+    on, and the one a lead reconciling "Java 200" needs to see.
     """
     if expanded is None or expanded.empty:
         return pd.DataFrame()
@@ -1181,6 +1210,7 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
         logger.exception("Evidence export: case metadata join failed (%s)", scope)
 
     out = expanded[["case_id", "country_label", "device", "category"]].copy()
+    out["Framework"] = _row_frameworks(expanded, auto).to_numpy()
     out["case_id"] = out["case_id"].astype(int)
     out["_cat"] = out["category"]
     if not meta.empty:
@@ -1252,7 +1282,7 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
     # BU" they make no claim about counting, they are the field, and a QA lead
     # reconciling against TestRail needs them to match it character for
     # character.
-    out = out.drop(columns=[c for c in _TOOL_COUNTRY
+    out = out.drop(columns=[c for c in (*_TOOL_COUNTRY, "Framework")
                             if c in out.columns and not out[c].any()])
     out = out.rename(columns={"labels": "Labels",
                               "multi_countries": "Countries counted for this BU",
@@ -1260,7 +1290,7 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
                               "device_field": "Device (TestRail field)",
                               **_TOOL_COUNTRY})
 
-    lead = ["Case ID", "Title", "Country", "Device", "Category",
+    lead = ["Case ID", "Title", "Country", "Device", "Category", "Framework",
             "Decided By", "Deciding Value"]
     tail = ["Section", "TestRail Link"]
     middle = [c for c in out.columns
@@ -1283,6 +1313,15 @@ def _rows_for_category(evidence: pd.DataFrame, category: str) -> pd.DataFrame:
         return evidence.drop(columns=["_cat"], errors="ignore")
     sub = evidence if category == "total" else evidence[evidence["_cat"] == category]
     return sub.drop(columns=["_cat"])
+
+
+def _rows_for_framework(evidence: pd.DataFrame, framework: str) -> pd.DataFrame:
+    """The rows behind one framework tile ("Java", "TestIM", "Playwright"),
+    from an evidence frame built with the automated rows (see
+    `_evidence_frame`)."""
+    if evidence.empty or "Framework" not in evidence.columns:
+        return evidence.iloc[0:0].drop(columns=["_cat"], errors="ignore")
+    return evidence[evidence["Framework"] == framework].drop(columns=["_cat"])
 
 
 def _category_rows(expanded: pd.DataFrame, category: str,
@@ -1313,11 +1352,12 @@ def _tile_evidence(bu: str, scope: str, run: str = RUN_BIG) -> pd.DataFrame:
     rows on 2026-10-06 so the files follow the new counts at once.
     """
     try:
-        _summary, expanded_by_bu, _auto_by_bu = _run_data(run, scope)
+        _summary, expanded_by_bu, auto_by_bu = _run_data(run, scope)
     except Exception:                                                   # noqa: BLE001
         logger.exception("Tile evidence unavailable for %s (%s)", bu, scope)
         return pd.DataFrame()
-    return _evidence_frame(expanded_by_bu.get((bu, scope)), scope, bu)
+    return _evidence_frame(expanded_by_bu.get((bu, scope)), scope, bu,
+                           auto=auto_by_bu.get((bu, scope)))
 
 
 # What each category means in TestRail terms.  Written from the same constants
@@ -1362,10 +1402,66 @@ _NOT_EXPRESSIBLE = {
 }
 
 
+def _run_membership(scope: str, run: str) -> list[dict]:
+    """Recipe lines for the cases a run takes and how a case becomes rows.
+
+    Every run used to be described as the regression one, so a Production
+    Sanity download told whoever reproduced it to filter on the big_regr
+    labels — the wrong cases, and the wrong devices (2026-10-20).
+    """
+    if scope == "mobile_app":
+        out = [{"Field": "Priority",
+                "Filter": "Highest" if run == RUN_SMOKE else "High or Highest"},
+               {"Field": "Rows", "Filter": "every case counts on iOS AND Android, "
+                                           "in every market of the BU"}]
+    else:
+        if run in (RUN_PS, RUN_EXT):
+            label = _LABEL_PROD_SANITY if run == RUN_PS else _LABEL_EXT_PROD_SANITY
+            out = [{"Field": "Labels", "Filter": f"contains {label}"}]
+            device = ("the TestRail Device field: Desktop = 1 row, Mobile = 1 row, "
+                      "Both = 2 rows (Desktop + Mobile)")
+        else:
+            out = [{"Field": "Labels",
+                    "Filter": f"contains {_LABEL_DESKTOP} and/or {_LABEL_MOBILE}"}]
+            device = (f"from the labels: {_LABEL_DESKTOP} = Desktop row, "
+                      f"{_LABEL_MOBILE} = Mobile row")
+        if scope == "next_gen":
+            device = "API (an API test has no desktop or mobile)"
+        out.append({"Field": "Device", "Filter": device})
+        if run == RUN_SMOKE:
+            out.append({"Field": "Priority", "Filter": "Highest"})
+    if run == RUN_SMALL:
+        out.append({"Field": SMALL_NR_FIELDS[0], "Filter": "ticked"})
+    return out
+
+
+# Which rules can put a row on each framework tile.  Playwright comes from the
+# `playwright` label, whichever field made the row automated.
+_TILE_RULE_FRAMEWORKS = {"Java": {"java"},
+                         "TestIM": {"testim_desktop", "testim_mobile"}}
+
+
+def _framework_lines(framework: str) -> list[dict]:
+    """What puts a row on a framework tile, beyond its status field."""
+    pw = "playwright"
+    label = ({"Field": "Labels", "Filter": f"contains {pw}"} if framework == "Playwright"
+             else {"Field": "Labels", "Filter": f"does NOT contain {pw}"})
+    return [label, {
+        "Field": "Framework",
+        "Filter": "each row counts for ONE framework, the newest that covers "
+                  "it: Playwright, then TestIM, then Java.  A case automated "
+                  "on Testim AND on another status field is counted under "
+                  "TestIM only; TestRail returns it under both filters.",
+    }]
+
+
 def _filter_recipe(bu: str, scope: str, category: str,
                    n_rows: int, n_cases: int,
-                   member_label: str | None = None) -> pd.DataFrame:
-    """How to pull the same subset out of TestRail, generated from the rules.
+                   run: str = RUN_BIG,
+                   framework: str | None = None) -> pd.DataFrame:
+    """How to pull the same subset out of TestRail, generated from the rules —
+    for the run the tile belongs to, and for one framework tile when
+    *framework* is given.
 
     Reproducing a number by hand is how a QA lead checks it, and every time
     somebody has tried this week the two counts differed for a reason nobody
@@ -1377,16 +1473,19 @@ def _filter_recipe(bu: str, scope: str, category: str,
         return pd.DataFrame()
     auto_vals = ", ".join(sorted({v for r in rules for v in r.automated_values}))
     na_vals   = ", ".join(sorted(_STATUS_NA))
-    labels = (member_label if member_label
-              else f"{_LABEL_DESKTOP} and/or {_LABEL_MOBILE}")
 
     rows: list[dict] = [
         {"Field": "Business Unit",  "Filter": bu},
         {"Field": "Suite ID",       "Filter": ", ".join(
             str(x) for x in sorted({r.suite_id for r in rules}))},
         {"Field": "Deprecated",     "Filter": "No"},
-        {"Field": "Labels",         "Filter": f"contains {labels}"},
+        *_run_membership(scope, run),
     ]
+    if framework:
+        rows += _framework_lines(framework)
+        keep = _TILE_RULE_FRAMEWORKS.get(framework)
+        if keep is not None:
+            rules = [r for r in rules if r.framework in keep]
     types = sorted({t for r in rules for t in r.type_filter})
     rows.append({"Field": "Type",
                  "Filter": ", ".join(types) if types else "any"})
@@ -1439,7 +1538,8 @@ def _filter_recipe(bu: str, scope: str, category: str,
 
 
 def _csv_writer(evidence: pd.DataFrame, category: str,
-                bu: str = "", scope: str = "", member_label: str | None = None):
+                bu: str = "", scope: str = "", run: str = RUN_BIG,
+                framework: str | None = None):
     """A deferred payload for `st.download_button`: Streamlit runs it only when
     the button is actually clicked (`data` accepts a callable since 1.36).
 
@@ -1454,11 +1554,12 @@ def _csv_writer(evidence: pd.DataFrame, category: str,
     11-BU pipeline as the response to a download click.
     """
     def _build() -> bytes:
-        sub = _rows_for_category(evidence, category)
+        sub = (_rows_for_framework(evidence, framework) if framework
+               else _rows_for_category(evidence, category))
         n_cases = (sub["Case ID"].nunique() if "Case ID" in sub.columns
                    else len(sub))
         recipe = _filter_recipe(bu, scope, category, len(sub), n_cases,
-                                member_label)
+                                run=run, framework=framework)
         if recipe.empty:
             return sub.to_csv(index=False).encode("utf-8")
         try:
@@ -1547,6 +1648,12 @@ def _automation_save_line(bu: str, scope: str, s: dict,
                 help=f"Figures in {context}." if context else None)
 
 
+def _tile_file_name(bu: str, run: str, label: str) -> str:
+    """"Drogas_Production_Sanity_TestIM.xlsx": the run is in the name, so the
+    same tile downloaded on two runs cannot be mistaken for one another."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", f"{bu} {run} {label}").strip("_") + ".xlsx"
+
+
 def _detail_view(
     bu: str,
     scope: str,
@@ -1600,8 +1707,8 @@ def _detail_view(
                 continue
             st.download_button(
                 f"Download the {n:,} rows behind {label}",
-                _csv_writer(evidence, cat, bu, scope),
-                file_name=f"{bu.replace(' ', '_')}_{label.replace(' ', '_')}.xlsx",
+                _csv_writer(evidence, cat, bu, scope, run=run),
+                file_name=_tile_file_name(bu, run, label),
                 mime="application/vnd.openxmlformats-officedocument."
                      "spreadsheetml.sheet",
                 # No `help`: the button is stretched invisibly over the whole
@@ -1643,7 +1750,21 @@ def _detail_view(
         show_shares = len(frameworks) > 1
         cols = st.columns(max(3, len(frameworks) + (1 if show_shares else 0)))
         for col, (name, n, u) in zip(cols, frameworks):
-            _stat_card(col, name, n, u)
+            # Clickable like the tiles above: the file holds this framework's
+            # rows, filtered by the same function that counted them.
+            with col.container(key=f"tile_{key_base}_fw_{name.lower()}"):
+                _stat_card(st, name, n, u)
+                if evidence.empty:
+                    continue
+                st.download_button(
+                    f"Download the {n:,} rows behind {name}",
+                    _csv_writer(evidence, "automated", bu, scope, run=run,
+                                framework=name),
+                    file_name=_tile_file_name(bu, run, name),
+                    mime="application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet",
+                    key=f"dl_{key_base}_fw_{name.lower()}",
+                )
 
         if show_shares:
             # `<br>` as a SEPARATOR, not a suffix: the caption that used to sit

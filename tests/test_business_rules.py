@@ -2189,9 +2189,134 @@ class TestFilterRecipe:
         assert "Highest" in " ".join(r["Filter"])
 
     def test_prod_sanity_names_its_own_label(self):
-        r = bl._filter_recipe("Drogas", "website", "total", 1, 1,
-                              member_label="prod_sanity")
-        assert "prod_sanity" in " ".join(r["Filter"])
+        """Until 2026-10-20 the tiles never passed the run, so a Production
+        Sanity file told the reader to filter on the big_regr labels."""
+        r = bl._filter_recipe("Drogas", "website", "total", 1, 1, run=bl.RUN_PS)
+        text = " ".join(r["Filter"])
+        assert "contains prod_sanity" in text
+        assert "big_regr" not in text
+
+    def test_each_run_describes_its_own_cases_and_devices(self):
+        def text(run, scope="website"):
+            return " ".join(bl._filter_recipe("Drogas", scope, "total", 1, 1,
+                                              run=run)["Filter"])
+        assert "big_regr_desktop" in text(bl.RUN_BIG)
+        assert "from the labels" in text(bl.RUN_BIG)
+        assert "Device field" in text(bl.RUN_PS)
+        assert "Both = 2 rows" in text(bl.RUN_PS)
+        assert "contains ext_prod_sanity" in text(bl.RUN_EXT)
+        assert "Device field" in text(bl.RUN_EXT)
+        assert "Highest" in text(bl.RUN_SMOKE)
+        assert "big_regr_desktop" in text(bl.RUN_SMOKE)
+        small = bl._filter_recipe("Drogas", "website", "total", 1, 1,
+                                  run=bl.RUN_SMALL)
+        assert "Smaller NR" in " ".join(small["Field"])
+
+    def test_the_mobile_app_recipe_is_priority_based(self):
+        r = " ".join(bl._filter_recipe("Drogas", "mobile_app", "total", 1, 1)["Filter"])
+        assert "big_regr" not in r
+        assert "High or Highest" in r
+
+    def test_a_framework_recipe_lists_only_what_feeds_that_tile(self):
+        def fields(fw):
+            return " ".join(bl._filter_recipe("Drogas", "website", "automated",
+                                              1, 1, run=bl.RUN_PS,
+                                              framework=fw)["Field"])
+
+        def filters(fw):
+            return " ".join(bl._filter_recipe("Drogas", "website", "automated",
+                                              1, 1, run=bl.RUN_PS,
+                                              framework=fw)["Filter"])
+        assert "Testim Desktop" in fields("TestIM")
+        assert "(java)" not in fields("TestIM")
+        assert "(java)" in fields("Java")
+        assert "Testim" not in fields("Java")
+        assert "does NOT contain playwright" in filters("Java")
+        assert "contains playwright" in filters("Playwright")
+        # The rule that put the lead's 14 rows under TestIM, not Java.
+        assert "newest" in filters("TestIM")
+
+
+class TestFrameworkTilesDownloadTheirRows:
+    """The framework tiles download their rows like the six tiles above them,
+    and the file is filtered by the same function that counted the tile
+    (Matteo, 2026-10-20: why is this part not clickable?)."""
+
+    @staticmethod
+    def _frames():
+        exp = pd.DataFrame({
+            "case_id":       [1, 1, 2, 2, 3, 4],
+            "country_label": ["LV", "LT", "LV", "LV", "LV", "LV"],
+            "device":        ["Desktop", "Desktop", "Desktop", "Mobile",
+                              "Desktop", "Desktop"],
+            "category":      ["automated"] * 5 + ["backlog"],
+        })
+        # Case 2 Desktop appears twice: after the precedence every rule that
+        # matched keeps its row, all relabelled to the winner.
+        auto = pd.DataFrame({
+            "case_id":       [1, 1, 2, 2, 2, 3, 4],
+            "country_label": ["LV", "LT", "LV", "LV", "LV", "LV", "LV"],
+            "device":        ["Desktop", "Desktop", "Desktop", "Desktop",
+                              "Mobile", "Desktop", "Desktop"],
+            "framework":     ["java", "java", "testim_desktop", "testim_desktop",
+                              "java", "playwright", "java"],
+        })
+        return exp, auto
+
+    @staticmethod
+    def _evidence(monkeypatch, exp, auto):
+        monkeypatch.setattr(bl, "_load_scope", lambda scope: (
+            pd.DataFrame({"case_id": [1, 2, 3, 4]}), None, []))
+        return bl._evidence_frame(exp, "website", auto=auto)
+
+    def test_only_automated_rows_get_a_framework(self):
+        exp, auto = self._frames()
+        assert list(bl._row_frameworks(exp, auto)) == [
+            "Java", "Java", "TestIM", "Java", "Playwright", ""]
+
+    def test_the_newest_wins_if_two_ever_meet(self):
+        exp, auto = self._frames()
+        both = pd.concat([auto, auto.iloc[[0]].assign(framework="testim_desktop")])
+        assert bl._row_frameworks(exp, both).iloc[0] == "TestIM"
+
+    def test_no_automated_rows_no_framework(self):
+        exp, _auto = self._frames()
+        assert set(bl._row_frameworks(exp, None)) == {""}
+
+    def test_each_tile_s_file_holds_exactly_its_tile_s_rows(self, monkeypatch):
+        exp, auto = self._frames()
+        s = bl._stats(exp, auto)
+        ev = self._evidence(monkeypatch, exp, auto)
+        assert (s["java"], s["testim"], s["playwright"]) == (3, 1, 1)
+        for key, name in bl._FRAMEWORK_TILES:
+            rows = bl._rows_for_framework(ev, name)
+            assert len(rows) == s[key], name
+            assert rows["Case ID"].nunique() == s[f"u_{key}"], name
+            assert "_cat" not in rows.columns
+
+    def test_the_download_filters_on_the_framework(self, monkeypatch):
+        import io as _io
+        exp, auto = self._frames()
+        ev = self._evidence(monkeypatch, exp, auto)
+        payload = bl._csv_writer(ev, "automated", framework="TestIM")()
+        assert pd.read_csv(_io.BytesIO(payload))["Case ID"].tolist() == ["C2"]
+
+    def test_every_tile_file_names_the_framework_of_its_rows(self, monkeypatch):
+        exp, auto = self._frames()
+        assert "Framework" in self._evidence(monkeypatch, exp, auto).columns
+        # Without automated rows the column would be empty on every row.
+        assert "Framework" not in bl._evidence_frame(exp, "website").columns
+
+    def test_the_detail_view_wires_one_download_per_framework_tile(self):
+        import inspect
+        src = inspect.getsource(bl._detail_view)
+        assert 'key=f"tile_{key_base}_fw_' in src     # the stretched-button CSS
+        assert "framework=name" in src
+        assert "run=run" in src
+
+    def test_the_file_name_carries_the_run(self):
+        assert bl._tile_file_name("Superdrug / Savers", bl.RUN_PS, "TestIM") == (
+            "Superdrug_Savers_Production_Sanity_TestIM.xlsx")
 
 
 class TestOneBuCannotDecideAnother:
@@ -2315,7 +2440,8 @@ class TestRunsShareNoWidgetState:
         frames = {run: {("Drogas", "website"): pd.DataFrame({"case_id": [i]})}
                   for i, run in enumerate(bl.RUNS)}
         monkeypatch.setattr(bl, "_run_data", lambda run, scope: (None, frames[run], {}))
-        monkeypatch.setattr(bl, "_evidence_frame", lambda exp, scope, bu: exp)
+        monkeypatch.setattr(bl, "_evidence_frame",
+                            lambda exp, scope, bu, auto=None: exp)
         for i, run in enumerate(bl.RUNS):
             out = bl._tile_evidence.__wrapped__("Drogas", "website", run)
             assert out["case_id"].tolist() == [i], run
