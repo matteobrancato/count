@@ -66,12 +66,13 @@ from ..bu_rules import (
     MAPP_PLATFORMS,
     MOBILE_APP_BUS,
     PROD_SANITY_LABEL,
+    SANITY_TESTIM_BUS,
     SMALL_NR_FIELDS,
     WEBSITE_BUS,
     filter_conditional_tokens,
 )
 from ..freshness import DAY_TTL, computed_cache
-from ..rules_engine import evaluate_rules
+from ..rules_engine import _apply_framework_precedence, evaluate_rules
 from . import global_filter
 from .styles import (
     COLORS,
@@ -203,6 +204,50 @@ def _scoped_bus() -> list[tuple[str, str]]:
     for bu in ng_bus:
         pairs.append((bu, "next_gen"))
     return pairs
+
+
+# ── sanity baselines: what counts as automated ────────────────────────────────
+_TESTIM_FRAMEWORKS = frozenset({"testim_desktop", "testim_mobile"})
+
+
+def _sanity_rules(rules: list, bu: str) -> list:
+    """The rules a sanity baseline reads for *bu*: every rule where production
+    sanity runs in Testim (`SANITY_TESTIM_BUS`), every rule but the Testim
+    pair elsewhere.
+
+    Dropping the pair from the RULES, not only from the automated rows, is what
+    keeps the rest consistent: the Testim fields no longer classify the rows
+    either, so a sanity case automated only in Testim is read from the generic
+    field — Backlog where it says "Ready to be automated", Not Applicable where
+    it says "Automation not applicable" — and is not "partially automated" by
+    a regression script.
+    """
+    if bu in SANITY_TESTIM_BUS:
+        return rules
+    return [r for r in rules
+            if getattr(r, "framework", "") not in _TESTIM_FRAMEWORKS]
+
+
+def _sanity_automated(auto: pd.DataFrame, raw: pd.DataFrame, rules: list,
+                      bu: str) -> pd.DataFrame:
+    """*bu*'s automated rows as a sanity baseline counts them.
+
+    The rows only a Testim rule produced are dropped, and the framework is
+    decided again among the rules left: `rules_engine` had given every row of
+    a (case, country, device) the newest tool, so a row covered by Testim AND
+    the generic field read TestIM.  For a sanity baseline it is Java — or
+    Playwright, by the case's label.  Drogas, 2026-10-20: 14 rows.
+
+    Needs the rows UNdeduplicated: once only one row per (case, country,
+    device) is left, which rules covered it can no longer be told.
+    """
+    kept = _sanity_rules(rules, bu)
+    if len(kept) == len(rules) or auto.empty:
+        return auto
+    own = {r.name: r.framework for r in kept}
+    rows = auto[auto["rule_name"].isin(own)]
+    return _apply_framework_precedence(
+        rows.assign(framework=rows["rule_name"].map(own)), raw)
 
 
 # ── expansion ─────────────────────────────────────────────────────────────────
@@ -736,6 +781,11 @@ def _build_summary(
         raw, auto, rules = _filter_bu(raw_all, auto_all, rules_all, bu)
         if raw.empty:
             continue
+        if member_label is not None and scope != "mobile_app":
+            # A sanity baseline: Testim counts only where production sanity
+            # runs in it (`_sanity_rules`).
+            auto = _sanity_automated(auto, raw, rules, bu)
+            rules = _sanity_rules(rules, bu)
         expanded = (_expand_mapp_baseline(raw, rules) if scope == "mobile_app"
                     else _expand_baseline(raw, rules, member_label=member_label))
         if expanded.empty:
@@ -1166,7 +1216,8 @@ def _deciding_field(case: dict, device: str, category: str,
 
 
 def _evidence_frame(expanded: pd.DataFrame, scope: str,
-                    bu: str = "", auto: pd.DataFrame | None = None) -> pd.DataFrame:
+                    bu: str = "", auto: pd.DataFrame | None = None,
+                    sanity: bool = False) -> pd.DataFrame:
     """Every baseline row with the TestRail evidence behind its classification.
 
     Built ONCE per BU (see `_tile_evidence`): the per-case metadata join, the
@@ -1176,6 +1227,9 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
     Given the automated rows (*auto*), each automated row also names the
     framework tile it counts for — the column the framework downloads filter
     on, and the one a lead reconciling "Java 200" needs to see.
+
+    *sanity*: the rows of a sanity baseline, decided by `_sanity_rules` —
+    "Decided By" then never names a field that baseline does not read.
     """
     if expanded is None or expanded.empty:
         return pd.DataFrame()
@@ -1217,8 +1271,10 @@ def _evidence_frame(expanded: pd.DataFrame, scope: str,
         out = out.merge(meta, on="case_id", how="left")
 
     out.insert(0, "Case ID", "C" + out["case_id"].astype(str))
-    allowed = ([f"status_{r.status_field_label}"
-                for r in ALL_RULES if r.bu == bu and r.scope == scope]
+    rules_bu = [r for r in ALL_RULES if r.bu == bu and r.scope == scope]
+    if sanity:
+        rules_bu = _sanity_rules(rules_bu, bu)
+    allowed = ([f"status_{r.status_field_label}" for r in rules_bu]
                if bu else None)
     decided = [_deciding_field(meta_by_case.get(cid, {}), dev, cat, allowed)
                for cid, dev, cat in zip(out["case_id"], out["device"],
@@ -1357,7 +1413,8 @@ def _tile_evidence(bu: str, scope: str, run: str = RUN_BIG) -> pd.DataFrame:
         logger.exception("Tile evidence unavailable for %s (%s)", bu, scope)
         return pd.DataFrame()
     return _evidence_frame(expanded_by_bu.get((bu, scope)), scope, bu,
-                           auto=auto_by_bu.get((bu, scope)))
+                           auto=auto_by_bu.get((bu, scope)),
+                           sanity=run in (RUN_PS, RUN_EXT) and scope != "mobile_app")
 
 
 # What each category means in TestRail terms.  Written from the same constants
@@ -1469,6 +1526,8 @@ def _filter_recipe(bu: str, scope: str, category: str,
     so a mismatch points at its cause instead of at the dashboard.
     """
     rules = [r for r in ALL_RULES if r.bu == bu and r.scope == scope]
+    if run in (RUN_PS, RUN_EXT) and scope != "mobile_app":
+        rules = _sanity_rules(rules, bu)
     if not rules:
         return pd.DataFrame()
     auto_vals = ", ".join(sorted({v for r in rules for v in r.automated_values}))

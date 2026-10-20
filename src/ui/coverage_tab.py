@@ -76,20 +76,29 @@ def _load_scope(scope: str):
 
 
 @computed_cache(ttl=DAY_TTL, show_spinner=False)
-def _bu_frames(scope: str, bu: str) -> tuple[str, pd.DataFrame, pd.DataFrame]:
+def _bu_frames(scope: str, bu: str,
+               sanity: bool = False) -> tuple[str, pd.DataFrame, pd.DataFrame]:
     """("ok" | "no scope data" | "no bu cases", the BU's non-deprecated cases
     in its own countries, its automated rows deduplicated on case × country
     × device).
 
+    *sanity* gives the automated rows a sanity baseline counts
+    (`backlog_tab._sanity_automated`), filtered BEFORE the deduplication: one
+    row per (case, country, device) no longer says which rules covered it.
+
     Cached per BU for the day: `_load_scope` hands back a full deserialised
     copy of every case of the scope, and the tab used to take one on every
     click of a view or of the granularity, to keep one BU's rows."""
+    from . import backlog_tab as bl
+
     raw, auto, rules = _load_scope(scope)
     if raw is None or raw.empty:
         return "no scope data", pd.DataFrame(), pd.DataFrame()
     rules_bu = [r for r in rules if r.bu == bu]
     raw_bu = raw[raw["suite_id"].isin({r.suite_id for r in rules_bu})]
     auto_bu = auto[auto["bu"] == bu] if not auto.empty else auto
+    if sanity:
+        auto_bu = bl._sanity_automated(auto_bu, raw_bu, rules_bu, bu)
     # Dedup dual-framework rows on (case, country, device): a case automated
     # by BOTH Java and Testim is one D+M row, not two.
     if not auto_bu.empty:
@@ -924,9 +933,13 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
                 expanded=exp_base,       # → same rows (and %) as the Backlog tab
             )
     else:  # a sanity view
+        # Testim counts only where production sanity runs in it — the same
+        # automated rows and rules the Backlog tab's sanity runs use.
+        from . import backlog_tab as bl
         labels, none_yet = _SANITY_VIEWS[view]
+        _status, _nd, auto_ps = _bu_frames(scope, bu_choice, sanity=True)
         nd_ps, ab_ps, ids_ps, exp_ps = _baseline_like_backlog(
-            non_dep, auto_bu, rules_bu,
+            non_dep, auto_ps, bl._sanity_rules(rules_bu, bu_choice),
             member_label=labels[0] if len(labels) == 1 else labels)
         if nd_ps.empty:
             st.info(none_yet + " New labels appear at the next data refresh "

@@ -36,6 +36,14 @@ PROD_SANITY_LABEL = "prod_sanity"
 # population, beside Production Sanity (Matteo, 2026-10-01).
 EXT_PROD_SANITY_LABEL = "ext_prod_sanity"
 
+# The BUs whose production sanity runs in Testim.  Everywhere else a Testim
+# script is a REGRESSION script: the sanity case still has to be automated for
+# production, so the sanity baselines (Production Sanity, Extended) read the
+# BU's other tools only — the generic "Automation Status" (Java) and
+# Playwright.  Matteo's lead, 2026-10-20: "solo wtr ha una prd sanity in
+# testim, per le altre guardo solo i dati relativi a java".
+SANITY_TESTIM_BUS = frozenset({"Watsons Turkey"})
+
 # TestRail checkbox marking the SUBSET of the big_regr baseline that also runs
 # in the Small / Release No-Regression run.  A subset, not a baseline of its
 # own: every Small NR case is a big_regr case too.

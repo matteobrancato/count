@@ -79,6 +79,9 @@ regression one: a case carrying both labels is counted in both, so the two
 totals are not meant to add up. Its devices come from the TestRail
 **Device** field (Desktop, Mobile, or Both = one row each), not from the
 big_regr labels: the `prod_sanity` label says nothing about the device.
+Testim counts only on **Watsons Turkey**, the one BU whose production sanity
+runs in Testim; elsewhere a Testim script is a regression script, so the
+case is read from the generic "Automation Status" (Java) and Playwright.
 (It used to be defined by the "Test Automation PRD Run" checkbox; that field
 no longer counts.)
 
@@ -218,6 +221,9 @@ METHODOLOGY_FOR_LLM = """
   that may overlap the regression one — a case in both is counted in both,
   so never add the two totals together.  Its device comes from the TestRail
   Device field (Both = Desktop + Mobile), never from the big_regr labels.
+  Testim counts only on Watsons Turkey; on every other BU a sanity row is
+  automated by the generic "Automation Status" (Java) or Playwright, and a
+  case automated only in Testim is classified by the generic field.
 - Smoke = the Big No-Regression rows whose case has priority Highest — a
   subset of the regression baseline, like Small No-Regression.
 - Extended Production Sanity = cases with the `ext_prod_sanity` label, another

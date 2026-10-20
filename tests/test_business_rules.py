@@ -2218,15 +2218,14 @@ class TestFilterRecipe:
         assert "High or Highest" in r
 
     def test_a_framework_recipe_lists_only_what_feeds_that_tile(self):
+        # The regression run: Drogas' sanity runs read no Testim rule at all.
         def fields(fw):
             return " ".join(bl._filter_recipe("Drogas", "website", "automated",
-                                              1, 1, run=bl.RUN_PS,
-                                              framework=fw)["Field"])
+                                              1, 1, framework=fw)["Field"])
 
         def filters(fw):
             return " ".join(bl._filter_recipe("Drogas", "website", "automated",
-                                              1, 1, run=bl.RUN_PS,
-                                              framework=fw)["Filter"])
+                                              1, 1, framework=fw)["Filter"])
         assert "Testim Desktop" in fields("TestIM")
         assert "(java)" not in fields("TestIM")
         assert "(java)" in fields("Java")
@@ -2317,6 +2316,95 @@ class TestFrameworkTilesDownloadTheirRows:
     def test_the_file_name_carries_the_run(self):
         assert bl._tile_file_name("Superdrug / Savers", bl.RUN_PS, "TestIM") == (
             "Superdrug_Savers_Production_Sanity_TestIM.xlsx")
+
+
+class TestSanityTestimCountsOnlyOnWatsonsTurkey:
+    """Production sanity runs in Testim on Watsons Turkey only; elsewhere a
+    Testim script is a regression script and the sanity case is still to be
+    automated for production (Matteo's lead, 2026-10-20).  Drogas' Production
+    Sanity went from 328 to 272 automated rows: her number."""
+
+    DRG = tuple(r for r in bl.ALL_RULES if r.bu == "Drogas" and r.scope == "website")
+    WTR = tuple(r for r in bl.ALL_RULES
+                if r.bu == "Watsons Turkey" and r.scope == "website")
+
+    def _name(self, framework):
+        return next(r.name for r in self.DRG if r.framework == framework)
+
+    def _raw(self, pw=False):
+        labels = ["big_regr_desktop", "prod_sanity"] + (["playwright"] if pw else [])
+        common = dict(suite_id=16093, deprecated=False, device="Desktop",
+                      multi_countries=["LV"], testim_country_coverage=["LV"],
+                      **{"status_Automation Status Testim Desktop": "Automated UAT"})
+        return pd.DataFrame([
+            _case(case_id=1, labels=labels, **common,
+                  **{"status_Automation Status": "Automated"}),
+            _case(case_id=2, labels=labels[:2], **common,
+                  **{"status_Automation Status": "Ready to be automated"}),
+            _case(case_id=3, labels=labels[:2], **common,
+                  **{"status_Automation Status": "Automation not applicable"}),
+        ])
+
+    def _auto(self):
+        """As the rules engine leaves them: case 1 is covered by Testim AND
+        the generic field, and the precedence relabelled both rows TestIM.
+        The Testim row comes first, as a deduplication would find it."""
+        td, java = self._name("testim_desktop"), self._name("java")
+        rows = [(1, td), (1, java), (2, td), (3, td)]
+        return pd.DataFrame([{"bu": "Drogas", "case_id": c, "country_label": "LV",
+                              "device": "Desktop", "framework": "testim_desktop",
+                              "rule_name": n} for c, n in rows])
+
+    def test_the_testim_pair_is_dropped_outside_watsons_turkey(self):
+        assert {r.framework for r in bl._sanity_rules(self.DRG, "Drogas")} == {"java"}
+        assert bl._sanity_rules(list(self.WTR), "Watsons Turkey") == list(self.WTR)
+
+    def test_a_row_testim_and_the_generic_field_cover_becomes_java(self):
+        out = bl._sanity_automated(self._auto(), self._raw(), self.DRG, "Drogas")
+        assert set(out["case_id"]) == {1}
+        assert set(out["framework"]) == {"java"}
+
+    def test_the_playwright_label_still_wins(self):
+        out = bl._sanity_automated(self._auto(), self._raw(pw=True), self.DRG, "Drogas")
+        assert set(out["framework"]) == {"playwright"}
+
+    def test_testim_only_rows_follow_the_generic_field(self):
+        raw, auto = self._raw(), self._auto()
+        exp = bl._classify_expanded(
+            bl._expand_baseline(raw, bl._sanity_rules(self.DRG, "Drogas"),
+                                member_label="prod_sanity"),
+            bl._sanity_automated(auto, raw, self.DRG, "Drogas"))
+        assert dict(zip(exp["case_id"].astype(int), exp["category"])) == {
+            1: "automated", 2: "backlog", 3: "not_applicable"}
+
+    def test_the_regression_baseline_still_counts_testim(self):
+        raw, auto = self._raw(), self._auto()
+        exp = bl._classify_expanded(bl._expand_baseline(raw, self.DRG), auto)
+        assert set(exp["category"]) == {"automated"}
+
+    def test_watsons_turkey_keeps_its_testim_rows(self):
+        auto = self._auto().assign(bu="Watsons Turkey")
+        assert bl._sanity_automated(auto, self._raw(), self.WTR,
+                                    "Watsons Turkey") is auto
+
+    def test_coverage_filters_before_it_deduplicates(self, monkeypatch):
+        """One row per (case, country, device) no longer says which rules
+        covered it: deduplicating first would keep case 1's Testim row and
+        then drop the case, although the generic field automates it."""
+        monkeypatch.setattr(cov, "_load_scope", lambda scope: (
+            self._raw(), self._auto(), list(self.DRG)))
+        _status, _nd, auto = cov._bu_frames.__wrapped__("website", "Drogas",
+                                                        sanity=True)
+        assert list(zip(auto["case_id"], auto["framework"])) == [(1, "java")]
+
+    def test_the_recipe_lists_the_rules_the_run_reads(self):
+        def fields(bu, run):
+            return " ".join(bl._filter_recipe(bu, "website", "total", 1, 1,
+                                              run=run)["Field"])
+        assert "Testim" not in fields("Drogas", bl.RUN_PS)
+        assert "Testim" not in fields("Drogas", bl.RUN_EXT)
+        assert "Testim" in fields("Drogas", bl.RUN_BIG)
+        assert "Testim" in fields("Watsons Turkey", bl.RUN_PS)
 
 
 class TestOneBuCannotDecideAnother:
@@ -2441,7 +2529,7 @@ class TestRunsShareNoWidgetState:
                   for i, run in enumerate(bl.RUNS)}
         monkeypatch.setattr(bl, "_run_data", lambda run, scope: (None, frames[run], {}))
         monkeypatch.setattr(bl, "_evidence_frame",
-                            lambda exp, scope, bu, auto=None: exp)
+                            lambda exp, scope, bu, **kw: exp)
         for i, run in enumerate(bl.RUNS):
             out = bl._tile_evidence.__wrapped__("Drogas", "website", run)
             assert out["case_id"].tolist() == [i], run
