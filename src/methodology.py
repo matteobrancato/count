@@ -76,8 +76,11 @@ The Backlog is considered healthy while it stays under **3%** of the baseline.
 **Production Sanity** — tests carrying the `prod_sanity` label, executed only
 in production. It is a baseline of its own, counted separately from the
 regression one: a case carrying both labels is counted in both, so the two
-totals are not meant to add up. (It used to be defined by the "Test
-Automation PRD Run" checkbox; that field no longer counts.)
+totals are not meant to add up. Its devices come from the TestRail
+**Device** field (Desktop, Mobile, or Both = one row each), not from the
+big_regr labels: the `prod_sanity` label says nothing about the device.
+(It used to be defined by the "Test Automation PRD Run" checkbox; that field
+no longer counts.)
 
 **Smoke** — the regression baseline's cases with priority **Highest** in
 TestRail: a subset of Big No-Regression, counted on the same rows, so its
@@ -213,7 +216,8 @@ METHODOLOGY_FOR_LLM = """
 - Health colours: 🟢 ≥80% (target) · 🟡 60-79% · 🔴 <60%.
 - Production Sanity = cases with the `prod_sanity` label, a SEPARATE baseline
   that may overlap the regression one — a case in both is counted in both,
-  so never add the two totals together.
+  so never add the two totals together.  Its device comes from the TestRail
+  Device field (Both = Desktop + Mobile), never from the big_regr labels.
 - Smoke = the Big No-Regression rows whose case has priority Highest — a
   subset of the regression baseline, like Small No-Regression.
 - Extended Production Sanity = cases with the `ext_prod_sanity` label, another

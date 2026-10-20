@@ -1853,15 +1853,17 @@ class TestProdSanityBaseline:
                                   member_label="prod_sanity")
         assert set(out["case_id"]) == {2}
 
-    def test_a_case_in_both_expands_the_same_way_in_both(self):
-        """What makes "5 of those 100" literally true rather than approximately."""
-        raw = pd.DataFrame([_case(case_id=1,
+    def test_the_sanity_device_comes_from_the_device_field(self):
+        """The prod_sanity label is device-blind, so the Device field decides,
+        even when the case also carries big_regr labels (2026-10-20); the
+        regression baseline keeps reading its labels."""
+        raw = pd.DataFrame([_case(case_id=1, device="Desktop",
                                   labels=["big_regr_desktop", "big_regr_mobile",
                                           "prod_sanity"])])
         regr = bl._expand_baseline(raw, [self._rule()])
         ps   = bl._expand_baseline(raw, [self._rule()], member_label="prod_sanity")
-        assert regr[["country_label", "device"]].equals(
-            ps[["country_label", "device"]])
+        assert sorted(regr["device"]) == ["Desktop", "Mobile"]
+        assert list(ps["device"]) == ["Desktop"]
 
     def test_a_prod_sanity_only_case_falls_back_to_the_device_field(self):
         """No big_regr label to read, so the TestRail Device field decides."""

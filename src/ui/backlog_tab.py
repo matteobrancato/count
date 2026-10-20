@@ -219,13 +219,13 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
 
     *member_label* selects the baseline.  None keeps the regression one exactly
     as it was: membership and devices both come from the big_regr labels.  Given
-    a label (Production Sanity), membership comes from THAT label, while devices
-    still come from the big_regr ones when the case has them — so a case in both
-    baselines expands to the same rows in each, and "5 of those 100" is literally
-    true.  A case carrying only the new label has no big_regr labels to read, so
-    its devices come from the TestRail Device field instead.  Several labels
-    (a tuple) take a case carrying ANY of them, once — the combined view of
-    Production Sanity and Extended Production Sanity.
+    a label (Production Sanity, Extended Production Sanity), membership comes
+    from THAT label and the devices from the TestRail **Device** field, even on
+    a case that also carries big_regr labels: a sanity label says nothing about
+    the device, unlike big_regr_desktop / big_regr_mobile (Svitlana, via Matteo,
+    2026-10-20).  Until then the big_regr labels won when present.  Several
+    labels (a tuple) take a case carrying ANY of them, once — the combined view
+    of Production Sanity and Extended Production Sanity.
     """
     _empty = pd.DataFrame(columns=["case_id", "country_label", "device",
                                    "_cat_base", "_tool_automated"])
@@ -267,12 +267,11 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
             return []
         if str(type_label).strip().upper() == "API":
             return ["API"]
-        from_labels = ((["Desktop"] if _LABEL_DESKTOP in labels else []) +
-                       (["Mobile"]  if _LABEL_MOBILE  in labels else []))
-        if from_labels:
-            return from_labels
-        # Only reachable for a case that carries `member_label` and no big_regr
-        # label: the TestRail Device field is the only thing left that knows.
+        if member_label is None:
+            # The regression baseline: the big_regr labels name the devices.
+            return ((["Desktop"] if _LABEL_DESKTOP in labels else []) +
+                    (["Mobile"]  if _LABEL_MOBILE  in labels else []))
+        # A sanity baseline: its label is device-blind, so the Device field decides.
         dev = str(device_field or "").strip()
         if dev == "Both":
             return ["Desktop", "Mobile"]
