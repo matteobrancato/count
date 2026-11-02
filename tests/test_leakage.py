@@ -714,14 +714,3 @@ class TestBucket:
         assert self._b(lai.NOT_DETECTABLE, "—") == t.NOT_UAT
         assert self._b(lai.NEEDS_REVIEW, "—") == t.UNCLEAR
         assert self._b("", "—") == t.NOT_ANALYSED
-
-
-class TestSubtabs:
-    def test_the_sub_tabs_hide_outside_their_group(self):
-        from src.ui.styles import subtabs_css
-        css = subtabs_css(3, (4, 5))
-        hide = next(line for line in css.splitlines() if "display: none" in line)
-        assert hide.startswith('[role="tablist"]:not(:has(')
-        for i in (3, 4, 5):                        # open: the parent or either child
-            assert f'[data-key="{i}"][aria-selected="true"]' in hide
-        assert hide.count('[data-key="3"]') == 1   # the parent itself never hides

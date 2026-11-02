@@ -1,22 +1,23 @@
-"""Global scope + Business-Unit selector, shared by every tab.
+"""Global scope selector, and the Business Unit last opened, shared by every tab.
 
-Two inline controls, drawn once by app.py inside the top bar next to the
-title, replace the per-tab dropdowns that had each invented their own pattern:
+One control, drawn once by app.py inside the top bar next to the title:
 
-    [ 🌐 Website | 📱 Mobile App | 🧩 Microservices ]  [ Business Unit ▾ ]
+    [ 🌐 Website | 📱 Mobile App | 🧩 Microservices | 🎯 Martech ]
 
-Tabs read the selection via `current()` — they never render their own scope/BU
-widgets.  The BU list adapts to the chosen scope, and each scope remembers its
-own last BU (per-scope widget key), so switching back and forth never produces
-an invalid selection.
+The Business Unit is no longer picked here.  It is picked where the BUs are
+listed — a click on a row of the Backlog table opens that BU's window — and the
+choice is kept in session state, one per scope, so the next visit to the same
+scope still knows which BU was last opened.  Sections read it via `current()`;
+none draws its own scope or BU widget.
 
-All-BU overview sections (Overview, the Backlog and Leakage tables) are
-cross-BU comparisons by design and intentionally ignore the BU selection.
+All-BU sections (the Backlog table, the Leakage table of every BU) are
+cross-BU comparisons by design and ignore the BU selection.
 """
 from __future__ import annotations
 
 import streamlit as st
 
+from .. import martech
 from ..bu_rules import ALL_RULES
 
 # Canonical display order for website BUs (the order the team reads them in,
@@ -30,15 +31,22 @@ _SCOPE_LABELS = {
     "website":    "🌐 Website",
     "mobile_app": "📱 Mobile App",
     "next_gen":   "🧩 Microservices",
+    "martech":    "🎯 Martech",
 }
 
 
 def scopes_available() -> list[str]:
+    """The scopes the rules define, then Martech once its API key is in the
+    secrets.  Martech has no rules: its data is one plan on another TestRail
+    instance (see `martech`)."""
     present = {r.scope for r in ALL_RULES}
-    return [s for s in ("website", "mobile_app", "next_gen") if s in present]
+    scopes = [s for s in ("website", "mobile_app", "next_gen") if s in present]
+    return scopes + (["martech"] if martech.configured() else [])
 
 
 def bus_for_scope(scope: str) -> list[str]:
+    if scope == "martech":
+        return [b for b in _BU_ORDER if b in martech.KNOWN_BUS]
     bus = {r.bu for r in ALL_RULES if r.scope == scope}
     ordered = [b for b in _BU_ORDER if b in bus]
     return ordered + sorted(b for b in bus if b not in ordered)
@@ -72,24 +80,28 @@ def _seed_from_url() -> None:
 
 def _publish_to_url(scope: str, bu: str) -> None:
     """Keep ?scope=&bu= in sync with the current selection, so the address bar
-    is always a link to what the user is looking at (copy-paste and send)."""
+    is always a link to what the user is looking at (copy-paste and send).  With
+    no BU opened yet the link carries the scope alone."""
     try:
         params = st.query_params
-        if params.get("scope") != scope or params.get("bu") != bu:
+        if params.get("scope") != scope:
             params["scope"] = scope
-            if bu:
+        if bu:
+            if params.get("bu") != bu:
                 params["bu"] = bu
+        elif "bu" in params:
+            del params["bu"]
     except Exception:                                                   # noqa: BLE001
         pass                      # the URL is a convenience; the selection stands
 
 
 def render() -> tuple[str, str]:
-    """Draw the scope and BU controls where the caller is (app.py places them
-    in the top bar); returns (scope, bu).
+    """Draw the scope control where the caller is (app.py places it in the top
+    bar); returns (scope, bu), the BU being the one last opened in this scope.
 
-    A segmented control rather than a radio: the same three choices in a third
-    of the height, and it reads as the page's main switch.  `required` keeps
-    one scope always selected — a click on the active one cannot clear it.
+    A segmented control rather than a radio: the same choices in a third of the
+    height, and it reads as the page's main switch.  `required` keeps one scope
+    always selected — a click on the active one cannot clear it.
     """
     _seed_from_url()
     scopes = scopes_available()
@@ -100,18 +112,23 @@ def render() -> tuple[str, str]:
         st.session_state["global_scope"] = labels[0]
     st.segmented_control("Scope", labels, key="global_scope", required=True,
                          label_visibility="collapsed", width="content")
-    scope = current()[0]
-    bus = bus_for_scope(scope)
-    if bus:
-        # Per-scope key: each scope remembers its own BU, and a BU that
-        # doesn't exist in the new scope can never be selected.
-        st.selectbox("Business Unit", bus, key=f"global_bu_{scope}",
-                     label_visibility="collapsed", width=220)
-    else:
-        st.caption("No Business Units in this scope.")
     scope, bu = current()
-    _publish_to_url(scope, bu)
+    _publish_to_url(scope, opened(scope))
     return scope, bu
+
+
+def opened(scope: str) -> str:
+    """The BU last opened in *scope*, or "" when none has been."""
+    return str(st.session_state.get(f"global_bu_{scope}") or "")
+
+
+def select_bu(scope: str, bu: str) -> None:
+    """Record *bu* as the one opened in *scope*.  A plain session value, not a
+    widget's: no control is left to own it, so it outlives a visit to another
+    scope.  The address bar follows at once — this runs inside a fragment, and
+    the top bar that normally publishes it does not."""
+    st.session_state[f"global_bu_{scope}"] = bu
+    _publish_to_url(scope, bu)
 
 
 def current() -> tuple[str, str]:
@@ -125,6 +142,10 @@ def current() -> tuple[str, str]:
                          scopes[0] if scopes else "website")
     bus = bus_for_scope(scope)
     bu = st.session_state.get(f"global_bu_{scope}")
+    if scope == "martech":
+        # The BUs are the plan's: a run this module does not know is a row of
+        # its own, so no fixed list can say what is valid.
+        return scope, str(bu or "")
     if bu not in bus:
         bu = bus[0] if bus else ""
     return scope, bu

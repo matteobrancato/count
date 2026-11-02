@@ -732,6 +732,53 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 }}
 .bl-summary th.l, .bl-summary td.l {{ text-align: left; }}
 .bl-summary .bu {{ font-weight: 700; color: {c['ink']}; }}
+/* Rows that open a Business Unit's window (the Backlog and Martech tables).  The
+   name is a button in brand blue with a chevron that steps right on hover, the
+   whole row is the click target, and the BU opened last keeps its underline. */
+.bl-summary.bl-clickable tbody tr {{ cursor: pointer; }}
+.bl-summary.bl-clickable tbody tr:hover td {{ background: {c['brand_soft']}; }}
+.bl-summary .bu-link {{
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-weight: 700;
+    color: {c['brand']};
+    text-align: left;
+    cursor: pointer;
+}}
+.bl-summary .bu-link:hover .bu-name {{
+    color: {c['brand_strong']};
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}}
+.bl-summary .bu-link:focus-visible {{
+    outline: 2px solid {c['brand']};
+    outline-offset: 3px;
+    border-radius: 4px;
+}}
+.bl-summary .bu-go {{
+    font-weight: 600;
+    opacity: .55;
+    transition: transform .15s ease, opacity .15s ease;
+}}
+.bl-summary tr:hover .bu-go, .bl-summary .bu-link:focus-visible .bu-go {{
+    opacity: 1;
+    transform: translateX(3px);
+}}
+.bl-summary tbody tr.sel .bu-name {{
+    text-decoration: underline;
+    text-decoration-color: {c['brand']};
+    text-underline-offset: 3px;
+    text-decoration-thickness: 2px;
+}}
+@media (prefers-reduced-motion: reduce) {{
+    .bl-summary .bu-go {{ transition: none; }}
+}}
 .bl-summary .strong {{ font-weight: 700; color: {c['ink']}; }}
 .bl-summary .mut {{ color: {c['muted']}; }}
 /* Backlog health, table-weight: the card's pill without its tinted background,
@@ -1052,57 +1099,10 @@ def section_title(text: str, *, top: int = 6) -> None:
 
 
 def inject(extra: str = "") -> None:
-    """Inject the global design-system CSS, plus `extra` (e.g. subtabs_css),
-    in ONE element: each st.markdown adds a gap to the top of the page.
-    Call once at the top of main()."""
+    """Inject the global design-system CSS, plus `extra` CSS, in ONE element:
+    each st.markdown adds a gap to the top of the page.  Call once at the top
+    of main()."""
     st.markdown(_css() + extra, unsafe_allow_html=True)
-
-
-def subtabs_css(parent: int, children: tuple[int, ...]) -> str:
-    """Tabs `children` shown only while their group (`parent` or one of
-    them) is open, sliding in beside the parent.
-
-    Streamlit has no nested tabs.  Every tab is a sibling in one tab list,
-    `[data-testid="stTab"][data-key="<index>"]` with `aria-selected`
-    (Streamlit 1.59), so `:has()` can tell whether the group is open.  If a
-    later Streamlit drops `data-key`, nothing matches and the sub-tabs are
-    simply always visible."""
-    c = COLORS
-
-    def tab(i: int) -> str:
-        return f'[data-testid="stTab"][data-key="{i}"]'
-
-    def open_(tabs) -> str:
-        return ", ".join(f'> {tab(i)}[aria-selected="true"]' for i in tabs)
-
-    kids = ":is(" + ", ".join(tab(i) for i in children) + ")"
-    delays = "\n".join(f'[role="tablist"] > {tab(i)} {{ animation-delay: {n * 60}ms; }}'
-                       for n, i in enumerate(children))
-    return f"""<style>
-[role="tablist"]:not(:has({open_((parent, *children))})) > {kids} {{ display: none; }}
-[role="tablist"] > {kids} {{
-    animation: count-subtab-in .34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}}
-[role="tablist"] > {kids} [data-testid="stMarkdownContainer"] p {{ font-size: 13px; }}
-{delays}
-/* A hairline before the first one says they belong to the tab on their left. */
-[role="tablist"] > {tab(children[0])} {{ margin-left: 2px; position: relative; }}
-[role="tablist"] > {tab(children[0])}::before {{
-    content: ""; position: absolute; left: -2px; top: 30%; height: 40%;
-    border-left: 1px solid {c['border']};
-}}
-/* The parent keeps the brand colour while one of its sub-tabs is open. */
-[role="tablist"]:has({open_(children)}) > {tab(parent)} [data-testid="stMarkdownContainer"] p {{
-    color: {c['brand']};
-}}
-@keyframes count-subtab-in {{
-    from {{ opacity: 0; transform: translateX(-8px); }}
-    to   {{ opacity: 1; transform: none; }}
-}}
-@media (prefers-reduced-motion: reduce) {{
-    [role="tablist"] > {kids} {{ animation: none; }}
-}}
-</style>"""
 
 
 def stat_card(col, label: str, n: int | str, u: int | None = None, *,

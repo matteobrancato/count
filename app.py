@@ -19,9 +19,10 @@ from src.methodology import METHODOLOGY_MD
 from src.ui import (
     backlog_tab,
     chat_assistant,
-    coverage_tab,
+    classic_view,
     data_quality,
     global_filter,
+    isolation,
     kpi_strip,
     leakage_tab,
     overview_tab,
@@ -85,18 +86,6 @@ def _mark_warm() -> None:
 
 
 # -------------------------------------------------------------------- header
-def _relative_time(ts: float) -> str:
-    """Human 'time ago' for the data-freshness caption."""
-    delta = max(0.0, time.time() - ts)
-    if delta < 45:
-        return "just now"
-    if delta < 3600:
-        return f"{round(delta / 60)}m ago"
-    if delta < 86400:
-        return f"{round(delta / 3600)}h ago"
-    return f"{round(delta / 86400)}d ago"
-
-
 _LOGO = (
     f"<div style='width:38px;height:38px;border-radius:11px;"
     f"display:flex;align-items:center;justify-content:center;font-size:20px;"
@@ -208,7 +197,7 @@ def _freshness_label(scope: str = "website") -> None:
         _parts = [
             f"<span style='color:{COLORS['muted']}'>Updated </span>"
             f"<b style='color:{COLORS['text']};font-weight:600'>"
-            f"{_relative_time(updated_at)}</b>"
+            f"{freshness.relative_time(updated_at)}</b>"
         ]
         if _workers > 1 or (_configured and _short):
             _tip = (
@@ -264,45 +253,28 @@ def _creds_ok() -> bool:
 
 
 def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
-    """Run one section's renderer so that its failure stays in its own place.
-
-    All tabs execute in the same script run, so one shared try/except meant a
-    single failing tab blanked every tab after it.  Here each section catches
-    its own failure, logs it with the traceback, and shows it where it
-    happened — the rest of the dashboard stays usable.
-    """
-    try:
-        with _timed(label):
-            if anim_key:
-                with st.container(key=anim_key):
-                    render_fn()
-            else:
-                render_fn()
-    except Exception as exc:  # noqa: BLE001 — isolate, never cascade
-        logger.exception("%s failed to render", label)
-        st.error(f"⚠️ {label} could not be rendered: {exc}")
-        with st.expander("Technical details"):
-            st.code(traceback.format_exc())
+    """Run one section's renderer so that its failure stays in its own place
+    (see `isolation`), and time it."""
+    with _timed(label):
+        isolation.render_isolated(render_fn, label, anim_key)
 
 
 # -------------------------------------------------------------------- sections
-# (tab label, renderer, animation container key).  One table instead of six
+# (tab label, renderer, animation container key).  One table instead of
 # hand-written calls, so adding or reordering a tab is a one-line change.
+#
+# The page is the Backlog table.  Everything specific to ONE Business Unit —
+# Detail, Coverage, Leakage, Trend — is in the window a click on its row opens
+# (`bu_popup`), so it is not a tab.  What stays a tab is what is not about one BU:
+# the Leakage ratios of all of them (Jira only, matched to TestRail through cases
+# already downloaded — the tab never calls TestRail), and the previous layout,
+# kept to the end so the new one can be checked against it.
 _SECTIONS = [
-    ("📋 Backlog",        backlog_tab.render,        "backlog_anim"),
-    # The Business Unit picked in the top bar, one BU at a time.
-    ("🔎 Detail",         backlog_tab.render_detail, "detail_anim"),
-    ("📐 Coverage",       coverage_tab.render,       ""),          # wraps itself
-    # Jira only, matched to TestRail through cases already downloaded — the
-    # tabs never call TestRail.  (The Overview is a window in the utility bar.)
-    ("🐞 Leakage",        leakage_tab.render,        ""),
-    # Leakage's sub-tabs: shown only while the Leakage group is open (_SUBTABS).
-    ("📈 Trend",          leakage_tab.render_trend,  ""),
-    ("🌍 All BUs",        leakage_tab.render_all_bus, ""),
+    ("📋 Backlog",              backlog_tab.render,         "backlog_anim"),
+    ("🌍 Leakage · All BUs",    leakage_tab.render_all_bus, ""),
+    ("🕰️ Previous layout",      classic_view.render,        ""),
 ]
 _LABELS = [label for label, _fn, _anim in _SECTIONS]
-# parent tab -> the tabs that appear beside it while it (or one of them) is open
-_SUBTABS = {"🐞 Leakage": ("📈 Trend", "🌍 All BUs")}
 
 
 def _warm_up(cold: bool, kpi_slot) -> None:
@@ -364,9 +336,7 @@ def main() -> None:
     _t_main = time.perf_counter()
     with _timed("Styles"):
         # The global design system — purely cosmetic, must run first.
-        styles.inject("".join(
-            styles.subtabs_css(_LABELS.index(parent), tuple(_LABELS.index(c) for c in children))
-            for parent, children in _SUBTABS.items()))
+        styles.inject()
     if not _creds_ok():
         st.stop()
 

@@ -52,6 +52,18 @@ def stamp() -> float:
     return time.time()
 
 
+def relative_time(ts: float) -> str:
+    """Human "time ago" for a data-freshness caption."""
+    delta = max(0.0, time.time() - ts)
+    if delta < 45:
+        return "just now"
+    if delta < 3600:
+        return f"{round(delta / 60)}m ago"
+    if delta < 86400:
+        return f"{round(delta / 3600)}h ago"
+    return f"{round(delta / 86400)}d ago"
+
+
 def business_day(ts: float) -> date:
     return datetime.fromtimestamp(ts, TZ).date()
 

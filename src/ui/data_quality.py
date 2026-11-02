@@ -29,6 +29,7 @@ import re
 import pandas as pd
 import streamlit as st
 
+from ..bu_rules import ALL_RULES
 from ..freshness import DAY_TTL, computed_cache
 
 logger = logging.getLogger(__name__)
@@ -383,9 +384,17 @@ _CHECKS = [
 ]
 
 
+def _has_baseline(scope: str) -> bool:
+    """Whether *scope* is one the rules cover.  Martech is not: it reads one plan
+    on another TestRail instance, with no case-level baseline to check."""
+    return any(r.scope == scope for r in ALL_RULES)
+
+
 def finding_count(scope: str = "website") -> int | None:
     """How many hygiene findings this scope has — None when it can't be computed
     (e.g. the data isn't warm yet).  Used to badge the utility-bar label."""
+    if not _has_baseline(scope):
+        return None
     try:
         return sum(len(df) for df in _scan(scope).values())
     except Exception:                                                   # noqa: BLE001
@@ -426,6 +435,10 @@ def _unknown_downloads(df: pd.DataFrame, scope: str) -> None:
 def render_body(scope: str = "website") -> None:
     """The panel contents WITHOUT a container, so the caller decides whether it
     lives in a popover (utility bar) or an expander."""
+    if not _has_baseline(scope):
+        st.caption("These checks read the TestRail baseline. Martech has none: its "
+                   "backlog is one plan, shown as it stands in the Backlog tab.")
+        return
     # Marker class — `[data-testid="stPopoverBody"]:has(.dq-panel)` in styles.py
     # widens the popover for this panel only (the chat popover keeps its own).
     st.markdown('<div class="dq-panel"></div>', unsafe_allow_html=True)

@@ -167,6 +167,11 @@ def render() -> None:
     scope, _bu = global_filter.current()
     scope_lbl  = global_filter.scope_label(scope)
 
+    if scope == "martech":
+        st.info("The Overview counts automated cases against the TestRail baseline. "
+                "Martech has no baseline: its backlog is one plan, shown in the "
+                "Backlog tab.")
+        return
     rules = [r for r in ALL_RULES if r.scope == scope]
     if not rules:
         st.info(f"No rules defined for {scope_lbl}.")

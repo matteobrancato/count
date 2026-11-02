@@ -73,7 +73,7 @@ from ..bu_rules import (
 )
 from ..freshness import DAY_TTL, computed_cache
 from ..rules_engine import _apply_framework_precedence, evaluate_rules
-from . import global_filter
+from . import bu_popup, global_filter, martech_tab
 from .styles import (
     COLORS,
     COVERAGE_TARGET,
@@ -1884,13 +1884,18 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
                         selected_bu: str = "",
                         backlog_health: bool = True,
                         saves: dict[str, automation_save.Saving | None] | None = None,
-                        save_unit: str = "") -> str:
+                        save_unit: str = "",
+                        clickable: bool = False) -> str:
     """Presentation-grade HTML for the All-BU summary — same data as the native
     dataframe, with an RAG coverage bar and tidy typography.  Styling lives in
     the `.bl-summary` CSS block in styles.py.
 
-    *selected_bu* marks the row the global filter is on, so the reader can find
-    "their" BU in an eight-row table without counting down the rows.
+    *selected_bu* marks the row the reader last opened, so they can find "their"
+    BU in an eight-row table without counting down the rows.
+
+    *clickable* turns each BU's name into a button and each row into a click
+    target that opens the BU's window (`bu_popup`).  Off, the markup is exactly
+    what it was before the window existed.
 
     *backlog_health* draws the health percentage under the Backlog number.  Off
     for Production Sanity: the 3% threshold was agreed for the regression
@@ -2016,31 +2021,37 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         scope_td = (f'<td class="l"><span class="scope-pill">'
                     f'{html.escape(str(r["Scope"]))}</span></td>') if show_scope else ''
         body_rows.append(
-            f'<tr{sel_cls}>'
-            f'<td class="l bu">{html.escape(str(r["BU"]))}</td>'
+            f'<tr{sel_cls}{bu_popup.row_attr(str(r["BU"]), clickable)}>'
+            f'{bu_popup.name_cell(str(r["BU"]), clickable)}'
             f'{scope_td}{nums}{save_td}{cov_cell}</tr>'
         )
-    return (f'<div class="bl-summary"><table>{head}'
-            f'<tbody>{"".join(body_rows)}</tbody></table></div>')
+    return (f'<div class="bl-summary{" bl-clickable" if clickable else ""}">'
+            f'<table>{head}<tbody>{"".join(body_rows)}</tbody></table></div>')
 
 
-def _run_picker(scope: str) -> str:
+def _run_picker(scope: str, popup: bool = False) -> str:
     """One run at a time.  Everything below it — table, tiles, coverage,
     frameworks, pivot — reports on the run picked here, so no two populations
     share a page.  The picker takes the width it needs; the rest of the row
     carries what the chosen run actually is, rather than being left over.
 
-    Drawn by both the Backlog and the Detail tab with the SAME key, so the
-    choice follows you from one to the other (only the open tab runs, so the
-    key is never on screen twice)."""
+    The page's table and the previous layout's Detail tab share one key, so the
+    choice follows you from one to the other (only one of them runs at a time).
+    The BU window has a key of its own: it is drawn in the very run that opens
+    it, beside the table's picker, and a widget key cannot be on screen twice.
+    The window starts on the run the table is on (`_open_bu`) and then goes its
+    own way."""
+    key = f"bl_run_{scope}" + ("_bu" if popup else "")
+    # Seeded rather than given as `default`: the window's key is set before the
+    # widget exists, and a widget with both is a warning on every run.
+    st.session_state.setdefault(key, RUN_BIG)
     # A horizontal container, not columns: the control takes the width its
     # labels need and the description the rest, so it is the text that wraps.
     # A fixed column share broke the control onto two lines when the fourth
     # run arrived.
     with st.container(horizontal=True, vertical_alignment="center", gap="medium"):
         run = st.segmented_control(
-            "Run", RUNS, default=RUN_BIG, required=True,
-            key=f"bl_run_{scope}", label_visibility="collapsed",
+            "Run", RUNS, required=True, key=key, label_visibility="collapsed",
         ) or RUN_BIG
         # Inline <span>, not a block: a block element collapses against
         # Streamlit's -1rem markdown margin and lands below the control's centre.
@@ -2076,13 +2087,31 @@ def _load_run(run: str, scope: str):
     return summary, expanded_by_bu, auto_by_bu
 
 
+def _open_bu(scope: str, bu: str, run: str) -> None:
+    """Open the window of the BU whose row was clicked, on the run the table is
+    showing."""
+    st.session_state[f"bl_run_{scope}_bu"] = run
+    bu_popup.open_for(scope, bu)
+
+
 @st.fragment
-def render() -> None:
-    """The Backlog tab: every Business Unit side by side, nothing else — the
-    detail of one BU lives in its own tab (`render_detail`)."""
+def render(*, pick_bu: bool = True) -> None:
+    """The Backlog tab: every Business Unit side by side.  A click on a BU opens
+    its window — Detail, Coverage, Leakage, Trend (`bu_popup`).
+
+    *pick_bu* False draws the table as it was before the window existed: rows
+    inert, and the BU taken from the previous layout's own dropdown."""
     # Scope drives which baseline we show: Mobile App uses a priority-based
     # baseline (separate pipeline), everything else the big_regr label baseline.
     scope, bu = global_filter.current()
+    if scope == "martech":
+        martech_tab.render(pick_bu=pick_bu)
+        return
+    # Read first: the table below is drawn with the BU just clicked as the one
+    # opened, not the one before it.  (The window itself is opened after it.)
+    picked = bu_popup.clicked() if pick_bu else None
+    if picked:
+        global_filter.select_bu(scope, picked)
     run = _run_picker(scope)
     loaded = _load_run(run, scope)
     if loaded is None:
@@ -2140,6 +2169,8 @@ def render() -> None:
         # below: a block element collapses against Streamlit's -1rem markdown
         # margin and lands 8px below the legend it should be level with.
         section_title("All Business Units", top=0)
+        if pick_bu:
+            st.caption("Click a Business Unit to open its Detail, Coverage and Leakage.")
     # Native horizontal flex row: legend and CSV share one optically centred
     # line, right-aligned against the table's right edge.
     with c_meta, st.container(
@@ -2163,9 +2194,13 @@ def render() -> None:
             mime="text/csv",
             help="Download the table above, exactly as shown, as a CSV.",
         )
-    st.markdown(_summary_table_html(display, num_cols, selected_bu=bu,
-                                    saves=saves, save_unit=save_unit),
-                unsafe_allow_html=True)
+    st.markdown(_summary_table_html(
+        display, num_cols,
+        selected_bu=global_filter.opened(scope) if pick_bu else bu,
+        saves=saves, save_unit=save_unit, clickable=pick_bu),
+        unsafe_allow_html=True)
+    if picked:
+        _open_bu(scope, picked, run)
     if run == RUN_EXT:
         _ext_case_list(display)
 
@@ -2281,12 +2316,13 @@ def _ext_case_list(display: pd.DataFrame) -> None:
 
 
 @st.fragment
-def render_detail() -> None:
-    """The Detail tab: the Business Unit picked in the top bar, on the run
-    picked here — tiles with their rows, coverage, automation save, frameworks
-    and the pivot."""
+def render_detail(*, popup: bool = False) -> None:
+    """The Detail view of the Business Unit last opened, on the run picked here —
+    tiles with their rows, coverage, automation save, frameworks and the pivot.
+    *popup* is the BU window's, which has a run picker of its own
+    (`_run_picker`)."""
     scope, bu = global_filter.current()
-    run = _run_picker(scope)
+    run = _run_picker(scope, popup=popup)
     loaded = _load_run(run, scope)
     if loaded is None:
         return

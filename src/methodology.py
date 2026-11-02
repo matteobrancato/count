@@ -26,6 +26,23 @@ device and in more than one country. Each *(case × country × device)* pair is 
 **row**, so the row count is larger than the number of distinct cases. Both are
 shown: the big number is rows, the small caption is unique cases.
 
+**Opening a Business Unit** — a click on a BU in the Backlog table opens its
+window: Detail, Coverage, Leakage and Trend, all for that BU. The numbers are the
+same as anywhere else; the window only gathers what is specific to one BU in one
+place. The Detail tab inside it has its own run picker, which starts on the run
+the table was showing.
+
+**Martech** — a separate scope with no TestRail baseline: the Testim automation
+backlog of the MarTech Connect project, read from ONE plan ("Testim Automation
+BACKLOG") on another TestRail instance. Each run is a BU's country and each test a
+case to automate there, so a row here is a test (case × country), with no device.
+*Merged* is TestRail's **Passed**; *Backlog* is every test that is neither merged
+nor **N/A**; every other status is shown under the name TestRail gives it. The
+plan itself gives four statuses a meaning: Passed = merged, Accepted fail = PR
+raised, Failed = query raised to MQA, N/A = not applicable. *Progress* is merged ÷
+(total − N/A): the share of a backlog, **not a coverage**, so it is never compared
+with the 80% target. Martech is not in the KPI chips or the Overview.
+
 **The baseline** (what the Backlog tab measures) — depends on the scope:
 
 | Scope | What's in the baseline | Device |

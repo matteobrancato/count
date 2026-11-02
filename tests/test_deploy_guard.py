@@ -93,7 +93,9 @@ def test_every_cache_is_either_downloaded_data_or_a_computed_number():
     downloaded = {"_fetch_cases_cached", "_fetch_labels_cached", "_fetch_sections_cached",
                   "fetch_case_fields", "fetch_case_types", "fetch_priorities", "fetch_suite",
                   "field_ids_by_name", "project_versions", "uat_issues", "incidents",
-                  "_jira_issues", "stamp"}
+                  "_jira_issues", "stamp",
+                  # Martech: one plan read from the second TestRail instance
+                  "fetch_statuses", "fetch_plan", "fetch_run_tests"}
     found = set()
     for path in pathlib.Path("src").rglob("*.py"):
         found |= set(re.findall(r"@st\.cache_data\([^\n]*\)\ndef (\w+)",

@@ -24,10 +24,20 @@ using the same cached data the dashboard renders.
 
 | Tab | Purpose |
 |---|---|
-| **📋 Backlog** | Every Business Unit side by side on the chosen run (Big No-Regression, Small No-Regression, Smoke — the regression cases with priority Highest —, Production Sanity, Extended Production Sanity — the last with each BU's cases and the Jira bugs they cite): totals, frameworks, outstanding work, Automation save and coverage, with a CSV export |
-| **🔎 Detail** | The BU picked in the top bar: every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports, coverage, Automation save, frameworks and the pivot |
+| **📋 Backlog** | Every Business Unit side by side on the chosen run (Big No-Regression, Small No-Regression, Smoke — the regression cases with priority Highest —, Production Sanity, Extended Production Sanity — the last with each BU's cases and the Jira bugs they cite): totals, frameworks, outstanding work, Automation save and coverage, with a CSV export. **A click on a Business Unit opens its window** (below) |
+| **🌍 Leakage · All BUs** | Every BU's latest release and trend, and the leaks no automated test covers — the candidates for an extended production suite. Jira and Gemini only — no TestRail request |
+| **🕰️ Previous layout** | The dashboard as it was before the Business Unit window — a BU dropdown and tabs for Detail, Coverage, Leakage, Trend and All BUs — kept to check the new one against. It will be removed (delete `src/ui/classic_view.py` and its line in `app.py`) |
+
+**The Business Unit window** (`ui/bu_popup.py`) holds everything specific to one BU, in four tabs:
+
+| Tab | Purpose |
+|---|---|
+| **🔎 Detail** | Every `(case × country × device)` row classified into Automated / To update / Backlog / Partially Automated / Not Applicable / Unknown, with per-tile evidence exports (the three framework tiles included), coverage, Automation save, frameworks and the pivot. It has its own run picker, which starts on the run the table is on |
 | **📐 Coverage** | Coverage per functional area (TestRail section), as a pie + bar pair, with drill-down links back into TestRail — for the regression baseline, Smoke, Production Sanity, Extended Production Sanity, or the two sanity suites combined |
-| **🐞 Leakage** | Which parts of production keep leaking, so they can be automated. Defect leakage per release, counted as Delivery's quality report does: pick a fixVersion (released or planned) of the BU's Jira project, and see the leakage ratio and its High/Highest variant against their 25% / 10% limits, the UAT issues and the excluded incidents behind the counts, and the leaked incidents. Every leaked incident gets an AI proposal (UAT-detectable or not, a category, the TestRail case that should have caught it, the coverage gap), analysed in the background with live progress; an Excel export with Jira data and the AI proposals. Two sub-tabs appear beside it while it is open: **📈 Trend** (the BU's last six releases: the ratio, the Jira components that leak, and what automation covers of what leaks) and **🌍 All BUs** (every BU's latest release and trend, and the leaks no automated test covers — the candidates for an extended production suite). Jira and Gemini only — no TestRail request |
+| **🐞 Leakage** | Which parts of production keep leaking, so they can be automated. Defect leakage per release, counted as Delivery's quality report does: pick a fixVersion (released or planned) of the BU's Jira project, and see the leakage ratio and its High/Highest variant against their 25% / 10% limits, the UAT issues and the excluded incidents behind the counts, and the leaked incidents. Every leaked incident gets an AI proposal (UAT-detectable or not, a category, the TestRail case that should have caught it, the coverage gap), analysed in the background with live progress; an Excel export with Jira data and the AI proposals. Jira and Gemini only — no TestRail request |
+| **📈 Trend** | The BU's last six releases: the ratio, the Jira components that leak, and what automation covers of what leaks |
+
+Closing the window (✕, Esc, a click outside) leaves the table where it was; the tab last used stays selected from one BU to the next.
 
 **🧭 Overview** is a window opened from the utility bar next to the tabs: cross-BU
 totals — Smoke Suite, All Automated Cases and Production Sanity — by country and
@@ -36,17 +46,44 @@ coverage: for that, read the Backlog tab.
 
 A floating chat button (bottom-left, every tab) opens **Dexter**.
 
+### Martech
+
+A fourth scope, **🎯 Martech**, shows the Testim automation backlog of the MarTech
+Connect project. It lives on **another TestRail instance** (aswatson.testrail.io) and
+is read from **one plan**, "Testim Automation BACKLOG" (id 3721): each run is a
+Business Unit's country, each test a case to automate there, and its status says how
+far it has got. There are no labels or fields behind it. The Backlog table lists the
+BUs with their tests, how many are merged (TestRail's *Passed*), the backlog (every
+other status except N/A) and one column per status that occurs; a click on a BU opens
+its runs, statuses and the tests themselves, with an Excel export.
+
+It is offered only once its API key is in the secrets, and it never touches the main
+TestRail pipeline: its own session, its own pacing, and nothing is read at start-up —
+the plan (one request) when somebody opens the scope, a BU's tests when somebody opens
+the BU. Add, above any `[table]` in the secrets:
+
+```toml
+MARTECH_TESTRAIL_API_KEY = "..."        # generated on aswatson.testrail.io (My Settings > API Keys)
+# Optional - the defaults are shown:
+# MARTECH_TESTRAIL_USER = "..."         # falls back to TESTRAIL_USER (same person)
+# MARTECH_TESTRAIL_URL  = "https://aswatson.testrail.io"
+# MARTECH_PLAN_ID       = 3721
+```
+
 ---
 
 ## Scopes and the global filter
 
-Two controls in the top bar, to the right of the title, are the only scope/BU
-selector in the app — tabs read them via `global_filter.current()` and never
-render their own:
+One control in the top bar, to the right of the title, is the only scope selector
+in the app — sections read it via `global_filter.current()` and never render their
+own:
 
 ```
-[ 🌐 Website | 📱 Mobile App | 🧩 Microservices ]   [ Business Unit ▾ ]
+[ 🌐 Website | 📱 Mobile App | 🧩 Microservices | 🎯 Martech ]
 ```
+
+The Business Unit is not picked there: it is the one whose row was last clicked in
+the Backlog table (`global_filter.select_bu` / `opened`), kept per scope.
 
 Each scope keeps its own last-selected BU, so switching back and forth can never
 produce an invalid combination. The selection is published to the URL as
@@ -62,7 +99,7 @@ comparisons by design and intentionally ignore the BU part of the selection.
 
 ```
 app.py                      Streamlit entry point: credential gate, top bar
-                            (title, KPI chips, global filter), 4 tabs, the
+                            (title, KPI chips, scope switch), 3 tabs, the
                             Overview window, cache warm-up
 │
 ├── src/
@@ -86,15 +123,21 @@ app.py                      Streamlit entry point: credential gate, top bar
 │   ├── leakage_store.py    AI proposals + analysis runs (in memory, for now)
 │   ├── leakage_export.py   The release's analysis as an Excel workbook
 │   ├── automation_save.py  Automation save: coefficient × configurations
+│   ├── martech.py          Martech: the backlog plan on the second TestRail
+│   │                       instance — own session and pacing, status counts → BUs
 │   └── ui/
-│       ├── global_filter.py  Scope + BU selector, shareable via URL
+│       ├── global_filter.py  Scope switch + the BU last opened, shareable via URL
+│       ├── bu_popup.py       The Business Unit window and the click that opens it
+│       ├── classic_view.py   The previous layout, kept for comparison
+│       ├── martech_tab.py    Martech's table and BU window
+│       ├── isolation.py      Keeps one failing section from blanking the rest
 │       ├── kpi_strip.py      The two cross-BU KPI chips under the title
 │       ├── backlog_tab.py    Backlog tab
 │       ├── coverage_tab.py   Coverage tab
 │       ├── overview_tab.py   Overview window (utility bar)
 │       ├── data_quality.py   TestRail hygiene checklist
 │       ├── chat_assistant.py Dexter — the Gemini assistant
-│       ├── leakage_tab.py    Leakage, Trend and All BUs tabs
+│       ├── leakage_tab.py    Leakage, Trend and All BUs views
 │       └── styles.py         Design system (colours, CSS, health thresholds)
 │
 └── tests/                  Pure-Python regression suite (no API calls)
