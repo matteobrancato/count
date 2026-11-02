@@ -233,41 +233,82 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
-/* ── Group KPI chips (right end of the top bar) ───────────────────────────────
-   The two cross-BU figures for managers — chips with RAG dots. */
-.kpi-row {{
-    display: flex;
-    flex-wrap: nowrap;             /* one clean line, always */
-    align-items: center;
-    gap: 8px;
-    overflow-x: auto;              /* worst case: scrolls, never wraps ugly */
-    scrollbar-width: none;
+/* ── Group KPIs: four cards under the top bar ───────────────────────────────
+   The cross-BU picture managers steer on.  They were chips under the title, on
+   one line that scrolled sideways — and, on a narrow window, ran into the scope
+   control.  Cards give each figure room to say what it is a share of, and a
+   meter with the target on it says how far from it. */
+.kpi-grid {{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin: 2px 0 6px;
 }}
-.kpi-row::-webkit-scrollbar {{ display: none; }}
-.kpi-chip {{
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex: 0 0 auto;
-    background: {c['canvas']};
+/* Two by two below 1000px: never three and an orphan.  On a phone the cards get
+   tighter rather than stacking into a column that pushes the table off screen. */
+@media (max-width: 1000px) {{ .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+@media (max-width: 520px) {{
+    .kpi-grid {{ gap: 8px; }}
+    .kpi-card {{ padding: 10px 12px 11px; min-height: 96px; }}
+    .kpi-value {{ font-size: 24px; }}
+}}
+.kpi-card {{
+    background: {c['surface']};
     border: 1px solid {c['border']};
-    border-radius: 999px;
-    padding: 5px 11px;
-    font-size: 12px;
-    color: {c['text']};
-    white-space: nowrap;
-    cursor: default;
+    border-radius: 14px;
+    padding: 12px 16px 13px;
+    min-height: 104px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.05);
 }}
-.kpi-chip b {{ color: {c['ink']}; font-weight: 750; }}
-.kpi-chip .kpi-sub {{ color: {c['muted']}; font-size: 11px; }}
+.kpi-label {{
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: {c['muted']};
+}}
+.kpi-dot {{ width: 8px; height: 8px; border-radius: 50%; flex: none; }}
+.kpi-scope {{ margin-left: auto; font-size: 11px; font-weight: 500; color: {c['faint']}; }}
+.kpi-value {{
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 3px;
+    font-size: 28px;
+    font-weight: 750;
+    line-height: 1.15;
+    color: {c['ink']};
+    font-variant-numeric: tabular-nums;
+}}
+.kpi-value small {{ font-size: 12.5px; font-weight: 700; }}
+/* A meter on a 0-100% scale with the target as a tick: how far, and from what. */
+.kpi-meter {{
+    position: relative;
+    height: 6px;
+    margin-top: 9px;
+    border-radius: 4px;
+    background: {c['grid']};
+}}
+.kpi-meter i {{ position: absolute; inset: 0 auto 0 0; border-radius: 4px; }}
+.kpi-meter b {{
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 1px;
+    background: {c['ink']};
+    opacity: .5;
+}}
+.kpi-sub {{ margin-top: 7px; font-size: 11.5px; line-height: 1.35; color: {c['muted']}; }}
+.kpi-sub strong {{ color: {c['ink']}; font-weight: 650; }}
 /* Skeleton placeholder — reserves the strip's space during the first load so
-   the page doesn't shift when the real chips arrive. */
-.kpi-skeleton {{
-    display: inline-flex;
-    height: 28px;
-    width: 170px;
-    flex: 0 0 auto;
-    border-radius: 999px;
+   the page doesn't shift when the real cards arrive. */
+.kpi-skeleton-card {{
+    min-height: 104px;
+    border-radius: 14px;
     background: linear-gradient(90deg, {c['canvas']} 25%, {c['border']} 50%, {c['canvas']} 75%);
     background-size: 200% 100%;
     animation: kpiShimmer 1.4s ease infinite;
@@ -277,9 +318,9 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
     to   {{ background-position: -200% 0; }}
 }}
 
-/* ── Top bar: brand (title + KPI chips) · scope + BU controls ────────────────
-   One row of chrome above the tabs (it replaced a KPI card and a filter card).
-   Wraps on a narrow window instead of overflowing. */
+/* ── Top bar: brand (logo, title) · scope control ────────────────────────────
+   One row of chrome above the KPI cards and the tabs.  Wraps on a narrow window
+   instead of overflowing. */
 .st-key-topbar, .st-key-topbar_controls {{
     flex-wrap: wrap !important;
     row-gap: 8px !important;
@@ -287,22 +328,6 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 .st-key-topbar {{ padding: 2px 0 6px; }}
 .st-key-topbar [data-testid="stElementContainer"] {{ margin: 0 !important; }}
 .st-key-topbar [data-testid="stSelectbox"] {{ margin: 0 !important; }}
-/* The KPI chips are the line under the title: tight to it, and a size
-   smaller than the title so the two read as one block. */
-.st-key-brand_text {{ gap: 4px !important; }}
-.st-key-brand_text .kpi-chip {{ padding: 1px 9px; font-size: 11.5px; gap: 5px; }}
-/* Four chips are wider than the title: the line keeps the title's block
-   narrow enough for the controls to stay on the same row, and scrolls
-   sideways (trackpad, shift + wheel) with its end faded so the scroll reads. */
-.st-key-brand_text .kpi-row {{
-    max-width: 430px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -webkit-mask-image: linear-gradient(to right, #000 88%, transparent);
-    mask-image: linear-gradient(to right, #000 88%, transparent);
-    padding-right: 28px;
-}}
-.st-key-brand_text .kpi-skeleton {{ height: 20px; width: 130px; }}
 
 /* ── Secondary export button (right-aligned under the summary table) ────────
    A quiet action: small, muted, brand-tinted only on hover. */
@@ -446,11 +471,6 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 /* Narrow viewports: the tab bar wins the row — drop the utility bar below it
    instead of letting the two overlap. */
 @media (max-width: 1250px) {{
-    /* Narrow screens: let the KPI chips wrap onto a second line.  The row is
-       `overflow-x: auto` with the scrollbar hidden, so on a laptop the last
-       chip sat outside the card with nothing to suggest it could be scrolled
-       to — silently truncated KPIs.  Two short lines beat one hidden one. */
-    .kpi-row {{ flex-wrap: wrap !important; overflow-x: visible !important; }}
     /* The container is created with width="content", so BOTH it and Streamlit's
        layout wrapper hug the content — they must span the row for the bar to
        align right once it is back in the normal flow. */

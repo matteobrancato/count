@@ -1,17 +1,21 @@
-"""Group KPIs — the cross-BU figures, as chips under the title.
+"""Group KPIs — the cross-BU figures, as four cards under the top bar.
 
-    🟡 Coverage 79.4% all BUs   🟢 Backlog 837 3.3%   🏆 Best …   🔴 Focus …
+    Coverage 78.4%   Backlog 1,058 · 4.2%   Best coverage …   Needs attention …
+
+Each card says what its figure is a share of (rows of the baseline), where the
+target or limit is (a tick on a meter) and the colour it earns against it.  They
+were chips under the title on one line that scrolled sideways; cards fit the page
+at any width (a grid that wraps) and need no tooltip to say what they mean.
 
 "Coverage" here means AUTOMATED / REGRESSION-BASELINE (the big_regr rows —
 exactly the Backlog tab's numbers and Cov. % basis), NOT automated over the
 whole case universe: that total-universe figure mixes BUs with huge unlabelled
 suites and reads misleadingly low, and management steers on the baseline.
 
-All four chips, on one line that scrolls sideways when it runs out of room
-(Matteo, 2026-09-28: keep them all rather than drop Best and Focus).
+All four are kept (Matteo, 2026-09-28: keep Best and Focus rather than drop them).
 
 All aggregates come straight from the Backlog pipeline (`_backlog_data`), so
-the chips always agree with the All-BU table.  They deliberately ignore the
+the cards always agree with the All-BU table.  They deliberately ignore the
 scope/BU filter: they are the cross-BU picture.
 
 Rendering is two-phase in app.py: a same-size skeleton holds the slot during
@@ -20,6 +24,7 @@ Streamlit keys (two keyed containers in one slot raise DuplicateElementKey).
 """
 from __future__ import annotations
 
+import html
 import logging
 
 import streamlit as st
@@ -61,26 +66,37 @@ def _kpis() -> dict:
     return {"per_bu": per_bu, "baseline": baseline}
 
 
-def _chip(dot: str, label: str, value: str, sub: str = "", tooltip: str = "") -> str:
-    sub_html = f"<span class='kpi-sub'>{sub}</span>" if sub else ""
-    title    = f" title=\"{tooltip}\"" if tooltip else ""
-    return (f"<span class='kpi-chip'{title}>{dot} {label} "
-            f"<b>{value}</b>{sub_html}</span>")
+def _meter(pct: float, color: str, tick: float) -> str:
+    """A 0-100% bar filled to *pct*, with a tick where the target (or the limit)
+    is.  Clamped: a share cannot leave its track."""
+    return (f"<div class='kpi-meter'><i style='width:{max(0.0, min(pct, 100.0)):.1f}%;"
+            f"background:{color}'></i><b style='left:{tick:.1f}%'></b></div>")
+
+
+def _card(label: str, value: str, color: str, meter: str, sub: str, *,
+          scope: str = "", small: str = "") -> str:
+    scope_html = f"<span class='kpi-scope'>{scope}</span>" if scope else ""
+    small_html = f"<small style='color:{color}'>{small}</small>" if small else ""
+    return (f"<div class='kpi-card'>"
+            f"<div class='kpi-label'><span class='kpi-dot' style='background:{color}'>"
+            f"</span>{label}{scope_html}</div>"
+            f"<div class='kpi-value'>{value}{small_html}</div>"
+            f"{meter}<div class='kpi-sub'>{sub}</div></div>")
 
 
 def render_skeleton() -> None:
-    """Shimmering placeholder with the SAME footprint as the real chips, so
-    the top bar does not shift when they arrive after the first load."""
+    """Shimmering placeholder with the SAME footprint as the real cards, so the
+    page does not shift when they arrive after the first load."""
     st.markdown(
-        "<div class='kpi-row'>"
-        + "".join("<span class='kpi-skeleton'></span>" for _ in range(4))
+        "<div class='kpi-grid'>"
+        + "".join("<div class='kpi-skeleton-card'></div>" for _ in range(4))
         + "</div>",
-        unsafe_allow_html=True, width="content",
+        unsafe_allow_html=True,
     )
 
 
 def render() -> None:
-    """Render the chips; hides itself (no gap) if the aggregates aren't ready."""
+    """Render the cards; hides itself (no gap) if the aggregates aren't ready."""
     try:
         k = _kpis()
     except Exception:                                                   # noqa: BLE001
@@ -92,22 +108,25 @@ def render() -> None:
 
     pct = base["auto"] / base["total"] * 100
     kpct = base["backlog"] / base["total"] * 100
-    chips = [
-        _chip(coverage_health(pct)[0], "Coverage", f"{pct:.1f}%", sub="all BUs",
-              tooltip=(f"Automated share of the big_regr baseline rows, all BUs: "
-                       f"{base['auto']:,} of {base['total']:,} rows — same numbers "
-                       f"as the Backlog tab. Target {COVERAGE_TARGET:.0f}%.")),
-        _chip(backlog_health(kpct)[0], "Backlog", f"{base['backlog']:,}",
-              sub=f"{kpct:.1f}%",
-              tooltip=(f"Baseline rows whose case is automated NOWHERE — a script "
-                       f"to write from scratch — {kpct:.1f}% of the baseline, all "
-                       f"BUs. Healthy ≤ {BACKLOG_OK_PCT:.0f}%.")),
-    ]
     best, worst = k["per_bu"][0], k["per_bu"][-1]
-    chips.append(_chip("🏆", "Best", f"{best['bu']} {best['pct']:.1f}%",
-                       tooltip="Highest regression-baseline coverage."))
-    chips.append(_chip(coverage_health(worst["pct"])[0], "Focus",
-                       f"{worst['bu']} {worst['pct']:.1f}%",
-                       tooltip="Lowest regression-baseline coverage: needs attention."))
-    st.markdown(f"<div class='kpi-row'>{''.join(chips)}</div>",
-                unsafe_allow_html=True, width="content")
+    _, cov_color = coverage_health(pct)
+    _, bl_color = backlog_health(kpct)
+    _, worst_color = coverage_health(worst["pct"])
+    _, best_color = coverage_health(best["pct"])
+    cards = [
+        _card("Coverage", f"{pct:.1f}%", cov_color,
+              _meter(pct, cov_color, COVERAGE_TARGET),
+              f"<strong>{base['auto']:,}</strong> of {base['total']:,} baseline rows "
+              f"· target {COVERAGE_TARGET:.0f}%", scope="all BUs"),
+        _card("Backlog", f"{base['backlog']:,}", bl_color,
+              _meter(kpct, bl_color, BACKLOG_OK_PCT),
+              f"rows automated nowhere · healthy ≤ {BACKLOG_OK_PCT:.0f}%",
+              scope="all BUs", small=f"{kpct:.1f}%"),
+        _card("Best coverage", f"{best['pct']:.1f}%", best_color,
+              _meter(best["pct"], best_color, COVERAGE_TARGET),
+              f"<strong>{html.escape(best['bu'])}</strong>"),
+        _card("Needs attention", f"{worst['pct']:.1f}%", worst_color,
+              _meter(worst["pct"], worst_color, COVERAGE_TARGET),
+              f"<strong>{html.escape(worst['bu'])}</strong> · lowest coverage"),
+    ]
+    st.markdown(f"<div class='kpi-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)

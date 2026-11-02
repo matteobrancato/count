@@ -100,16 +100,12 @@ _TITLE = ("<span style='font-size:24px;font-weight:700;line-height:1.1;"
           "white-space:nowrap;letter-spacing:-0.01em'>Automation Coverage</span>")
 
 
-def _header():
-    """Logo and title, with the cross-BU KPI chips as the line under the title
-    (where a decorative subtitle used to be).  Returns the st.empty slot the
-    chips live in, so a cold start can swap the skeleton for the real chips."""
+def _header() -> None:
+    """Logo and title."""
     with st.container(key="brand", horizontal=True, width="content",
                       vertical_alignment="center", gap="small"):
         st.markdown(_LOGO, unsafe_allow_html=True, width="content")
-        with st.container(key="brand_text", width="content", gap=None):
-            st.markdown(_TITLE, unsafe_allow_html=True, width="content")
-            return st.empty()
+        st.markdown(_TITLE, unsafe_allow_html=True, width="content")
 
 
 @st.dialog("🧭 Overview", width="large")
@@ -240,7 +236,7 @@ def _creds_ok() -> bool:
         tr.TestRailCredentials.from_secrets()
         return True
     except tr.TestRailError as exc:
-        _header()          # the brand without chips: there is nothing to count
+        _header()          # the brand alone: there is nothing to count
         st.error(str(exc))
         st.code(
             '# .streamlit/secrets.toml\n'
@@ -377,31 +373,30 @@ def main() -> None:
     # before st.tabs(), which used to leave the tab area blank/white).  So the
     # page chrome is visible immediately and the loader sits on the data area.
 
-    # ONE top bar: the brand (title, with the two cross-BU KPI chips as the
-    # line under it) on the left, the scope / BU controls every tab reads on
-    # the right.  It replaced three stacked bands — title, KPI card, filter
-    # card — that pushed the data a third of a screen down.  Horizontal
-    # containers wrap, so a narrow window gets two tidy rows, not an overflow.
-    #
-    # The KPI chips sit in an st.empty slot: warm runs fill it immediately; on
-    # a cold start a same-size shimmering skeleton holds the space and is
-    # REPLACED after the warm-up, so the layout never shifts.
+    # ONE top bar — the brand on the left, the scope switch every tab reads on
+    # the right — then the four cross-BU KPI cards.  Horizontal containers wrap,
+    # so a narrow window gets two tidy rows, not an overflow.
     with st.container(key="topbar", horizontal=True, vertical_alignment="center",
                       horizontal_alignment="distribute", gap="medium"):
         with _timed("Header"):
-            kpi_slot = _header()
-        try:
-            with kpi_slot.container(), _timed("KPI strip"):
-                if cold:
-                    kpi_strip.render_skeleton()
-                else:
-                    kpi_strip.render()
-        except Exception:  # noqa: BLE001
-            logger.exception("KPI strip failed to render")
+            _header()
         with st.container(key="topbar_controls", horizontal=True, width="content",
                           vertical_alignment="center", gap="small"), \
                 _timed("Global filter"):
             global_filter.render()
+
+    # The KPI cards sit in an st.empty slot: warm runs fill it immediately; on
+    # a cold start a same-size shimmering skeleton holds the space and is
+    # REPLACED after the warm-up, so the layout never shifts.
+    kpi_slot = st.empty()
+    try:
+        with kpi_slot.container(), _timed("KPI strip"):
+            if cold:
+                kpi_strip.render_skeleton()
+            else:
+                kpi_strip.render()
+    except Exception:  # noqa: BLE001
+        logger.exception("KPI strip failed to render")
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
