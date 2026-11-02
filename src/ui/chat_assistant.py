@@ -127,7 +127,8 @@ specific number is NOT in the snapshot, say so plainly
     baseline: never name them best/worst for coverage; bring them up only for
     Mobile App questions.
   • Coverage, totals, automated counts, comparisons, rankings, gaps, the
-    No-Regression baseline, the backlog breakdown (Backlog / To be Updated / N/A),
+    No-Regression baseline, the backlog breakdown (Backlog / In Progress / To be
+    Updated / N/A),
     frameworks (Java / Testim / Playwright) → answer DIRECTLY from the snapshot.
   • You have NO data on test runs, run pass rates, open bugs or test stability.
     If asked, say plainly that the dashboard does not currently show runs or
@@ -395,6 +396,7 @@ def _build_coverage_brief() -> str:
                 f"- No-Regression baseline (regression suite): "
                 f"{int(bk['Automated']):,} automated of {int(bk['Total']):,} rows "
                 f"({float(bk['Coverage %']):.1f}%) — Backlog {int(bk['Backlog']):,}, "
+                f"In Progress {int(bk.get('In Progress') or 0):,}, "
                 f"To be Updated {int(bk['To be Updated']):,}, N/A {int(bk['Not Applicable']):,} "
                 f"· Java {int(bk['Java']):,} / Testim {int(bk['TestIM']):,}"
                 + (f" / Playwright {int(bk['Playwright']):,}"
@@ -504,6 +506,7 @@ def _build_coverage_brief() -> str:
         bk_tot  = sum(int(v.get("Total") or 0)     for v in backlog_by_bu.values())
         bk_auto = sum(int(v.get("Automated") or 0) for v in backlog_by_bu.values())
         bk_back = sum(int(v.get("Backlog") or 0)   for v in backlog_by_bu.values())
+        bk_ip   = sum(int(v.get("In Progress") or 0) for v in backlog_by_bu.values())
         bk_part = sum(int(v.get("Partially Automated") or 0)
                       for v in backlog_by_bu.values())
         bk_tbu  = sum(int(v.get("To be Updated") or 0) for v in backlog_by_bu.values())
@@ -512,6 +515,7 @@ def _build_coverage_brief() -> str:
         agg_lines.append(
             f"- Regression baseline, all BUs combined: {bk_auto:,} automated of "
             f"{bk_tot:,} rows — Backlog {bk_back:,} (never automated anywhere), "
+            f"In Progress {bk_ip:,} (a script is being written), "
             f"Partially Automated {bk_part:,} (the case is automated in another "
             f"country/device), To be Updated {bk_tbu:,} (the test changed, so its "
             f"automation no longer matches it — these are NOT counted as "

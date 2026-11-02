@@ -65,6 +65,7 @@ from ..bu_rules import (
     MAPP_MARKETS,
     MAPP_PLATFORMS,
     MOBILE_APP_BUS,
+    PLAYWRIGHT_LABEL,
     PROD_SANITY_LABEL,
     SANITY_TESTIM_BUS,
     SMALL_NR_FIELDS,
@@ -114,6 +115,12 @@ _STATUS_NA: set[str] = {
 _STATUS_TO_UPDATE: set[str] = {
     "to be updated",
 }
+# "In progress" — a script is being written (or rewritten): not automated yet,
+# but not a script nobody has started either.  Shown beside the Backlog, not in it
+# (Matteo, 2026-11-02).  Normalised like "To be updated".
+_STATUS_IN_PROGRESS: set[str] = {
+    "in progress",
+}
 
 # Mobile-App baseline membership: cases with one of these priorities (there is
 # no big_regr label for MAPP — priority IS the baseline definition).  Matched
@@ -156,6 +163,19 @@ def _label_gates(rules: list, col: str) -> list[set[str]]:
 def _is_to_update(series: pd.Series) -> pd.Series:
     """Boolean mask: status value equals a 'To be updated' label (normalised)."""
     return series.notna() & series.astype(str).str.strip().str.lower().isin(_STATUS_TO_UPDATE)
+
+
+def _is_in_progress(series: pd.Series) -> pd.Series:
+    """Boolean mask: status value is "In progress" (normalised)."""
+    return series.notna() & series.astype(str).str.strip().str.lower().isin(_STATUS_IN_PROGRESS)
+
+
+def _has_label(raw: pd.DataFrame, label: str) -> pd.Series:
+    """Boolean mask: the case carries *label* (matched like the rules engine does,
+    case-insensitively)."""
+    want = label.strip().lower()
+    return raw["labels"].map(
+        lambda ls: isinstance(ls, list) and any(str(x).strip().lower() == want for x in ls))
 
 COUNTRY_NAMES: dict[str, str] = {
     "AT": "Austria",    "BE": "Belgium",     "CH": "Switzerland",
@@ -348,6 +368,7 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     status_cols = _read_status_cols(raw, rules)
     na_mask      = pd.Series(False, index=raw.index)
     tbu_mask     = pd.Series(False, index=raw.index)
+    inprog_mask  = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
     # A device's own TestIM field speaks for THAT device only.  Its N/A used to
     # enter the case-wide mask below, so "Testim Desktop = Automation not
@@ -362,18 +383,39 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     # removing it would turn those rows Unknown rather than correct them, and
     # "To be updated" is read from ANY field by design.  Both left as they are.
     device_cols = set(_DEVICE_STATUS_COL.values())
+    # A case labelled `playwright` is decided by the generic field alone: its
+    # TestIM device fields are the old framework's, and no longer speak for it
+    # (Matteo, 2026-11-02: "con la label playwright si torna con il campo
+    # generico").  For every other case a filled TestIM field decides its device's
+    # row over the generic one — including over an N/A written by hand, because a
+    # test not automatable before may be automatable with TestIM.  The classification
+    # reads these values; "is a script there" (`_tool_automated`) reads the raw ones.
+    is_pw = _has_label(raw, PLAYWRIGHT_LABEL)
+    vals = {col: (raw[col].mask(is_pw) if col in device_cols else raw[col])
+            for col in status_cols}
     for col in status_cols:
-        s      = raw[col]
+        s      = vals[col]
         is_tbu = _is_to_update(s)
+        # Like N/A, "in progress" written on one device's field is about THAT
+        # device: it does not make the other device's row in progress (the device
+        # pass below applies it to its own).  For the other device it is still a
+        # status that is not automated, so it counts as backlog, as it always did.
+        is_ip  = (_is_in_progress(s) if col not in device_cols
+                  else pd.Series(False, index=raw.index))
         if col not in device_cols:
             na_mask  |= s.isin(_STATUS_NA)
         tbu_mask     |= is_tbu
-        # Backlog excludes the auto / N/A / to-be-updated values.
-        backlog_mask |= s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "") & ~is_tbu
+        inprog_mask  |= is_ip
+        # Backlog excludes the auto / N/A / to-be-updated / in-progress values.
+        backlog_mask |= (s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "")
+                         & ~is_tbu & ~is_ip)
 
+    # Later wins.  In progress beats To be updated: a test whose script is being
+    # redone is in progress, not merely stale (Matteo, 2026-11-02, "per ora").
     raw["_cat_base"] = "unknown"
     raw.loc[backlog_mask,  "_cat_base"] = "backlog"
     raw.loc[tbu_mask,       "_cat_base"] = "to_be_updated"
+    raw.loc[inprog_mask,    "_cat_base"] = "in_progress"
     raw.loc[na_mask,        "_cat_base"] = "not_applicable"
 
     # Does ANY of THIS BU's tool status fields say a script already exists?
@@ -454,19 +496,22 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
         dev_mask = raw["device_exp"] == dev
         if not dev_mask.any():
             continue
-        col_vals = raw[scol]
+        col_vals = vals[scol]
         has_value = col_vals.notna() & (col_vals != "")
         is_tbu    = _is_to_update(col_vals)
-        # Only reclassify rows where the device-specific TestIM field has a value.
+        is_ip     = _is_in_progress(col_vals)
+        # Only reclassify rows where the device-specific TestIM field has a value
+        # (a `playwright` case has none here: see `vals`).
         raw.loc[dev_mask & has_value & col_vals.isin(_STATUS_NA), "_cat_base"] = "not_applicable"
         raw.loc[
             dev_mask
             & has_value
             & ~col_vals.isin(_STATUS_AUTO | _STATUS_NA)
-            & ~is_tbu,
+            & ~is_tbu & ~is_ip,
             "_cat_base",
         ] = "backlog"
         raw.loc[dev_mask & is_tbu, "_cat_base"] = "to_be_updated"
+        raw.loc[dev_mask & is_ip, "_cat_base"] = "in_progress"
 
     # ── Dedup on (case_id, country_label, device) ─────────────────────────────
     return (
@@ -511,13 +556,17 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     status_cols = _read_status_cols(raw, rules)
     na_mask      = pd.Series(False, index=raw.index)
     tbu_mask     = pd.Series(False, index=raw.index)
+    inprog_mask  = pd.Series(False, index=raw.index)
     backlog_mask = pd.Series(False, index=raw.index)
     for col in status_cols:
         s      = raw[col]
         is_tbu = _is_to_update(s)
+        is_ip  = _is_in_progress(s)
         na_mask      |= s.isin(_STATUS_NA)
         tbu_mask     |= is_tbu
-        backlog_mask |= s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "") & ~is_tbu
+        inprog_mask  |= is_ip
+        backlog_mask |= (s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "")
+                         & ~is_tbu & ~is_ip)
 
     # The automated statuses are the rule's own (`AUTOMATED_FULL`), so this is
     # exactly what the automated set decides for these cases.
@@ -530,6 +579,7 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
     raw.loc[auto_mask,     "_cat_base"] = "automated"
     raw.loc[backlog_mask, "_cat_base"] = "backlog"
     raw.loc[tbu_mask,      "_cat_base"] = "to_be_updated"
+    raw.loc[inprog_mask,   "_cat_base"] = "in_progress"
     raw.loc[na_mask,       "_cat_base"] = "not_applicable"
     raw["_tool_automated"] = auto_mask
 
@@ -677,6 +727,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
                         & expanded["_automated_row"].fillna(False)).sum())
     n_na   = int(cats.get("not_applicable",  0))
     n_unk  = int(cats.get("unknown",         0))
+    n_ip   = int(cats.get("in_progress",     0))
     total  = len(expanded)
 
     def _u(cat: str) -> int:
@@ -687,6 +738,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     u_back  = _u("backlog")
     u_tbu   = _u("to_be_updated")
     u_na    = _u("not_applicable")
+    u_ip    = _u("in_progress")
 
     # Framework breakdown: one framework per automated row, from the same
     # function the framework tiles' downloads filter on (`_row_frameworks`).
@@ -705,8 +757,10 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
     # previously part of Backlog), so Coverage % and N/A % are unchanged.
     # `automatable` keeps its meaning — everything that could still be
     # automated — so splitting the backlog leaves both ratios untouched.
-    automatable = n_auto + n_back + n_part + n_tbu
-    scoped      = n_auto + n_back + n_part + n_tbu + n_na
+    # In progress is automatable too — work started, not yet done — so taking it
+    # out of the Backlog moves no ratio.
+    automatable = n_auto + n_back + n_part + n_tbu + n_ip
+    scoped      = n_auto + n_back + n_part + n_tbu + n_ip + n_na
     ex_partial  = total - n_part
 
     # Mobile-App breakdown: MAPP has no Java/Testim — its meaningful split is the
@@ -723,6 +777,7 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
         "playwright":      n_playwright, "u_playwright": u_playwright,
         "ios":             n_ios,    "android":   n_android,
         "backlog":         n_back,   "u_back":    u_back,
+        "in_progress":     n_ip,     "u_ip":      u_ip,
         "partially_automated": n_part, "u_part":  _u("partially_automated"),
         "to_be_updated":   n_tbu,    "u_tbu":     u_tbu,
         "tbu_automated":   tbu_auto,
@@ -740,11 +795,11 @@ def _stats(expanded: pd.DataFrame, auto: pd.DataFrame) -> dict:
 
 
 # ── summary table ─────────────────────────────────────────────────────────────
-# The three flavours of outstanding work, stacked into one column.  Order is
-# deliberate: never automated, then automated-but-stale, then automated
-# elsewhere — increasing proximity to being covered.
-_STACK_COLS = ["Backlog", "To be Updated", "Partially Automated"]
-_STACK_LABELS = {"Partially Automated": "Partially"}
+# The flavours of outstanding work, stacked into one column.  Order is
+# deliberate: never automated, then being automated, then automated-but-stale,
+# then automated elsewhere — increasing proximity to being covered.
+_STACK_COLS = ["Backlog", "In Progress", "To be Updated", "Partially Automated"]
+_STACK_LABELS = {"Partially Automated": "Partially", "In Progress": "In progress"}
 
 _AUTO_SLIM_COLS = ["case_id", "country_label", "device", "framework"]
 
@@ -811,6 +866,7 @@ def _build_summary(
             "Automated": s["automated"],
             **breakdown,
             "Backlog":   s["backlog"],
+            "In Progress": s["in_progress"],
             "Partially Automated": s["partially_automated"],
             "To be Updated": s["to_be_updated"],
             "Not Applicable": s["not_applicable"],
@@ -957,6 +1013,7 @@ def _run_data(run: str, scope: str):
             "BU": bu, "Scope": _SCOPE_DISPLAY.get(sc, "Website"),
             "Total": st_["total"], "Automated": st_["automated"],
             **breakdown, "Backlog": st_["backlog"],
+            "In Progress": st_["in_progress"],
             "Partially Automated": st_["partially_automated"],
             "To be Updated": st_["to_be_updated"],
             "Not Applicable": st_["not_applicable"], "Unknown": st_["unknown"],
@@ -990,7 +1047,8 @@ def _prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFram
 
 
 _SUMMARY_COLUMNS = ["BU", "Scope", "Total", "Automated", "Java", "TestIM", "Playwright",
-                    "Backlog", "Partially Automated", "To be Updated", "Not Applicable",
+                    "Backlog", "In Progress", "Partially Automated", "To be Updated",
+                    "Not Applicable",
                     "Unknown", "Coverage %", "Coverage excl. Partially %"]
 
 
@@ -1105,6 +1163,7 @@ def _baseline_pivot(expanded: pd.DataFrame, key_prefix: str) -> None:
     disp["Category"] = disp["category"].map({
         "automated":      "Automated",
         "backlog":              "Backlog",
+        "in_progress":          "In Progress",
         "partially_automated":  "Partially Automated",
         "to_be_updated":  "To be Updated",
         "not_applicable": "Not Applicable",
@@ -1152,6 +1211,7 @@ _EXPORT_CATEGORIES = [
     ("total",               "Total"),
     ("automated",           "Automated"),
     ("backlog",             "Backlog"),
+    ("in_progress",         "In Progress"),
     ("partially_automated", "Partially Automated"),
     ("to_be_updated",       "To be Updated"),
     ("not_applicable",      "Not Applicable"),
@@ -1160,6 +1220,7 @@ _EXPORT_CATEGORIES = [
 
 _CATEGORY_LABELS = {
     "total": "Total", "automated": "Automated", "backlog": "Backlog",
+    "in_progress": "In Progress",
     "partially_automated": "Partially Automated", "to_be_updated": "To be Updated",
     "not_applicable": "Not Applicable", "unknown": "Unknown",
 }
@@ -1192,9 +1253,12 @@ def _deciding_field(case: dict, device: str, category: str,
             return v in _STATUS_NA
         if category == "to_be_updated":
             return v.strip().lower() in _STATUS_TO_UPDATE
+        if category == "in_progress":
+            return v.strip().lower() in _STATUS_IN_PROGRESS
         if category == "backlog":
             return (v not in _STATUS_AUTO and v not in _STATUS_NA
-                    and v.strip().lower() not in _STATUS_TO_UPDATE)
+                    and v.strip().lower() not in _STATUS_TO_UPDATE
+                    and v.strip().lower() not in _STATUS_IN_PROGRESS)
         return True                        # "total" export: any verdict will do
 
     # Only the fields this BU is decided by.  Naming any other one would
@@ -1422,9 +1486,10 @@ def _tile_evidence(bu: str, scope: str, run: str = RUN_BIG) -> pd.DataFrame:
 _STATUS_PREDICATE = {
     "total":               "any value, including empty",
     "automated":           "one of: {auto}",
-    "backlog":             "set, and NOT one of: {auto} / {na} / To be updated",
-    "partially_automated": "set, and NOT one of: {auto} / {na} / To be updated",
+    "backlog":             "set, and NOT one of: {auto} / {na} / To be updated / In progress",
+    "partially_automated": "set, and NOT one of: {auto} / {na} / To be updated / In progress",
     "to_be_updated":       "To be updated",
+    "in_progress":         "In progress",
     "not_applicable":      "{na}",
 }
 
@@ -1668,7 +1733,8 @@ def _summary_saves(display: pd.DataFrame, scope: str,
         saves[bu] = (
             None if cfg.coefficient is None
             else automation_save.compute(
-                cfg.coefficient, int(r["Automated"]), int(r["Backlog"]), int(r["Total"]),
+                cfg.coefficient, int(r["Automated"]),
+                int(r["Backlog"]) + int(r.get("In Progress", 0) or 0), int(r["Total"]),
                 _automated_by_device((expanded_by_bu or {}).get((bu, scope)))))
     return saves, unit
 
@@ -1683,7 +1749,8 @@ def _automation_save_line(bu: str, scope: str, s: dict,
         st.caption(f"⏱ **Automation save** — no coefficient configured for "
                    f"{html.escape(bu)} yet.")
         return
-    sv = automation_save.compute(cfg.coefficient, s["automated"], s["backlog"],
+    sv = automation_save.compute(cfg.coefficient, s["automated"],
+                                 s["backlog"] + s.get("in_progress", 0),
                                  s["total"], _automated_by_device(expanded))
     f = automation_save.fmt
     noun = "configuration" if sv.backlog == 1 else "configurations"
@@ -1736,7 +1803,7 @@ def _detail_view(
 
     s = _stats(expanded, auto)
 
-    # ── Row 1: Total · Automated · Backlog · To update · N/A ─────────────────
+    # ── Row 1: Total · Automated · Backlog · In progress · Partially · To update · N/A
     # Each tile is its own container so the download button can be stretched
     # over it (see `.st-key-tile_` in styles.py): clicking the number gives you
     # the rows behind it, with no second control on screen.
@@ -1748,15 +1815,20 @@ def _detail_view(
         ("automated", "Automated", s["automated"], s["u_auto"], ""),
         ("backlog", "Backlog", s["backlog"], s["u_back"],
          _backlog_badge_html(s["backlog"], s["total"])),
+        ("in_progress", "In Progress", s["in_progress"], s["u_ip"], ""),
         ("partially_automated", "Partially Automated",
          s["partially_automated"], s["u_part"], ""),
         ("to_be_updated", "To be Updated", s["to_be_updated"], s["u_tbu"], ""),
         ("not_applicable", "Not Applicable", s["not_applicable"], s["u_na"], ""),
     ]
+    # In Progress is a tile only where there is something in progress — as in the
+    # table, where its column and its line appear only when it occurs.  A row of
+    # tiles that always carried a zero would be noise for every BU without one.
+    tiles = [t for t in tiles if t[0] != "in_progress" or t[2]]
     key_base = re.sub(r"[^A-Za-z0-9]+", "_",
                       f"{scope}_{bu}_{RUNS.index(run) if run in RUNS else 0}")
     evidence = _tile_evidence(bu, scope, run)     # cached: one build per run and refresh
-    for col, (cat, label, n, u, badge) in zip(st.columns(6), tiles):
+    for col, (cat, label, n, u, badge) in zip(st.columns(len(tiles)), tiles):
         with col.container(key=f"tile_{key_base}_{cat}"):
             stat_card(st, label, n, u, badge_html=badge)
             # The row count comes from the tile's own number instead of being
@@ -2143,14 +2215,14 @@ def render(*, pick_bu: bool = True) -> None:
     # "Unknown" (the case is automated nowhere and no status explains the row)
     # is shown only when it occurs, so Total always equals the sum of the
     # columns.
-    for empty_col in ("Unknown", "Playwright"):
+    for empty_col in ("Unknown", "Playwright", "In Progress"):
         if empty_col in display.columns and int(display[empty_col].sum()) == 0:
             display = display.drop(columns=[empty_col])
     # Column order is scope-aware: Java/TestIM for website & microservices,
     # iOS/Android for Mobile App (see `_build_summary`).
     num_cols = [col for col in ["Total", "Automated", "Java", "TestIM",
                                 "Playwright", "iOS", "Android", "Backlog",
-                                "Partially Automated", "To be Updated",
+                                "In Progress", "Partially Automated", "To be Updated",
                                 "Not Applicable", "Unknown"]
                 if col in display.columns]
 
@@ -2222,6 +2294,7 @@ def render(*, pick_bu: bool = True) -> None:
 # ── Extended Production Sanity: its cases, and the Jira bugs they answer ─────
 _CATEGORY_LABEL = {
     "automated": "Automated", "backlog": "Backlog", "to_be_updated": "To be updated",
+    "in_progress": "In progress",
     "partially_automated": "Partially automated", "not_applicable": "Not applicable",
     "unknown": "Unknown",
 }

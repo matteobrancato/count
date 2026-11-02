@@ -57,8 +57,9 @@ with the 80% target. Martech is not in the KPI chips or the Overview.
 |---|---|
 | **Automated** | status is Automated / Automated DEV / UAT / Prod *and* the row is in the automated set |
 | **To update** | status "To be updated" — was automated, needs maintenance |
-| **Not Applicable** | status "Automation not applicable". A Testim Desktop or Testim Mobile field decides only its own device: its N/A never makes the other device's row N/A. Where it is filled, it decides that row over the generic field — "Ready to be automated" on Testim Desktop keeps the Desktop row in the work to do even if the generic field says not applicable, and the other way round |
-| **Backlog** | a non-automated status **and** the case is automated nowhere — a script to write from scratch |
+| **In progress** | status "In progress" — a script is being written, or rewritten. Not automated yet, but not a script nobody has started: shown beside the Backlog, not in it. On a Testim Desktop or Mobile field it is about that device only; with the generic field "To be updated" it is still In progress (for now) |
+| **Not Applicable** | status "Automation not applicable". A Testim Desktop or Testim Mobile field decides only its own device: its N/A never makes the other device's row N/A. Where it is filled, it decides that row over the generic field — "Ready to be automated" or "Not automated" on Testim Desktop keeps the Desktop row in the work to do even if the generic field says not applicable (a test that could not be automated before may be with Testim), and the other way round. **A case labelled `playwright` is decided by the generic field alone**: its Testim fields are the old framework's |
+| **Backlog** | a non-automated status (not "In progress") **and** the case is automated nowhere — a script to write from scratch |
 | **Partially Automated** | the case IS automated in another country or on the other device — only the missing country/device is left. Also covers rows whose status field cannot describe them: the status is per case, the coverage per country, so a case automated in 3 of its 5 countries leaves 2 rows the field says nothing about |
 | **Unknown** | no automation status filled in, so we can't say — shown only when it happens, and it means a field is missing in TestRail |
 
@@ -222,10 +223,17 @@ METHODOLOGY_FOR_LLM = """
   Each (case × country × device) baseline row is classified as one of:
     · Automated     — status Automated / Automated DEV / UAT / Prod
     · To be updated — status "To be updated" (was automated, needs maintenance)
+    · In progress   — status "In progress" (a script is being written or redone):
+                      NOT Backlog, shown beside it.  A Testim Desktop/Mobile
+                      "In progress" is about that device only, and beats a generic
+                      "To be updated".  Taking rows out of Backlog this way moves
+                      no Coverage figure: they stay in "Coverage vs Automatable"
     · N/A           — status "Automation not applicable" (generic field: every
                       device; a Testim Desktop/Mobile field: its own device only).
                       A FILLED Testim Desktop/Mobile field decides its device's
-                      row over the generic field, in both directions.
+                      row over the generic field, in both directions — except on
+                      a case labelled `playwright`, where the generic field
+                      decides again.
     · Backlog       — any OTHER non-automated status AND the case is automated
                       nowhere (no automated row in any country / device)
     · Partially automated — same statuses, but the case IS automated in another
