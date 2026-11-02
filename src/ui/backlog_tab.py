@@ -391,6 +391,7 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     # test not automatable before may be automatable with TestIM.  The classification
     # reads these values; "is a script there" (`_tool_automated`) reads the raw ones.
     is_pw = _has_label(raw, PLAYWRIGHT_LABEL)
+    raw["_is_pw"] = is_pw          # travels with the rows through the expansion below
     vals = {col: (raw[col].mask(is_pw) if col in device_cols else raw[col])
             for col in status_cols}
     for col in status_cols:
@@ -496,7 +497,9 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
         dev_mask = raw["device_exp"] == dev
         if not dev_mask.any():
             continue
-        col_vals = vals[scol]
+        # Read again from the expanded rows (their index repeats after the explode,
+        # so the pre-expansion `vals` no longer lines up with them).
+        col_vals = raw[scol].mask(raw["_is_pw"])
         has_value = col_vals.notna() & (col_vals != "")
         is_tbu    = _is_to_update(col_vals)
         is_ip     = _is_in_progress(col_vals)

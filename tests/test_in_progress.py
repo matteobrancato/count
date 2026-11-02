@@ -131,6 +131,102 @@ class TestTestimOverGeneric:
         assert exp["_tool_automated"].all()
 
 
+class TestManyCasesManyCountries:
+    """The expansion repeats the index (one row per country, then per device); a
+    mask built before it no longer lines up.  Live, 2026-11-02, this was an
+    IndexError on the real data and passed every one-case test."""
+
+    def test_each_case_keeps_its_own_verdict(self):
+        raw = pd.DataFrame([
+            {"case_id": 1, "suite_id": 16093, "labels": BOTH, "type_label": "Functional",
+             "multi_countries": ["LV", "LT"], "priority_label": "High",
+             GEN: "Automation not applicable", TD: "Not automated", TM: None},
+            {"case_id": 2, "suite_id": 16093, "labels": BOTH + ["playwright"], "type_label": "Functional",
+             "multi_countries": ["LV", "LT"], "priority_label": "High",
+             GEN: "Automation not applicable", TD: "Not automated", TM: None},
+            {"case_id": 3, "suite_id": 16093, "labels": BOTH, "type_label": "Functional",
+             "multi_countries": ["LV"], "priority_label": "High",
+             GEN: "To be updated", TD: "In progress", TM: "In progress"},
+            {"case_id": 4, "suite_id": 16093, "labels": ["big_regr_mobile"], "type_label": "Functional",
+             "multi_countries": ["LT", "LV"], "priority_label": "High",
+             GEN: "Ready to be automated", TD: None, TM: None},
+        ])
+        exp = bl._expand_baseline(raw, RULES)
+        got = {(int(r["case_id"]), r["device"]): r["_cat_base"] for r in exp.to_dict("records")}
+        assert got == {
+            (1, "Desktop"): "backlog", (1, "Mobile"): "not_applicable",
+            (2, "Desktop"): "not_applicable", (2, "Mobile"): "not_applicable",
+            (3, "Desktop"): "in_progress", (3, "Mobile"): "in_progress",
+            (4, "Mobile"): "backlog"}
+        assert len(exp) == 2 * 2 + 2 * 2 + 1 * 2 + 2 * 1     # countries x devices per case
+
+    def test_the_helper_columns_do_not_leak_into_the_result(self):
+        raw = pd.DataFrame([{"case_id": 1, "suite_id": 16093, "labels": BOTH, "type_label": "Functional",
+                             "multi_countries": ["LV"], "priority_label": "High", GEN: "In progress",
+                             TD: None, TM: None}])
+        assert "_is_pw" not in bl._expand_baseline(raw, RULES).columns
+
+
+class TestAgainstAPlainRestatement:
+    """The same rules written out case by case, against a few hundred random cases
+    with every kind of gap in them — the shape of real TestRail data, which the
+    hand-made cases above are not."""
+
+    VALUES = [None, "", "Automated", "Automated UAT", "Not automated", "Ready to be automated",
+              "In progress", "To be updated", "Automation not applicable", "Blocked"]
+    AUTO = {"Automated", "Automated DEV", "Automated UAT", "Automated Prod"}
+
+    @classmethod
+    def _expected(cls, c, device):
+        blank = lambda v: v in (None, "")                                    # noqa: E731
+        pw = any(str(x).lower() == "playwright" for x in c["labels"])
+        gen, td, tm = c[GEN], (None if pw else c[TD]), (None if pw else c[TM])
+        tbu = lambda v: str(v).strip().lower() == "to be updated"            # noqa: E731
+        ip = lambda v: str(v).strip().lower() == "in progress"               # noqa: E731
+        cat = "unknown"
+        if any(not blank(v) and v not in cls.AUTO | {"Automation not applicable"}
+               and not tbu(v) and not (ip(v) and v is gen) for v in (gen, td, tm)):
+            cat = "backlog"
+        if any(tbu(v) for v in (gen, td, tm)):
+            cat = "to_be_updated"
+        if ip(gen):
+            cat = "in_progress"
+        if gen == "Automation not applicable":
+            cat = "not_applicable"
+        own = td if device == "Desktop" else tm
+        if not blank(own):
+            if own == "Automation not applicable":
+                cat = "not_applicable"
+            elif ip(own):
+                cat = "in_progress"
+            elif tbu(own):
+                cat = "to_be_updated"
+            elif own not in cls.AUTO:
+                cat = "backlog"
+        return cat
+
+    def test_three_hundred_random_cases(self):
+        import random
+        rng = random.Random(20261102)
+        cases = []
+        for i in range(300):
+            labels = rng.choice([BOTH, ["big_regr_desktop"], ["big_regr_mobile"]])
+            if rng.random() < 0.3:
+                labels = labels + [rng.choice(["playwright", "Playwright"])]
+            cases.append({
+                "case_id": i + 1, "suite_id": 16093, "labels": labels, "type_label": "Functional",
+                "multi_countries": rng.choice([["LV"], ["LT"], ["LV", "LT"], ["LV", "LT", "RU"]]),
+                "priority_label": "High", GEN: rng.choice(self.VALUES),
+                TD: rng.choice(self.VALUES), TM: rng.choice(self.VALUES)})
+        exp = bl._expand_baseline(pd.DataFrame(cases), RULES)
+        by_id = {c["case_id"]: c for c in cases}
+        assert len(exp) > 300
+        wrong = [(r["case_id"], r["device"], r["_cat_base"], self._expected(by_id[r["case_id"]], r["device"]))
+                 for r in exp.to_dict("records")
+                 if r["_cat_base"] != self._expected(by_id[r["case_id"]], r["device"])]
+        assert wrong == []
+
+
 # ── the numbers around it ────────────────────────────────────────────────────
 def _classified(categories):
     exp = pd.DataFrame({
