@@ -866,7 +866,7 @@ def warmup_cache(on_step=None, on_label=None) -> None:
         if on_step:
             on_step(msg)
 
-    # CORE scopes only: website + next_gen (the Backlog baseline, KPI strip and
+    # CORE scopes only: website + next_gen (the Backlog baseline and
     # every default view need them).  Mobile App — 7 of 16 suites, nearly half
     # the rate-limit-bound download — is DEFERRED: it loads on demand the first
     # time someone selects the Mobile App scope (Coverage shows a
@@ -965,10 +965,4 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     # NOTE: Dexter's coverage brief is deliberately NOT built here — it costs
     # ~30s on Cloud's vCPU and doesn't block any visible tab.  app.py builds
     # it right AFTER the page has rendered (off the critical path).
-    step("📈 Computing group KPIs…")
-    try:
-        from .ui.kpi_strip import _kpis
-        _kpis()
-    except Exception:                                                   # noqa: BLE001
-        logger.exception("warmup: KPI strip pre-build failed")
     step("✨ Building the dashboard…")

@@ -398,3 +398,28 @@ class TestMartechView:
         for text in ("Passed", "merged", "Accepted fail", "PR raised", "Failed",
                      "MQA", "N/A", "not applicable"):
             assert text in martech_tab._LEGEND
+
+
+class TestHeader:
+    """The icon and the title are one element on one centred line: as two elements
+    the title rode 8px below the icon's centre, however the row was aligned."""
+
+    def test_icon_and_title_are_one_inline_flex_row(self):
+        import app
+        html = app._BRAND
+        assert html.startswith("<span style='display:inline-flex;align-items:center;")
+        assert html.count("<div") == 0                 # a block would lose Streamlit's margin balance
+        assert "Automation Coverage" in html and "🧪" in html
+        assert html.index("🧪") < html.index("Automation Coverage")
+
+    def test_the_header_draws_one_markdown_element(self, monkeypatch):
+        import app
+        drawn = []
+        monkeypatch.setattr(app.st, "markdown", lambda html, **kw: drawn.append(html))
+        app._header()
+        assert drawn == [app._BRAND]
+
+    def test_the_page_no_longer_draws_the_group_kpis(self):
+        import pathlib
+        assert not pathlib.Path("src/ui/kpi_strip.py").exists()
+        assert "kpi" not in pathlib.Path("app.py").read_text(encoding="utf-8").lower()

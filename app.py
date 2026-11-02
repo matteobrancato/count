@@ -23,7 +23,6 @@ from src.ui import (
     data_quality,
     global_filter,
     isolation,
-    kpi_strip,
     leakage_tab,
     overview_tab,
     styles,
@@ -86,26 +85,26 @@ def _mark_warm() -> None:
 
 
 # -------------------------------------------------------------------- header
-_LOGO = (
-    f"<div style='width:38px;height:38px;border-radius:11px;"
-    f"display:flex;align-items:center;justify-content:center;font-size:20px;"
+# The icon and the title are ONE element, one inline-flex row that centres them on
+# each other.  As two markdown elements they sat on two different line boxes —
+# the icon a block, the title text in a <p> — and the title rode 8px below the
+# icon's centre however the row was aligned.  A <span>, not a <div>: Streamlit
+# gives a markdown block a -1rem bottom margin that the <p> around inline content
+# is meant to pay back, and a bare block element does not.
+_BRAND = (
+    "<span style='display:inline-flex;align-items:center;gap:14px'>"
+    f"<span style='flex:none;width:46px;height:46px;border-radius:13px;"
+    f"display:inline-flex;align-items:center;justify-content:center;font-size:24px;"
     f"background:linear-gradient(135deg,{COLORS['brand']} 0%,{COLORS['brand_strong']} 100%);"
-    f"box-shadow:0 3px 10px rgba(46,91,255,0.28)'>🧪</div>"
+    f"box-shadow:0 3px 10px rgba(46,91,255,0.28)'>🧪</span>"
+    "<span style='font-size:30px;font-weight:700;line-height:1;white-space:nowrap;"
+    "letter-spacing:-0.02em'>Automation Coverage</span></span>"
 )
-# A <span>, not an <h1>: Streamlit gives a markdown block a -1rem bottom margin
-# that a <p> is meant to pay back, and a bare block element does not — the
-# title then collapsed onto the KPI line under it.  Inline text is wrapped in
-# a <p>, which restores the balance (same fix as the utility bar's label).
-_TITLE = ("<span style='font-size:24px;font-weight:700;line-height:1.1;"
-          "white-space:nowrap;letter-spacing:-0.01em'>Automation Coverage</span>")
 
 
 def _header() -> None:
-    """Logo and title."""
-    with st.container(key="brand", horizontal=True, width="content",
-                      vertical_alignment="center", gap="small"):
-        st.markdown(_LOGO, unsafe_allow_html=True, width="content")
-        st.markdown(_TITLE, unsafe_allow_html=True, width="content")
+    """The icon and the title, on one centred line."""
+    st.markdown(_BRAND, unsafe_allow_html=True, width="content")
 
 
 @st.dialog("🧭 Overview", width="large")
@@ -126,7 +125,7 @@ def _freshness_label(scope: str = "website") -> None:
 
     The two disclosures are popovers styled as plain text links (underline on
     hover) so they carry no visual weight until needed — they used to be
-    full-width expanders competing with the KPI strip.  Hovering the bar reveals
+    full-width expanders competing with the numbers.  Hovering the bar reveals
     the tiny ↻ that refreshes ONLY the numbers.
     """
     updated_at = freshness.stamp()
@@ -273,7 +272,7 @@ _SECTIONS = [
 _LABELS = [label for label, _fn, _anim in _SECTIONS]
 
 
-def _warm_up(cold: bool, kpi_slot) -> None:
+def _warm_up(cold: bool) -> None:
     """Make sure the day's data is loaded, showing the loader if it is not.
 
     Warm: nothing at all.  Each section asks for the data it uses and gets a
@@ -317,14 +316,6 @@ def _warm_up(cold: bool, kpi_slot) -> None:
         logger.exception("Warm-up failed")
         st.warning("⚠️ Part of the data pre-load failed — sections will load "
                    "lazily and may be slower on first view.")
-    # Cold start: swap the KPI skeleton for the real strip now that the data
-    # is warm — best-effort, the strip hides itself on failure.
-    if cold:
-        try:
-            with kpi_slot.container():
-                kpi_strip.render()
-        except Exception:  # noqa: BLE001
-            logger.exception("KPI strip failed to fill in after warm-up")
 
 
 # -------------------------------------------------------------------- main
@@ -338,7 +329,7 @@ def main() -> None:
 
     # The first run of a new business day clears yesterday's numbers; every
     # other run of the day is a cache hit.  Decided before anything is drawn,
-    # so the freshness bar, the KPI strip and the loader all agree on it.
+    # so the freshness bar and the loader agree on it.
     try:
         with _timed("Daily rollover check"):
             freshness.roll_over_if_new_day()
@@ -374,8 +365,8 @@ def main() -> None:
     # page chrome is visible immediately and the loader sits on the data area.
 
     # ONE top bar — the brand on the left, the scope switch every tab reads on
-    # the right — then the four cross-BU KPI cards.  Horizontal containers wrap,
-    # so a narrow window gets two tidy rows, not an overflow.
+    # the right.  Horizontal containers wrap, so a narrow window gets two tidy
+    # rows, not an overflow.
     with st.container(key="topbar", horizontal=True, vertical_alignment="center",
                       horizontal_alignment="distribute", gap="medium"):
         with _timed("Header"):
@@ -385,18 +376,6 @@ def main() -> None:
                 _timed("Global filter"):
             global_filter.render()
 
-    # The KPI cards sit in an st.empty slot: warm runs fill it immediately; on
-    # a cold start a same-size shimmering skeleton holds the space and is
-    # REPLACED after the warm-up, so the layout never shifts.
-    kpi_slot = st.empty()
-    try:
-        with kpi_slot.container(), _timed("KPI strip"):
-            if cold:
-                kpi_strip.render_skeleton()
-            else:
-                kpi_strip.render()
-    except Exception:  # noqa: BLE001
-        logger.exception("KPI strip failed to render")
 
     # Wrap the tab bar in a relative-positioned zone so the freshness label can
     # be pinned to its top-right (= the tab row), reliably level with the tabs.
@@ -418,7 +397,7 @@ def main() -> None:
             # screen, so the loader shows where the user is looking and the
             # page is never blank.  Data stays shared: switching tab renders,
             # it does not re-download.
-            _warm_up(cold, kpi_slot)
+            _warm_up(cold)
             _render_isolated(render_fn, label, anim_key)
     except Exception as exc:  # noqa: BLE001 — global safety net, never crash the app
         logger.exception("Unexpected failure in the %s tab", label)

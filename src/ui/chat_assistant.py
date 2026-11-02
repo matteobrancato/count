@@ -117,8 +117,8 @@ specific number is NOT in the snapshot, say so plainly
 ("I don't have that exact number") instead of guessing.
 
 # HOW TO ANSWER
-  • "Coverage" on this dashboard means REGRESSION-BASELINE coverage (the KPI
-    strip / Backlog convention) unless the user EXPLICITLY asks about the
+  • "Coverage" on this dashboard means REGRESSION-BASELINE coverage (the Backlog
+    convention) unless the user EXPLICITLY asks about the
     overall case universe.  For best/worst/ranking questions, quote the
     "PRIMARY RANKING" line from the snapshot VERBATIM — do not re-rank.
   • NEVER state a number that is not literally present in the snapshot.  If the exact figure is not there, say you don't have it —
@@ -330,7 +330,7 @@ def _regression_stats(expanded) -> dict:
     """Regression figures from a classified baseline frame — ROW basis.
 
     The single place Dexter turns baseline rows into numbers, so its answers can
-    never drift from the Backlog / Coverage tabs or the KPI strip.  Locked by
+    never drift from the Backlog / Coverage tabs.  Locked by
     tests/test_business_rules.py::TestDexterAgreesWithDashboard.
     """
     rows = int(len(expanded))
@@ -448,7 +448,7 @@ def _build_coverage_brief() -> str:
 
     ranking.sort(key=lambda x: -x[1])
     # PRIMARY ranking = regression-baseline Cov.% — the dashboard's convention
-    # (KPI strip + All-BU table).  The overall-universe ranking stays only as a
+    # (the All-BU table).  The overall-universe ranking stays only as a
     # clearly-labeled secondary line: it was the source of "worst BU" answers
     # that contradicted the dashboard.
     regr_ranking = sorted(

@@ -45,7 +45,7 @@ Scopes
   mobile_app         : a PRIORITY-based baseline (High/Highest), counted per
                        case × platform × market — see `_expand_mapp_baseline`.  It is served
                        by its own `_mapp_backlog_data()` so the website /
-                       microservices numbers (KPI strip, Dexter) are
+                       microservices numbers (the All-BU table, Dexter) are
                        never affected by it.
 """
 from __future__ import annotations
@@ -1094,7 +1094,7 @@ def _ext_prod_sanity_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.Data
 def _mapp_backlog_data() -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame],
                                   dict[tuple[str, str], pd.DataFrame]]:
     """The Mobile-App baseline pipeline, kept SEPARATE from `_backlog_data` so the
-    website/microservices numbers (KPI strip, All-BU table, Dexter) stay
+    website/microservices numbers (All-BU table, Dexter) stay
     untouched.  Loaded lazily — mobile_app is deferred from the start-up warm-up,
     so this only fetches when the user actually opens the Mobile App scope.
     Rows are case × platform × market since 2026-10-06 (`_expand_mapp_baseline`);
@@ -2024,7 +2024,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         # The bar, the colour and the big figure are on coverage EXCLUDING the
         # partial gaps: the question this table is read for is "how are we doing
         # on the tests we have started".  The coverage over the whole baseline —
-        # the figure the KPI strip, the Coverage tab and Dexter all
+        # the figure the Coverage tab and Dexter
         # show — stays underneath in grey, so the two can never be confused and
         # the table still reconciles with the rest of the app.
         real = float(r["Coverage %"])
@@ -2068,7 +2068,7 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         if abs(real - cov) >= 0.05:
             ex_html = (
                 f"<span class='cov-ex' title='Coverage over the WHOLE baseline, "
-                f"partial gaps included — the figure the KPI chips, the Coverage "
+                f"partial gaps included — the figure the Coverage "
                 f"tab and Dexter show.'>{real:.1f}%</span>"
             )
         cov_cell = (
@@ -2208,7 +2208,7 @@ def render(*, pick_bu: bool = True) -> None:
     summary, expanded_by_bu, _auto = loaded
 
     # ── Summary table ─────────────────────────────────────────────────────────
-    # Scope-filter: Microservices is computed alongside Website (so the KPI-strip
+    # Scope-filter: Microservices is computed alongside Website (so the group
     # totals stay correct) but only SHOWN under its own scope — no more mixing it
     # into the Website table.
     scope_display = _SCOPE_DISPLAY.get(scope, "Website")

@@ -91,7 +91,7 @@ h1, h2, h3, h4, h5, h6 {{
 [data-testid="stHeader"] {{ background: transparent; }}
 .block-container {{
     max-width: 1440px;
-    padding-top: 2.4rem;
+    padding-top: 1.6rem;
     padding-bottom: 4rem;
 }}
 
@@ -233,94 +233,9 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 [class*="st-key-ai_delete_chat"] button:active {{ background: transparent !important; }}
 [class*="st-key-ai_delete_chat"] button p {{ color: inherit !important; }}
 
-/* ── Group KPIs: four cards under the top bar ───────────────────────────────
-   The cross-BU picture managers steer on.  They were chips under the title, on
-   one line that scrolled sideways — and, on a narrow window, ran into the scope
-   control.  Cards give each figure room to say what it is a share of, and a
-   meter with the target on it says how far from it. */
-.kpi-grid {{
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    margin: 2px 0 6px;
-}}
-/* Two by two below 1000px: never three and an orphan.  On a phone the cards get
-   tighter rather than stacking into a column that pushes the table off screen. */
-@media (max-width: 1000px) {{ .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
-@media (max-width: 520px) {{
-    .kpi-grid {{ gap: 8px; }}
-    .kpi-card {{ padding: 10px 12px 11px; min-height: 96px; }}
-    .kpi-value {{ font-size: 24px; }}
-}}
-.kpi-card {{
-    background: {c['surface']};
-    border: 1px solid {c['border']};
-    border-radius: 14px;
-    padding: 12px 16px 13px;
-    min-height: 104px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.05);
-}}
-.kpi-label {{
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-    color: {c['muted']};
-}}
-.kpi-dot {{ width: 8px; height: 8px; border-radius: 50%; flex: none; }}
-.kpi-scope {{ margin-left: auto; font-size: 11px; font-weight: 500; color: {c['faint']}; }}
-.kpi-value {{
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-top: 3px;
-    font-size: 28px;
-    font-weight: 750;
-    line-height: 1.15;
-    color: {c['ink']};
-    font-variant-numeric: tabular-nums;
-}}
-.kpi-value small {{ font-size: 12.5px; font-weight: 700; }}
-/* A meter on a 0-100% scale with the target as a tick: how far, and from what. */
-.kpi-meter {{
-    position: relative;
-    height: 6px;
-    margin-top: 9px;
-    border-radius: 4px;
-    background: {c['grid']};
-}}
-.kpi-meter i {{ position: absolute; inset: 0 auto 0 0; border-radius: 4px; }}
-.kpi-meter b {{
-    position: absolute;
-    top: -3px;
-    bottom: -3px;
-    width: 2px;
-    margin-left: -1px;
-    border-radius: 1px;
-    background: {c['ink']};
-    opacity: .5;
-}}
-.kpi-sub {{ margin-top: 7px; font-size: 11.5px; line-height: 1.35; color: {c['muted']}; }}
-.kpi-sub strong {{ color: {c['ink']}; font-weight: 650; }}
-/* Skeleton placeholder — reserves the strip's space during the first load so
-   the page doesn't shift when the real cards arrive. */
-.kpi-skeleton-card {{
-    min-height: 104px;
-    border-radius: 14px;
-    background: linear-gradient(90deg, {c['canvas']} 25%, {c['border']} 50%, {c['canvas']} 75%);
-    background-size: 200% 100%;
-    animation: kpiShimmer 1.4s ease infinite;
-}}
-@keyframes kpiShimmer {{
-    from {{ background-position: 200% 0; }}
-    to   {{ background-position: -200% 0; }}
-}}
-
 /* ── Top bar: brand (logo, title) · scope control ────────────────────────────
-   One row of chrome above the KPI cards and the tabs.  Wraps on a narrow window
-   instead of overflowing. */
+   One row of chrome above the tabs.  Wraps on a narrow window instead of
+   overflowing. */
 .st-key-topbar, .st-key-topbar_controls {{
     flex-wrap: wrap !important;
     row-gap: 8px !important;
@@ -359,7 +274,7 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 /* ── Utility-bar disclosures (methodology · data quality) ───────────────────
    Popover triggers rendered as plain text links: no border, no background,
    underline on hover.  They used to be full-width expanders competing with the
-   KPI strip for attention. */
+   numbers for attention. */
 .st-key-freshness [data-testid="stPopover"] button {{
     background: transparent !important;
     border: none !important;
@@ -1076,7 +991,7 @@ footer {{ visibility: hidden; height: 0; }}
 
 
 # ── health thresholds (RAG) ───────────────────────────────────────────────────
-# Shared by the KPI strip, the Backlog All-BU table and the Coverage headlines,
+# Shared by the Backlog All-BU table and the Coverage headlines,
 # so a colour always means the same thing everywhere.
 COVERAGE_TARGET = 80.0   # 🟢 at/above target
 COVERAGE_WARN   = 60.0   # 🟡 at/above, 🔴 below

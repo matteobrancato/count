@@ -263,7 +263,7 @@ def _coverage_table(
 
     # Denominator.  With *expanded* (the Backlog tab's classified baseline rows)
     # every column is on the SAME basis — expanded rows — so Coverage % here is
-    # the number the Backlog tab and the KPI strip show.  Without it (Total /
+    # the number the Backlog tab shows.  Without it (Total /
     # Production Sanity views, which have no row expansion) the table stays on
     # the unique-case basis it has always used.
     if expanded is not None and not expanded.empty:
@@ -684,7 +684,7 @@ def _render_coverage_section(
                    f"belong to cases automated elsewhere (Partially "
                    f"Automated there).")
     _cov_help = ("Automated rows ÷ baseline rows — the SAME basis as the "
-                 "Backlog tab and the KPI chips, so all three agree.")
+                 "Backlog tab, so the two agree.")
     if show_target:
         c4.metric("Coverage", f"{cov_pct:.1f}%",
                   delta=f"{cov_pct - COVERAGE_TARGET:+.1f}% vs {COVERAGE_TARGET:.0f}% target",

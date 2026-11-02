@@ -1661,7 +1661,7 @@ class TestCoverageExPartialInSummary:
     the one every other surface shows — sits underneath in grey.
 
     The header names the big number, so neither can be misread, and the grey
-    line is what lets a reader reconcile the table with the KPI strip."""
+    line is what lets a reader reconcile the table with the Coverage tab."""
 
     @staticmethod
     def _df(rows):
@@ -1683,7 +1683,7 @@ class TestCoverageExPartialInSummary:
         assert "82.9%" in bar and "78.3%" not in bar
 
     def test_the_whole_baseline_figure_stays_visible(self):
-        """Without it the table could not be reconciled with the KPI strip."""
+        """Without it the table could not be reconciled with the Coverage tab."""
         html_ = self._html([("ICI", 5713, 4472, 318)])
         assert "cov-ex" in html_ and "78.3%" in html_
 

@@ -41,7 +41,7 @@ nor **N/A**; every other status is shown under the name TestRail gives it. The
 plan itself gives four statuses a meaning: Passed = merged, Accepted fail = PR
 raised, Failed = query raised to MQA, N/A = not applicable. *Progress* is merged ÷
 (total − N/A): the share of a backlog, **not a coverage**, so it is never compared
-with the 80% target. Martech is not in the KPI chips or the Overview.
+with the 80% target. Martech is not in the Overview.
 
 **The baseline** (what the Backlog tab measures) — depends on the scope:
 
@@ -64,7 +64,7 @@ with the 80% target. Martech is not in the KPI chips or the Overview.
 | **Unknown** | no automation status filled in, so we can't say — shown only when it happens, and it means a field is missing in TestRail |
 
 **Coverage** — one definition everywhere: automated **rows** ÷ baseline rows.
-The Backlog tab, the Coverage tab and the KPI chips all show the same figure for
+The Backlog tab and the Coverage tab show the same figure for
 the same Business Unit.
 
 * **Coverage vs Automatable** excludes the Not Applicable rows.
@@ -202,7 +202,7 @@ METHODOLOGY_FOR_LLM = """
   even if a script exists, because the test changed under it.  Never describe
   those rows as "not automated" — they are automated but out of date.
 - Coverage % = automated ROWS ÷ baseline ROWS.  ONE definition: the Backlog tab,
-  the Coverage tab and the KPI chips always agree for the same BU.  Never quote
+  the Coverage tab always agree for the same BU.  Never quote
   a case-based percentage as "coverage".
 - A "row" is case × country × device: a case automated on Desktop AND Mobile in
   3 countries is 6 rows.  So row counts are larger than unique-case counts, and

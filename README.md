@@ -102,7 +102,7 @@ comparisons by design and intentionally ignore the BU part of the selection.
 
 ```
 app.py                      Streamlit entry point: credential gate, top bar
-                            (title, KPI chips, scope switch), 3 tabs, the
+                            (title, scope switch), 3 tabs, the
                             Overview window, cache warm-up
 │
 ├── src/
@@ -134,7 +134,6 @@ app.py                      Streamlit entry point: credential gate, top bar
 │       ├── classic_view.py   The previous layout, kept for comparison
 │       ├── martech_tab.py    Martech's table and BU window
 │       ├── isolation.py      Keeps one failing section from blanking the rest
-│       ├── kpi_strip.py      The two cross-BU KPI chips under the title
 │       ├── backlog_tab.py    Backlog tab
 │       ├── coverage_tab.py   Coverage tab
 │       ├── overview_tab.py   Overview window (utility bar)
@@ -191,8 +190,8 @@ Each baseline row is classified — first match wins:
 | **Unknown** | nothing explains the row and the case is automated nowhere — it means a TestRail field is missing, and the Data-Quality panel lists every one of them |
 
 **Coverage**
-One definition everywhere: **automated rows ÷ baseline rows**. The Backlog tab,
-the Coverage tab and the KPI chips always report the same figure for the same BU
+One definition everywhere: **automated rows ÷ baseline rows**. The Backlog tab
+and the Coverage tab always report the same figure for the same BU
 — a property locked by `tests/test_business_rules.py::TestCoverageAgreesWithBacklog`
 rather than left to coincidence. Two variants are shown alongside it, never
 instead of it:
