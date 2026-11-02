@@ -88,9 +88,16 @@ class TestClickableRows:
         js = bu_popup._CLICK_JS
         assert js.count("addEventListener") == 1
         assert "if (!window.__countBuClick)" in js          # attached once, never again
-        assert "window.__countBuTrigger = setTriggerValue" in js   # every run refreshes it
+        assert "window.__countBuTrigger = component.setTriggerValue" in js   # every run refreshes it
         assert "window.__countBuTrigger('bu'" in js                # and the handler reads it live
         assert "removeEventListener" not in js
+
+    def test_nothing_is_torn_down_with_the_element(self):
+        """Streamlit ran the old element's cleanup after a page rerun and never ran
+        the function for the new one: a handler or trigger cleared on cleanup left
+        the table dead (live, 2026-11-02: the trigger read null)."""
+        js = bu_popup._CLICK_JS
+        assert "return () =>" not in js and "= null" not in js
 
 
 # ── the window ───────────────────────────────────────────────────────────────

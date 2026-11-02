@@ -24,18 +24,18 @@ import streamlit as st
 
 from . import global_filter, isolation
 
-# ONE handler for the page, reading the latest `setTriggerValue`.  The function
-# below runs again whenever Streamlit redraws the element, each time with a
-# `setTriggerValue` bound to the fragment the element belongs to at that moment.
-# A handler attached per run kept calling the one it was born with: after a rerun
-# of the whole page (a change of scope) every click was reported for a fragment
-# that no longer existed, and silently dropped (the browser console said
-# "Multiple different fragmentIds").  The listener is attached once and never
-# removed — it does nothing unless a clickable table is on screen.
+# ONE handler for the page, kept for the life of the page.  Measured live,
+# 2026-11-02: after the whole page reran (a change of scope) Streamlit ran the
+# cleanup of the old element and never ran this function for the new one, so a
+# handler that died with its element left the table dead until a reload (the
+# console said "Multiple different fragmentIds", and `window.__countBuTrigger`
+# was null).  So nothing is torn down: the listener is attached once, the last
+# `setTriggerValue` seen is kept (it names the component's widget, and the
+# widget is the same one after a rerun), and a click on a table that is not on
+# screen finds no row and does nothing.
 _CLICK_JS = """
 export default function (component) {
-  const { setTriggerValue } = component;
-  window.__countBuTrigger = setTriggerValue;
+  window.__countBuTrigger = component.setTriggerValue;
   if (!window.__countBuClick) {
     window.__countBuClick = (event) => {
       const row = event.target.closest('.bl-summary.bl-clickable tr[data-bu]');
@@ -45,9 +45,6 @@ export default function (component) {
     };
     document.addEventListener('click', window.__countBuClick);
   }
-  return () => {
-    if (window.__countBuTrigger === setTriggerValue) window.__countBuTrigger = null;
-  };
 }
 """
 # isolate_styles=False: the handler lives on the page's own document, where the
