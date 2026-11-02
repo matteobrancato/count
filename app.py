@@ -266,7 +266,7 @@ def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
 # already downloaded — the tab never calls TestRail), and the previous layout,
 # kept to the end so the new one can be checked against it.
 _SECTIONS = [
-    ("📋 Backlog",              backlog_tab.render,         "backlog_anim"),
+    ("📋 Backlog",              backlog_tab.render_page,    "backlog_anim"),
     ("🌍 Leakage · All BUs",    leakage_tab.render_all_bus, ""),
     ("🕰️ Previous layout",      classic_view.render,        ""),
 ]

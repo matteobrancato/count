@@ -74,12 +74,23 @@ class TestClickableRows:
             '<td class="l bu">Kruidvat<span class="sub">2 runs</span></td>')
 
     def test_the_click_handler_reads_what_the_table_writes(self):
-        """The three strings are one contract, in two languages."""
+        """The strings are one contract, in two languages."""
         js = bu_popup._CLICK_JS
         assert ".bl-summary.bl-clickable tr[data-bu]" in js
         assert "row.dataset.bu" in js
-        assert "setTriggerValue('bu'" in js
-        assert "removeEventListener" in js          # a tab switch must not leak the handler
+        assert "('bu', row.dataset.bu)" in js
+
+    def test_one_handler_for_the_page_calls_the_latest_trigger(self):
+        """A handler bound at each mount kept calling the `setTriggerValue` it was
+        born with: after the whole page reran (a change of scope) every click went
+        to a fragment that no longer existed and was dropped.  Live, 2026-11-02:
+        the browser said "Multiple different fragmentIds"."""
+        js = bu_popup._CLICK_JS
+        assert js.count("addEventListener") == 1
+        assert "if (!window.__countBuClick)" in js          # attached once, never again
+        assert "window.__countBuTrigger = setTriggerValue" in js   # every run refreshes it
+        assert "window.__countBuTrigger('bu'" in js                # and the handler reads it live
+        assert "removeEventListener" not in js
 
 
 # ── the window ───────────────────────────────────────────────────────────────
@@ -122,15 +133,42 @@ class TestWindow:
 
 
 class TestTableAndWindowAgree:
-    def test_the_click_is_read_before_the_table_is_drawn(self):
+    def test_the_click_is_read_at_page_level_before_the_table_is_drawn(self):
         """Read after, the table shows the BU opened BEFORE this one while the
         window shows the new one — seen once, in the first harness."""
+        order = [inspect.getsource(bl.render_page).index(part) for part in
+                 ("bu_popup.clicked()", "select_bu(", "hand_over(", "render()")]
+        assert order == sorted(order)
+
+    def test_the_window_opens_after_the_table_in_both_scopes(self):
         for fn, table, open_window in ((bl.render, "_summary_table_html(", "_open_bu("),
                                        (martech_tab.render, "_table_html(", "open_for(")):
             src = inspect.getsource(fn)
-            order = [src.index(part) for part in
-                     ("bu_popup.clicked()", "select_bu(", table, open_window)]
-            assert order == sorted(order), fn.__module__
+            assert src.index(table) < src.index(open_window), fn.__module__
+
+    def test_the_listener_is_not_inside_a_fragment(self):
+        """A trigger inside a fragment reruns that fragment, by an id that went
+        stale on a page rerun.  The page-level function is no fragment; the table's is."""
+        assert "clicked()" not in inspect.getsource(bl.render)
+        assert "clicked()" not in inspect.getsource(martech_tab.render)
+        assert not hasattr(bl.render_page, "__wrapped__") or "fragment" not in repr(bl.render_page)
+
+    def test_a_handed_over_bu_is_taken_once(self):
+        st.session_state.clear()
+        assert bu_popup.take_handed_over() is None
+        bu_popup.hand_over("Drogas")
+        assert bu_popup.take_handed_over() == "Drogas"
+        assert bu_popup.take_handed_over() is None        # never opens a window twice
+        st.session_state.clear()
+
+    def test_the_fragment_takes_the_hand_over_before_anything_can_fail(self):
+        src = inspect.getsource(bl.render)
+        assert src.index("take_handed_over()") < src.index("global_filter.current()")
+
+    def test_the_page_draws_the_backlog_through_render_page(self):
+        import app
+        fn = app._SECTIONS[0][1]
+        assert (fn.__module__, fn.__name__) == ("src.ui.backlog_tab", "render_page")
 
     def test_the_inert_table_takes_its_bu_from_the_dropdown(self):
         src = inspect.getsource(bl.render)
@@ -138,7 +176,7 @@ class TestTableAndWindowAgree:
         assert inspect.signature(bl.render).parameters["pick_bu"].default is True
 
     def test_martech_is_drawn_by_its_own_module(self):
-        assert "martech_tab.render(pick_bu=pick_bu)" in inspect.getsource(bl.render)
+        assert "martech_tab.render(picked=picked, pick_bu=pick_bu)" in inspect.getsource(bl.render)
 
 
 # ── the page ─────────────────────────────────────────────────────────────────

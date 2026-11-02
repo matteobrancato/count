@@ -2094,24 +2094,38 @@ def _open_bu(scope: str, bu: str, run: str) -> None:
     bu_popup.open_for(scope, bu)
 
 
+def render_page() -> None:
+    """The Backlog tab as the page draws it: the click listener, then the table.
+
+    The listener is HERE, at page level, and not inside `render`'s fragment (see
+    `bu_popup.clicked`).  The BU clicked is recorded before the table is drawn —
+    it shows the BU just opened, not the one before it — and handed to the
+    fragment through `bu_popup.hand_over`, which opens the window after the table."""
+    scope, _bu = global_filter.current()
+    picked = bu_popup.clicked()
+    if picked:
+        global_filter.select_bu(scope, picked)
+        bu_popup.hand_over(picked)
+    render()
+
+
 @st.fragment
 def render(*, pick_bu: bool = True) -> None:
     """The Backlog tab: every Business Unit side by side.  A click on a BU opens
     its window — Detail, Coverage, Leakage, Trend (`bu_popup`).
 
     *pick_bu* False draws the table as it was before the window existed: rows
-    inert, and the BU taken from the previous layout's own dropdown."""
+    inert, and the BU taken from the previous layout's own dropdown.  Drawn by
+    `render_page`, which owns the click."""
+    # Taken first, whatever happens below: a BU handed over and not opened (an
+    # error before the table) must not open a window on some later run.
+    picked = bu_popup.take_handed_over() if pick_bu else None
     # Scope drives which baseline we show: Mobile App uses a priority-based
     # baseline (separate pipeline), everything else the big_regr label baseline.
     scope, bu = global_filter.current()
     if scope == "martech":
-        martech_tab.render(pick_bu=pick_bu)
+        martech_tab.render(picked=picked, pick_bu=pick_bu)
         return
-    # Read first: the table below is drawn with the BU just clicked as the one
-    # opened, not the one before it.  (The window itself is opened after it.)
-    picked = bu_popup.clicked() if pick_bu else None
-    if picked:
-        global_filter.select_bu(scope, picked)
     run = _run_picker(scope)
     loaded = _load_run(run, scope)
     if loaded is None:

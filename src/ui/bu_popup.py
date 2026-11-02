@@ -24,17 +24,30 @@ import streamlit as st
 
 from . import global_filter, isolation
 
+# ONE handler for the page, reading the latest `setTriggerValue`.  The function
+# below runs again whenever Streamlit redraws the element, each time with a
+# `setTriggerValue` bound to the fragment the element belongs to at that moment.
+# A handler attached per run kept calling the one it was born with: after a rerun
+# of the whole page (a change of scope) every click was reported for a fragment
+# that no longer existed, and silently dropped (the browser console said
+# "Multiple different fragmentIds").  The listener is attached once and never
+# removed — it does nothing unless a clickable table is on screen.
 _CLICK_JS = """
 export default function (component) {
   const { setTriggerValue } = component;
-  const onClick = (event) => {
-    const row = event.target.closest('.bl-summary.bl-clickable tr[data-bu]');
-    if (!row) return;
-    event.preventDefault();
-    setTriggerValue('bu', row.dataset.bu);
+  window.__countBuTrigger = setTriggerValue;
+  if (!window.__countBuClick) {
+    window.__countBuClick = (event) => {
+      const row = event.target.closest('.bl-summary.bl-clickable tr[data-bu]');
+      if (!row || !window.__countBuTrigger) return;
+      event.preventDefault();
+      window.__countBuTrigger('bu', row.dataset.bu);
+    };
+    document.addEventListener('click', window.__countBuClick);
+  }
+  return () => {
+    if (window.__countBuTrigger === setTriggerValue) window.__countBuTrigger = null;
   };
-  document.addEventListener('click', onClick);
-  return () => document.removeEventListener('click', onClick);
 }
 """
 # isolate_styles=False: the handler lives on the page's own document, where the
@@ -72,9 +85,27 @@ def _ignore() -> None:
 
 def clicked() -> str | None:
     """The Business Unit whose row was clicked on this run, else None.  A click
-    is reported once: the next run, whatever caused it, sees None."""
+    is reported once: the next run, whatever caused it, sees None.
+
+    Called OUTSIDE any fragment (`backlog_tab.render_page`): an element inside a
+    fragment reruns that fragment, and the fragment's id is what went stale on a
+    page rerun.  At page level a click is a rerun of the page, with no id to
+    go stale."""
     event = _bu_clicks(key="bu_clicks", on_bu_change=_ignore)
     return getattr(event, "bu", None) or None
+
+
+_HANDED_OVER = "_bu_to_open"
+
+
+def hand_over(bu: str) -> None:
+    """Pass the BU clicked at page level to the fragment that draws the table."""
+    st.session_state[_HANDED_OVER] = bu
+
+
+def take_handed_over() -> str | None:
+    """The BU handed over on this run, once: reading it clears it."""
+    return st.session_state.pop(_HANDED_OVER, None)
 
 
 def _sections() -> list[tuple[str, object, str]]:

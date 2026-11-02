@@ -102,13 +102,10 @@ def _table_html(summary: pd.DataFrame, selected_bu: str, clickable: bool) -> str
             f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
-def render(*, pick_bu: bool = True) -> None:
-    """The Backlog tab under the Martech scope."""
+def render(*, picked: str | None = None, pick_bu: bool = True) -> None:
+    """The Backlog tab under the Martech scope.  *picked* is the BU whose row was
+    clicked on this run (already recorded as the opened one by the page)."""
     scope, _bu = global_filter.current()
-    # Read first: the table is drawn with the BU just clicked as the one opened.
-    picked = bu_popup.clicked() if pick_bu else None
-    if picked:
-        global_filter.select_bu(scope, picked)
     loaded = _load()
     if loaded is None:
         return
