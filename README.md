@@ -70,6 +70,9 @@ MARTECH_TESTRAIL_API_KEY = "..."        # generated on aswatson.testrail.io (My 
 # MARTECH_PLAN_ID       = 3721
 ```
 
+`TESTRAIL_API_KEY_MARTECH`, `TESTRAIL_USER_MARTECH` and `TESTRAIL_URL_MARTECH` are read
+too, for anyone who follows the main account's naming; the `MARTECH_…` name wins if both exist.
+
 ---
 
 ## Scopes and the global filter

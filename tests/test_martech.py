@@ -241,6 +241,20 @@ class TestConfiguration:
         creds = mt.credentials()
         assert (creds.user, creds.base_url) == ("mt@example.com", "https://other.example")
 
+    def test_the_main_accounts_naming_works_too(self, monkeypatch):
+        """TESTRAIL_API_KEY_MARTECH is what follows from TESTRAIL_API_KEY_1."""
+        self._secrets(monkeypatch, TESTRAIL_API_KEY_MARTECH="k", TESTRAIL_USER_MARTECH="mt@example.com",
+                      TESTRAIL_URL_MARTECH="https://other.example")
+        assert mt.configured() is True
+        creds = mt.credentials()
+        assert (creds.user, creds.base_url, creds.api_key) == ("mt@example.com",
+                                                               "https://other.example", "k")
+
+    def test_the_documented_name_wins_when_both_are_set(self, monkeypatch):
+        self._secrets(monkeypatch, MARTECH_TESTRAIL_API_KEY="first", TESTRAIL_API_KEY_MARTECH="second",
+                      TESTRAIL_USER="me@example.com")
+        assert mt.credentials().api_key == "first"
+
     def test_no_key_is_an_error_that_names_it(self, monkeypatch):
         self._secrets(monkeypatch, TESTRAIL_USER="me@example.com")
         with pytest.raises(mt.MartechError, match="MARTECH_TESTRAIL_API_KEY"):

@@ -44,9 +44,12 @@ DEFAULT_URL = "https://aswatson.testrail.io"
 
 # The secrets (see `credentials`).  Only the key is required: the account is the
 # same person as the main TestRail one, so the user falls back to TESTRAIL_USER.
-SECRET_KEY = "MARTECH_TESTRAIL_API_KEY"
-SECRET_USER = "MARTECH_TESTRAIL_USER"
-SECRET_URL = "MARTECH_TESTRAIL_URL"
+# Each has two spellings, the first being the documented one: the second follows
+# the main account's own naming (TESTRAIL_API_KEY, TESTRAIL_API_KEY_1, ...), which
+# is what people reach for first.
+SECRET_KEYS = ("MARTECH_TESTRAIL_API_KEY", "TESTRAIL_API_KEY_MARTECH")
+SECRET_USERS = ("MARTECH_TESTRAIL_USER", "TESTRAIL_USER_MARTECH")
+SECRET_URLS = ("MARTECH_TESTRAIL_URL", "TESTRAIL_URL_MARTECH")
 SECRET_PLAN = "MARTECH_PLAN_ID"
 
 
@@ -63,11 +66,16 @@ def _secret(name: str) -> str:
     return str(value).strip() if value is not None else ""
 
 
+def _first_secret(names: tuple[str, ...]) -> str:
+    """The first of *names* that is set."""
+    return next((v for v in map(_secret, names) if v), "")
+
+
 def configured() -> bool:
     """True once the API key is in the secrets.  Martech appears in the scope
     switch only then: an option that can only say "not set up" is clutter for
     everybody who reads the dashboard."""
-    return bool(_secret(SECRET_KEY))
+    return bool(_first_secret(SECRET_KEYS))
 
 
 @dataclass(frozen=True)
@@ -78,14 +86,14 @@ class Credentials:
 
 
 def credentials() -> Credentials:
-    key = _secret(SECRET_KEY)
+    key = _first_secret(SECRET_KEYS)
     if not key:
-        raise MartechError(f"{SECRET_KEY} is not set in the app secrets.")
-    user = _secret(SECRET_USER) or _secret("TESTRAIL_USER")
+        raise MartechError(f"{SECRET_KEYS[0]} is not set in the app secrets.")
+    user = _first_secret(SECRET_USERS) or _secret("TESTRAIL_USER")
     if not user:
-        raise MartechError(f"Neither {SECRET_USER} nor TESTRAIL_USER is set in the "
+        raise MartechError(f"Neither {SECRET_USERS[0]} nor TESTRAIL_USER is set in the "
                            f"app secrets.")
-    return Credentials((_secret(SECRET_URL) or DEFAULT_URL).rstrip("/"), user, key)
+    return Credentials((_first_secret(SECRET_URLS) or DEFAULT_URL).rstrip("/"), user, key)
 
 
 def plan_id() -> int:
@@ -164,7 +172,7 @@ def _get(endpoint: str) -> Any:
         if resp.status_code in (401, 403):
             raise MartechError(
                 f"TestRail refused the Martech credentials (HTTP {resp.status_code}). "
-                f"{SECRET_KEY} must be an API key generated on {creds.base_url} — each "
+                f"{SECRET_KEYS[0]} must be an API key generated on {creds.base_url} — each "
                 f"TestRail instance has its own — for the user {creds.user}.")
         if not resp.ok:
             raise MartechError(f"TestRail answered {resp.status_code} to {what}: "
