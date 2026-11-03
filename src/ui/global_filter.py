@@ -2,7 +2,7 @@
 
 One control, drawn once by app.py inside the top bar next to the title:
 
-    [ 🌐 Website | 📱 Mobile App | 🧩 Microservices | 🎯 Martech ]
+    (•) 🌐 Website   ( ) 📱 Mobile App   ( ) 🧩 Microservices   ( ) 🎯 Martech
 
 The Business Unit is no longer picked here.  It is picked where the BUs are
 listed — a click on a row of the Backlog table opens that BU's window — and the
@@ -19,6 +19,7 @@ import streamlit as st
 
 from .. import martech
 from ..bu_rules import ALL_RULES
+from . import choice
 
 # Canonical display order for website BUs (the order the team reads them in,
 # ordering); BUs not listed fall to the end alphabetically.
@@ -99,19 +100,17 @@ def render() -> tuple[str, str]:
     """Draw the scope control where the caller is (app.py places it in the top
     bar); returns (scope, bu), the BU being the one last opened in this scope.
 
-    A segmented control rather than a radio: the same choices in a third of the
-    height, and it reads as the page's main switch.  `required` keeps one scope
-    always selected — a click on the active one cannot clear it.
+    The same radio as every other pick-one control on the page (`choice`), so one
+    scope is always on and nothing in the bar looks like an action.
     """
     _seed_from_url()
     scopes = scopes_available()
     labels = [_SCOPE_LABELS[s] for s in scopes]
-    # Seeded here, not passed as `default`: the URL seed may already have set
+    # Seeded here, not passed as `index`: the URL seed may already have set
     # the key, and a widget given both raises a warning on every run.
     if st.session_state.get("global_scope") not in labels:
         st.session_state["global_scope"] = labels[0]
-    st.segmented_control("Scope", labels, key="global_scope", required=True,
-                         label_visibility="collapsed", width="content")
+    choice.pick("Scope", labels, key="global_scope")
     scope, bu = current()
     _publish_to_url(scope, opened(scope))
     return scope, bu

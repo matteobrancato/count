@@ -55,7 +55,7 @@ from ..bu_rules import (
 )
 from ..freshness import DAY_TTL, computed_cache
 from ..rules_engine import evaluate_rules
-from . import global_filter
+from . import choice, global_filter
 from .styles import COLORS, COVERAGE_TARGET, PIE_PALETTE, section_title
 
 logger = logging.getLogger(__name__)
@@ -805,10 +805,11 @@ def _render_coverage_section(
 
 
 # ── the coverage subsets, selected by one radio (default: the baseline) ──────
-# "No-Regression" is the internal name of the WEBSITE regression baseline, so it
-# is kept for website/microservices; Mobile App's baseline is priority-based and
-# has nothing to do with regression, hence the neutral label there.
-_VIEW_REGR  = "📋 No-Regression"
+# "Big No-Regression" is the name of the WEBSITE regression baseline — the same
+# name and icon the Backlog's run picker gives it — so it is kept for
+# website/microservices; Mobile App's baseline is priority-based and has nothing
+# to do with regression, hence the neutral label there.
+_VIEW_REGR  = "📋 Big No-Regression"
 _VIEW_REGR_MAPP = "📋 Baseline"
 _VIEW_SMOKE = "🔥 Smoke"
 _VIEW_PS    = "🚀 Production Sanity"
@@ -834,10 +835,38 @@ _SANITY_VIEWS: dict[str, tuple[tuple[str, ...], str]] = {
 
 # Section-depth picker: named levels beat raw 0-3 on a slider.
 _GRAN_LEVELS: list[int] = [0, 1, 2, 3]
-_GRAN_LABELS: dict[int, str] = {0: "Main", 1: "Sub", 2: "+2", 3: "+3"}
+_GRAN_LABELS: dict[int, str] = {0: "Main", 1: "Sub", 2: "Sub 2", 3: "Sub 3"}
 _GRAN_HELP = ("Section depth: Main = top-level category (auto-detected, strips "
-              "dominant root folders like SD or WTR); Sub = secondary; "
-              "+2 / +3 = deeper sub-sections.")
+              "dominant root folders like SD or WTR); Sub = the level below it; "
+              "Sub 2 / Sub 3 = deeper levels.")
+
+
+def _view_controls(scope: str, bu_choice: str) -> tuple[str, int]:
+    """(view, section depth) from the control row.
+
+    Both are the page's one radio (`choice`).  Five views with their icons take
+    about 980px, so the granularity never fits beside them at the window's width:
+    it gets its own line under the views — always, not only when the window is
+    narrow, so the layout does not change with the screen.  The depth is kept per
+    (scope, BU), so it persists when the view changes.  The shared-suite
+    exclusion note rides along the per-view description caption below.
+    """
+    options = _VIEW_OPTIONS_MAPP if scope == "mobile_app" else _VIEW_OPTIONS
+    with st.container(gap="xsmall"):
+        view = choice.pick("Coverage view", options, index=_VIEW_DEFAULT_INDEX,
+                           key=f"cov_view_{scope}_{bu_choice}")
+        with st.container(key="cov_gran_row", horizontal=True,
+                          vertical_alignment="center", gap="small"):
+            st.markdown(
+                f"<span title='{_GRAN_HELP}' style='font-size:13px;"
+                f"color:{COLORS['muted']};white-space:nowrap;cursor:help'>"
+                f"Granularity</span>",
+                unsafe_allow_html=True,
+            )
+            depth = choice.pick("Granularity", _GRAN_LEVELS,
+                                key=f"cov_gran_{scope}_{bu_choice}",
+                                format_func=lambda v: _GRAN_LABELS[v])
+    return view, int(depth)
 
 
 def _coverage_for(scope: str, bu_choice: str) -> None:
@@ -858,46 +887,7 @@ def _coverage_for(scope: str, bu_choice: str) -> None:
         return
     rules_bu = [r for r in ALL_RULES if r.scope == scope and r.bu == bu_choice]
 
-    # ── ONE view + granularity on ONE control row ─────────────────────────────
-    # View radio (left) and the granularity picker (right) share a line so the
-    # metrics sit high on the page.  The picker is per-(scope, BU) so it persists
-    # when switching views.  The shared-suite exclusion note rides along the
-    # per-view description caption below (kept compact).
-    #
-    # Granularity used to be a slider: three stacked lines (label / value /
-    # track) with the help icon flung to the far right of the label row, in a
-    # block 28px taller than the radio it sits next to.  A segmented control is
-    # one line, the same height as the radio, and names the depths instead of
-    # asking the reader to decode 0-3.
-    is_mapp = scope == "mobile_app"
-    options = _VIEW_OPTIONS_MAPP if is_mapp else _VIEW_OPTIONS
-    # A horizontal container, not columns: the views take the width their
-    # labels need and the granularity picker sits at the far right, moving
-    # under them on a narrow window instead of squeezing them onto two lines.
-    with st.container(horizontal=True, vertical_alignment="center",
-                      horizontal_alignment="distribute", gap="medium"):
-        view = st.radio(
-            "Coverage view", options, index=_VIEW_DEFAULT_INDEX,
-            horizontal=True, key=f"cov_view_{scope}_{bu_choice}",
-            label_visibility="collapsed",
-        )
-        with st.container(
-            key="cov_gran_row", horizontal=True, vertical_alignment="center",
-            horizontal_alignment="right", gap="small", width="content",
-        ):
-            st.markdown(
-                f"<span title='{_GRAN_HELP}' style='font-size:13px;"
-                f"color:{COLORS['muted']};white-space:nowrap;cursor:help'>"
-                f"Granularity</span>",
-                unsafe_allow_html=True,
-            )
-            depth_offset = st.segmented_control(
-                "Granularity", _GRAN_LEVELS, default=0, required=True,
-                format_func=lambda v: _GRAN_LABELS[v],
-                key=f"cov_gran_seg_{scope}_{bu_choice}",
-                label_visibility="collapsed",
-            )
-            depth_offset = int(depth_offset if depth_offset is not None else 0)
+    view, depth_offset = _view_controls(scope, bu_choice)
     is_baseline_view = view in (_VIEW_REGR, _VIEW_REGR_MAPP)
 
     if view == _VIEW_SMOKE:

@@ -74,7 +74,7 @@ from ..bu_rules import (
 )
 from ..freshness import DAY_TTL, computed_cache
 from ..rules_engine import _apply_framework_precedence, evaluate_rules
-from . import bu_popup, global_filter, martech_tab
+from . import bu_popup, choice, global_filter, martech_tab
 from .styles import (
     COLORS,
     COVERAGE_TARGET,
@@ -921,9 +921,15 @@ RUN_PS    = "Production Sanity"
 RUN_EXT   = "Extended Production Sanity"
 RUNS = [RUN_BIG, RUN_SMALL, RUN_SMOKE, RUN_PS, RUN_EXT]
 
-# One sentence per run, shown beside the picker.  It fills the space the control
-# leaves and earns it: switching run changes every number on the page, and what
-# each one MEANS had nowhere else to live once the tile tooltips went.
+# The icons the Coverage views wear (coverage_tab._VIEW_*): a run and its coverage
+# view are one population, and a reader who moves from one tab to the other should
+# see it.  Display only — the run's name is its key everywhere else.
+_RUN_ICONS = {RUN_BIG: "📋", RUN_SMALL: "📑", RUN_SMOKE: "🔥",
+              RUN_PS: "🚀", RUN_EXT: "🧩"}
+
+# One sentence per run, shown under the picker.  Switching run changes every
+# number on the page, and what each one MEANS had nowhere else to live once the
+# tile tooltips went.
 _RUN_MEANING = {
     RUN_BIG:   "Every case labelled `big_regr_desktop` or `big_regr_mobile`.",
     RUN_SMALL: "The subset also ticked `small_nr` — the Release run.",
@@ -2107,8 +2113,8 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
 def _run_picker(scope: str, popup: bool = False) -> str:
     """One run at a time.  Everything below it — table, tiles, coverage,
     frameworks, pivot — reports on the run picked here, so no two populations
-    share a page.  The picker takes the width it needs; the rest of the row
-    carries what the chosen run actually is, rather than being left over.
+    share a page.  Under the radios, one line says what the chosen run actually
+    is — the same place Coverage describes its view.
 
     The page's table and the previous layout's Detail tab share one key, so the
     choice follows you from one to the other (only one of them runs at a time).
@@ -2120,21 +2126,10 @@ def _run_picker(scope: str, popup: bool = False) -> str:
     # Seeded rather than given as `default`: the window's key is set before the
     # widget exists, and a widget with both is a warning on every run.
     st.session_state.setdefault(key, RUN_BIG)
-    # A horizontal container, not columns: the control takes the width its
-    # labels need and the description the rest, so it is the text that wraps.
-    # A fixed column share broke the control onto two lines when the fourth
-    # run arrived.
-    with st.container(horizontal=True, vertical_alignment="center", gap="medium"):
-        run = st.segmented_control(
-            "Run", RUNS, required=True, key=key, label_visibility="collapsed",
-        ) or RUN_BIG
-        # Inline <span>, not a block: a block element collapses against
-        # Streamlit's -1rem markdown margin and lands below the control's centre.
-        st.markdown(
-            f"<span style='font-size:12.5px;color:{COLORS['muted']};"
-            f"display:block;text-align:right'>{_RUN_MEANING.get(run, '')}</span>",
-            unsafe_allow_html=True,
-        )
+    with st.container(gap="xsmall"):
+        run = choice.pick("Run", RUNS, key=key,
+                          format_func=lambda r: f"{_RUN_ICONS[r]} {r}")
+        st.caption(_RUN_MEANING.get(run, ""))
     return run
 
 

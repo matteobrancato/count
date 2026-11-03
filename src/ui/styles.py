@@ -871,15 +871,29 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     line-height: 1.4;
 }}
 
-/* Segmented controls: same reason as the tabs — a cropped glyph reads as a
-   rendering fault, and these labels are read at a glance. */
-[data-testid="stButtonGroup"] button p {{ line-height: 1.5 !important; }}
-
-/* Granularity picker — a quiet, secondary control next to the view radio.
-   (st.segmented_control renders as data-testid="stButtonGroup".) */
-.st-key-cov_gran_row [data-testid="stButtonGroup"] button p {{
-    font-size: 12.5px !important;
+/* ── Pick-one controls ──────────────────────────────────────────────────────
+   Scope, run, coverage view, granularity and release kind are all the same
+   radio (see ui/choice.py): one look for one gesture.  The options sit on one
+   line and wrap as a whole under it on a narrow window — a label never breaks
+   in two.  The chosen option reads in the ink colour and the others a step
+   lighter, so the row can be scanned without looking for the dot; the colour
+   changes, the weight does not, so no click moves its neighbours. */
+[data-testid="stRadioGroup"] {{
+    flex-wrap: wrap;
+    gap: 4px 22px;
 }}
+[data-testid="stRadioOption"] p {{
+    font-size: 13.5px;
+    line-height: 1.5 !important;
+    white-space: nowrap;
+    color: {c['muted']};
+    transition: color .12s ease;
+}}
+[data-testid="stRadioOption"]:hover p,
+[data-testid="stRadioOption"][data-selected="true"] p {{ color: {c['ink']}; }}
+
+/* Granularity — a quiet, secondary control beside the view radio. */
+.st-key-cov_gran_row [data-testid="stRadioOption"] p {{ font-size: 12.5px; }}
 
 /* Overview BU filter — a quiet text-link trigger above the numbers, never a
    competitor to them. */

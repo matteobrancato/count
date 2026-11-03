@@ -3781,7 +3781,7 @@ class TestExtendedProdSanity:
 
     def test_coverage_offers_each_sanity_suite_and_both_and_no_total(self):
         from src.ui import coverage_tab as cov
-        assert cov._VIEW_OPTIONS == ["📋 No-Regression", "🔥 Smoke", "🚀 Production Sanity",
+        assert cov._VIEW_OPTIONS == ["📋 Big No-Regression", "🔥 Smoke", "🚀 Production Sanity",
                                      "🧩 Extended Production Sanity",
                                      "🔗 Production + Extended Sanity"]
         assert cov._VIEW_DEFAULT_INDEX == 0                  # the baseline, as before

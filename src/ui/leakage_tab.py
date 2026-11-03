@@ -46,7 +46,7 @@ from .. import leakage_export as lx
 from .. import leakage_match as lm
 from .. import leakage_store as ls
 from ..freshness import DAY_TTL, computed_cache
-from . import global_filter
+from . import choice, global_filter
 from .styles import COLORS, section_title, stat_card
 
 logger = logging.getLogger(__name__)
@@ -366,10 +366,9 @@ def _pick_release(group: lk.Group, rels: list[lk.Release]):
     by_name = {r.name: r for r in rels}
     released = [r for r in reversed(rels) if r.released and r.date]   # newest first
     planned = [r for r in rels if not r.released]                     # soonest first
-    c_kind, c_rel, c_export = st.columns([1.35, 3.2, 0.9], vertical_alignment="center")
-    kind = c_kind.segmented_control(
-        "Releases", _KINDS, default=_KINDS[0], required=True,
-        key=f"lk_kind_{group.project}", label_visibility="collapsed") or _KINDS[0]
+    c_kind, c_rel, c_export = st.columns([1.8, 3.0, 0.9], vertical_alignment="center")
+    with c_kind:
+        kind = choice.pick("Releases", _KINDS, key=f"lk_kind_{group.project}")
     pool = released if kind == _KINDS[0] else planned
     if not pool:
         c_rel.caption("No release of this kind in the project.")

@@ -130,6 +130,7 @@ app.py                      Streamlit entry point: credential gate, top bar
 │   │                       instance — own session and pacing, status counts → BUs
 │   └── ui/
 │       ├── global_filter.py  Scope switch + the BU last opened, shareable via URL
+│       ├── choice.py         The one pick-one control: a row of radio buttons
 │       ├── bu_popup.py       The Business Unit window and the click that opens it
 │       ├── classic_view.py   The previous layout, kept for comparison
 │       ├── martech_tab.py    Martech's table and BU window
