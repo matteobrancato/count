@@ -63,9 +63,9 @@ def row_attr(bu: str, clickable: bool) -> str:
 
 def name_cell(bu: str, clickable: bool, sub: str = "") -> str:
     """A table's first cell: the BU's name, as a button when the row opens a
-    window.  The name is brand-coloured with a chevron that moves on hover —
-    "this opens something" has to be readable without a hint.  *sub* is a small
-    second line (Martech says how many runs the BU has)."""
+    window.  The name is plain bold ink like every other; the chevron after it,
+    which moves on hover, says "this opens something" without a hint.  *sub* is a
+    small second line (Martech says how many runs the BU has)."""
     name = html.escape(bu)
     extra = f'<span class="sub">{html.escape(sub)}</span>' if sub else ""
     if not clickable:

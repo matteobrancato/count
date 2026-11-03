@@ -114,7 +114,7 @@ def render(*, picked: str | None = None, pick_bu: bool = True) -> None:
 
     total = int(summary["Total"].sum())
     c_title, c_meta = st.columns([3, 4], vertical_alignment="center")
-    with c_title:
+    with c_title, st.container(gap="xxsmall"):
         section_title("All Business Units", top=0)
         if pick_bu:
             st.caption("Click a Business Unit to see its runs, statuses and tests.")

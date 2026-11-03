@@ -2126,7 +2126,7 @@ def _run_picker(scope: str, popup: bool = False) -> str:
     # Seeded rather than given as `default`: the window's key is set before the
     # widget exists, and a widget with both is a warning on every run.
     st.session_state.setdefault(key, RUN_BIG)
-    with st.container(gap="xsmall"):
+    with st.container(gap="xxsmall"):
         run = choice.pick("Run", RUNS, key=key,
                           format_func=lambda r: f"{_RUN_ICONS[r]} {r}")
         st.caption(_RUN_MEANING.get(run, ""))
@@ -2248,7 +2248,8 @@ def render(*, pick_bu: bool = True) -> None:
     # full-width button dominated the row.  (The presentation table is custom
     # HTML, which has no built-in download, hence the explicit control.)
     c_title, c_meta = st.columns([3, 4], vertical_alignment="center")
-    with c_title:
+    # The hint is the title's second line, not a block of its own: a small gap.
+    with c_title, st.container(gap="xxsmall"):
         # inline-block <span>, not a block <div> — same reason as the legend
         # below: a block element collapses against Streamlit's -1rem markdown
         # margin and lands 8px below the legend it should be level with.

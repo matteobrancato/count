@@ -852,7 +852,7 @@ def _view_controls(scope: str, bu_choice: str) -> tuple[str, int]:
     exclusion note rides along the per-view description caption below.
     """
     options = _VIEW_OPTIONS_MAPP if scope == "mobile_app" else _VIEW_OPTIONS
-    with st.container(gap="xsmall"):
+    with st.container(gap="xxsmall"):
         view = choice.pick("Coverage view", options, index=_VIEW_DEFAULT_INDEX,
                            key=f"cov_view_{scope}_{bu_choice}")
         with st.container(key="cov_gran_row", horizontal=True,

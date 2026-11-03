@@ -176,7 +176,7 @@ class TestCoverage:
         """Five views with their icons fill the window; beside them the depth
         wrapped under them at some widths and not others."""
         src = inspect.getsource(coverage_tab._view_controls)
-        assert 'with st.container(gap="xsmall"):' in src
+        assert 'with st.container(gap="xxsmall"):' in src
 
 
 class TestOneNamePerPopulation:

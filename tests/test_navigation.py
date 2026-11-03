@@ -44,6 +44,20 @@ class TestClickableRows:
         assert 'aria-haspopup="dialog"' in out
         assert '<span class="bu-name">Kruidvat</span><span class="bu-go">›</span>' in out
 
+    def test_the_name_is_ink_like_the_others_and_the_chevron_says_it_opens(self):
+        """It was brand blue: a column of links where the table is a column of
+        labels.  Bold ink again, with the chevron — and nothing that turns it
+        blue or underlines it on hover."""
+        from src.ui import styles
+        css = styles._css()
+        rule = css[css.index(".bl-summary .bu-link {"):]
+        rule = rule[:rule.index("}")]
+        assert f"color: {styles.COLORS['ink']}" in rule
+        assert "font-weight: 700" in rule
+        assert styles.COLORS["brand"] not in rule
+        assert ".bu-link:hover .bu-name" not in css
+        assert ".bl-summary tr:hover .bu-go" in css        # the chevron still steps right
+
     def test_without_it_the_markup_is_what_it_always_was(self):
         out = bl._summary_table_html(_display("Kruidvat", "Drogas"), NUM)
         assert "data-bu" not in out and "bl-clickable" not in out and "<button" not in out

@@ -89,10 +89,28 @@ h1, h2, h3, h4, h5, h6 {{
 /* ── Canvas & layout ──────────────────────────────────────────────────────── */
 .stApp {{ background: {c['canvas']}; }}
 [data-testid="stHeader"] {{ background: transparent; }}
+/* The top padding is Streamlit's own header band (3.75rem): the Cloud toolbar
+   (Share, ⋮) sits in it, so nothing of ours is drawn under it however narrow the
+   window gets.  The page used to start 74px down only because three invisible
+   elements each took a gap (below). */
 .block-container {{
     max-width: 1440px;
-    padding-top: 1.6rem;
+    padding-top: 3.75rem;
     padding-bottom: 4rem;
+}}
+
+/* Elements that draw nothing still take a slot in Streamlit's flex column — and
+   the 16px gap that goes with it.  Each one's gap is cancelled with an equal
+   negative margin: the two style sheets and Dexter's fixed button above the
+   header (48px), the freshness bar, which is pinned over the tab row and so has
+   no height of its own (16px above the tabs), and the click listener at the top
+   of a tab (16px above its first control). */
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] >
+    [data-testid="stElementContainer"]:has([data-testid="stMarkdown"] style),
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] >
+    [data-testid="stLayoutWrapper"]:has(> .st-key-ai_assistant_fab),
+.st-key-bu_clicks {{
+    margin-bottom: -1rem !important;
 }}
 
 /* ── Headings ─────────────────────────────────────────────────────────────── */
@@ -375,13 +393,20 @@ h1 {{ font-weight: 800; letter-spacing: -0.03em; }}
 .st-key-tabs_zone {{ position: relative !important; }}
 .st-key-freshness {{
     position: absolute !important;
-    top: 26px !important;          /* low in the tab row, flush above the grey line */
+    top: 10px !important;          /* level with the tab labels, 1px low */
     right: 0 !important;
     width: auto !important;
     z-index: 20 !important;
     /* Layout (one centred row) comes from st.container(horizontal=True,
        vertical_alignment="center") — do NOT re-declare flex here: overriding
        Streamlit's own flex is what knocked the labels out of alignment. */
+}}
+/* Pinned, the bar has no height, so its wrapper's gap is cancelled (see the
+   canvas rules); in the narrow layout below it is in the flow and keeps it. */
+@media (min-width: 1251px) {{
+    .st-key-tabs_zone > [data-testid="stLayoutWrapper"]:has(> .st-key-freshness) {{
+        margin-bottom: -1rem !important;
+    }}
 }}
 /* Narrow viewports: the tab bar wins the row — drop the utility bar below it
    instead of letting the two overlap. */
@@ -668,8 +693,10 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 .bl-summary th.l, .bl-summary td.l {{ text-align: left; }}
 .bl-summary .bu {{ font-weight: 700; color: {c['ink']}; }}
 /* Rows that open a Business Unit's window (the Backlog and Martech tables).  The
-   name is a button in brand blue with a chevron that steps right on hover, the
-   whole row is the click target, and the BU opened last keeps its underline. */
+   name stays the bold ink of every other name in the table — it was brand blue,
+   which made twelve links of a column of labels — and the chevron after it, which
+   steps right on hover, is what says it opens something.  The whole row is the
+   click target, and the BU opened last keeps its underline. */
 .bl-summary.bl-clickable tbody tr {{ cursor: pointer; }}
 .bl-summary.bl-clickable tbody tr:hover td {{ background: {c['brand_soft']}; }}
 .bl-summary .bu-link {{
@@ -682,14 +709,9 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     background: none;
     font: inherit;
     font-weight: 700;
-    color: {c['brand']};
+    color: {c['ink']};
     text-align: left;
     cursor: pointer;
-}}
-.bl-summary .bu-link:hover .bu-name {{
-    color: {c['brand_strong']};
-    text-decoration: underline;
-    text-underline-offset: 3px;
 }}
 .bl-summary .bu-link:focus-visible {{
     outline: 2px solid {c['brand']};
@@ -880,8 +902,14 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
    changes, the weight does not, so no click moves its neighbours. */
 [data-testid="stRadioGroup"] {{
     flex-wrap: wrap;
-    gap: 4px 22px;
+    gap: 0 22px;
+    /* Streamlit gives the group 40px for a 20px line: 10px of nothing above and
+       below every row, which left each control floating away from what it sits
+       next to.  The options carry the room instead — 4px above and below each —
+       so the click target is 28px high and the rows sit where they are put. */
+    min-height: 0;
 }}
+[data-testid="stRadioOption"] {{ padding: 4px 2px 4px 0; }}
 [data-testid="stRadioOption"] p {{
     font-size: 13.5px;
     line-height: 1.5 !important;
