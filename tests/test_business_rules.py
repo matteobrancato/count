@@ -474,6 +474,65 @@ class TestDeviceNaStaysOnItsDevice:
         assert cats == {"Desktop": "to_be_updated", "Mobile": "to_be_updated"}
 
 
+_BOTH_BACKLOG = {"Desktop": "backlog", "Mobile": "backlog"}
+
+
+class TestNotTakenInChargeSpeaksForTheCase:
+    """TPS, 2026-11-04: generic N/A + Testim Desktop "Not automated" gave Desktop
+    Backlog and Mobile N/A — one case in two categories (6 cases).  Matteo: "Not
+    automated" with nothing further on the other device means the case has not
+    been taken in charge yet, so both devices are Backlog."""
+
+    _rules = staticmethod(TestDeviceNaStaysOnItsDevice._rules)
+
+    def _cats(self, generic, desktop, mobile, labels=("big_regr_desktop", "big_regr_mobile"), rules=None):
+        raw = pd.DataFrame([_case(
+            case_id=1, multi_countries=["TPSGB"], labels=list(labels),
+            **{"status_Automation Status": generic,
+               "status_Automation Status Testim Desktop": desktop,
+               "status_Automation Status Testim Mobile View": mobile})])
+        out = bl._expand_baseline(raw, rules or self._rules())
+        return dict(zip(out["device"], out["_cat_base"]))
+
+    def test_the_real_tps_shape(self):
+        assert self._cats("Automation not applicable", "Not automated", "") == _BOTH_BACKLOG
+
+    def test_it_works_from_the_mobile_field_too(self):
+        assert self._cats("Automation not applicable", "", "Not automated") == _BOTH_BACKLOG
+
+    def test_ready_to_be_automated_is_not_taken_in_charge_either(self):
+        assert self._cats("Automation not applicable", "Ready to be automated", "") == _BOTH_BACKLOG
+
+    def test_a_field_that_speaks_for_its_device_keeps_it(self):
+        cats = self._cats("Automation not applicable", "Not automated", "Automation not applicable")
+        assert cats == {"Desktop": "backlog", "Mobile": "not_applicable"}
+
+    def test_an_automated_testim_field_does_not_spread_backlog(self):
+        cats = self._cats("Automation not applicable", "Automated UAT", "")
+        assert cats["Mobile"] == "not_applicable"
+
+    def test_in_progress_is_taken_in_charge_so_it_does_not_spread(self):
+        cats = self._cats("Automation not applicable", "In progress", "")
+        assert cats == {"Desktop": "in_progress", "Mobile": "not_applicable"}
+
+    def test_a_playwright_case_is_left_to_the_generic_field(self):
+        cats = self._cats("Automation not applicable", "Not automated", "",
+                          labels=("big_regr_desktop", "big_regr_mobile", "playwright"))
+        assert cats == {"Desktop": "not_applicable", "Mobile": "not_applicable"}
+
+    def test_a_generic_ready_was_already_backlog_on_both(self):
+        assert self._cats("Ready to be automated", "Not automated", "") == _BOTH_BACKLOG
+
+    def test_a_bu_without_testim_fields_is_untouched(self):
+        java_only = self._rules()[:1]
+        cats = self._cats("Automation not applicable", "Not automated", "", rules=java_only)
+        assert cats == {"Desktop": "not_applicable", "Mobile": "not_applicable"}
+
+    def test_it_is_still_a_generic_na_when_nothing_is_taken_in_charge(self):
+        assert self._cats("Automation not applicable", "", "") == {
+            "Desktop": "not_applicable", "Mobile": "not_applicable"}
+
+
 class TestTpsJavaHasNoTypeFilter:
     """The baseline admits a case by its big_regr label whatever its Type, so a
     Type filter on the rule left non-Regression cases in the denominator with

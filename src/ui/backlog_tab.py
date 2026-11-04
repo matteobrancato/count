@@ -516,6 +516,27 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
         raw.loc[dev_mask & is_tbu, "_cat_base"] = "to_be_updated"
         raw.loc[dev_mask & is_ip, "_cat_base"] = "in_progress"
 
+    # A Testim status that says "not taken in charge yet" (Not automated, Ready to be
+    # automated…) on ONE device speaks for the case when the other device's Testim
+    # field says nothing: the row that is N/A only because the generic field says so
+    # is Backlog too (Matteo, 2026-11-04, The Perfume Shop: generic N/A + Testim
+    # Desktop "Not automated" gave Desktop Backlog and Mobile N/A — 6 cases, one
+    # case in two categories).  A field that DOES speak for its device — N/A,
+    # Automated, In progress, To be updated — keeps it, and a `playwright` case is
+    # left to the generic field alone, as everywhere.
+    device_cols_here = {d: c for d, c in _DEVICE_STATUS_COL.items() if c in status_cols}
+    if len(device_cols_here) == 2:
+        said = {}
+        not_taken = {}
+        for dev, scol in device_cols_here.items():
+            v = raw[scol].mask(raw["_is_pw"])
+            said[dev] = v.notna() & (v != "")
+            not_taken[dev] = (said[dev] & ~v.isin(_STATUS_AUTO | _STATUS_NA)
+                              & ~_is_to_update(v) & ~_is_in_progress(v))
+        for dev, other in (("Desktop", "Mobile"), ("Mobile", "Desktop")):
+            raw.loc[(raw["device_exp"] == dev) & (raw["_cat_base"] == "not_applicable")
+                    & ~said[dev] & not_taken[other], "_cat_base"] = "backlog"
+
     # ── Dedup on (case_id, country_label, device) ─────────────────────────────
     return (
         raw[["case_id", "country_label", "device_exp", "_cat_base",

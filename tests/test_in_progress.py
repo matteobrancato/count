@@ -84,10 +84,16 @@ class TestInProgress:
 
 # ── TestIM over the generic field, except on a Playwright case ───────────────
 class TestTestimOverGeneric:
-    def test_testim_not_automated_beats_a_generic_n_a_on_its_device(self):
-        """TPS: 9 cases, 18 rows.  "Evidentemente non era automatable prima ma
-        forse con Testim si"."""
+    def test_testim_not_automated_beats_a_generic_n_a(self):
+        """TPS: 9 cases.  "Evidentemente non era automatable prima ma forse con
+        Testim si".  Until 2026-11-04 only on its own device — Desktop Backlog,
+        Mobile N/A, one case in two categories.  Matteo: "desktop e mobile vale come
+        backlog ugualmente se non specificato ulteriormente in testim, perche' vuol
+        dire che non e' stato ancora preso in carico"."""
         assert _rows(generic="Automation not applicable", td="Not automated") == {
+            "Desktop": "backlog", "Mobile": "backlog"}
+        assert _rows(generic="Automation not applicable", td="Not automated",
+                     tm="Automation not applicable") == {
             "Desktop": "backlog", "Mobile": "not_applicable"}
 
     def test_a_playwright_case_goes_back_to_the_generic_field(self):
@@ -154,7 +160,7 @@ class TestManyCasesManyCountries:
         exp = bl._expand_baseline(raw, RULES)
         got = {(int(r["case_id"]), r["device"]): r["_cat_base"] for r in exp.to_dict("records")}
         assert got == {
-            (1, "Desktop"): "backlog", (1, "Mobile"): "not_applicable",
+            (1, "Desktop"): "backlog", (1, "Mobile"): "backlog",
             (2, "Desktop"): "not_applicable", (2, "Mobile"): "not_applicable",
             (3, "Desktop"): "in_progress", (3, "Mobile"): "in_progress",
             (4, "Mobile"): "backlog"}
