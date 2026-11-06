@@ -200,6 +200,9 @@ class TestAgainstAPlainRestatement:
         if gen == "Automation not applicable":
             cat = "not_applicable"
         own = td if device == "Desktop" else tm
+        other = tm if device == "Desktop" else td
+        not_taken = lambda v: (not blank(v) and v not in cls.AUTO | {"Automation not applicable"}
+                               and not tbu(v) and not ip(v))
         if not blank(own):
             if own == "Automation not applicable":
                 cat = "not_applicable"
@@ -207,8 +210,10 @@ class TestAgainstAPlainRestatement:
                 cat = "in_progress"
             elif tbu(own):
                 cat = "to_be_updated"
-            elif own not in cls.AUTO:
+            elif own not in cls.AUTO and not tbu(gen):      # a generic "To be updated" holds
                 cat = "backlog"
+        elif cat == "not_applicable" and not_taken(other):
+            cat = "backlog"                                  # "not taken in charge" speaks for the case
         return cat
 
     def test_three_hundred_random_cases(self):

@@ -489,6 +489,14 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
     # Fix: re-classify a device row using its TestIM-specific status field ONLY when
     # that field is actually populated.  If empty (default / never set), keep the
     # initial classification based on combined status fields (which captures Java).
+    # "To be updated" in the generic field means the case WAS automated and needs
+    # maintenance: a Testim "Not automated" / "Ready to be automated" on a device does
+    # not turn that row into Backlog (Matteo, 2026-11-06, IPXL C6095571).  Testim
+    # In progress and N/A on the device still decide it, as ever.
+    generic_tbu = pd.Series(False, index=raw.index)
+    for col in status_cols:
+        if col not in device_cols:
+            generic_tbu |= _is_to_update(raw[col])
     for dev, scol in _DEVICE_STATUS_COL.items():
         # `status_cols` is already restricted to this BU's fields; going around
         # it here would let the device path reintroduce another BU's verdict.
@@ -510,7 +518,7 @@ def _expand_baseline(raw: pd.DataFrame, rules: list,
             dev_mask
             & has_value
             & ~col_vals.isin(_STATUS_AUTO | _STATUS_NA)
-            & ~is_tbu & ~is_ip,
+            & ~is_tbu & ~is_ip & ~generic_tbu,
             "_cat_base",
         ] = "backlog"
         raw.loc[dev_mask & is_tbu, "_cat_base"] = "to_be_updated"

@@ -533,6 +533,43 @@ class TestNotTakenInChargeSpeaksForTheCase:
             "Desktop": "not_applicable", "Mobile": "not_applicable"}
 
 
+class TestGenericToBeUpdatedHoldsAgainstTestimNotAutomated:
+    """IPXL C6095571, 2026-11-06: generic "To be updated" (the case WAS automated and
+    needs maintenance) + Testim Desktop "Not automated" came out Backlog.  Matteo:
+    "to be updated".  Testim In progress and N/A still decide their device."""
+
+    _cats = TestNotTakenInChargeSpeaksForTheCase._cats
+    _rules = staticmethod(TestDeviceNaStaysOnItsDevice._rules)
+
+    def test_not_automated_on_testim_leaves_it_to_be_updated(self):
+        assert self._cats("To be updated", "Not automated", "") == {
+            "Desktop": "to_be_updated", "Mobile": "to_be_updated"}
+
+    def test_ready_to_be_automated_on_testim_does_too(self):
+        assert self._cats("To be updated", "Ready to be automated", "") == {
+            "Desktop": "to_be_updated", "Mobile": "to_be_updated"}
+
+    def test_it_works_from_the_mobile_field(self):
+        assert self._cats("To be updated", "", "Not automated") == {
+            "Desktop": "to_be_updated", "Mobile": "to_be_updated"}
+
+    def test_testim_in_progress_still_decides_its_device(self):
+        assert self._cats("To be updated", "In progress", "") == {
+            "Desktop": "in_progress", "Mobile": "to_be_updated"}
+
+    def test_testim_na_still_decides_its_device(self):
+        assert self._cats("To be updated", "Automation not applicable", "") == {
+            "Desktop": "not_applicable", "Mobile": "to_be_updated"}
+
+    def test_a_generic_backlog_status_is_untouched(self):
+        assert self._cats("Ready to be automated", "Not automated", "") == {
+            "Desktop": "backlog", "Mobile": "backlog"}
+
+    def test_a_testim_to_be_updated_alone_is_untouched(self):
+        assert self._cats("", "To be updated", "") == {
+            "Desktop": "to_be_updated", "Mobile": "to_be_updated"}
+
+
 class TestTpsJavaHasNoTypeFilter:
     """The baseline admits a case by its big_regr label whatever its Type, so a
     Type filter on the rule left non-Regression cases in the denominator with
