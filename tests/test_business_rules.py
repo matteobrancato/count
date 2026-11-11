@@ -1783,6 +1783,10 @@ class TestCoverageExPartialInSummary:
         html_ = self._html([("ICI", 5713, 4472, 318)])
         assert "cov-ex" in html_ and "78.3%" in html_
 
+    def test_the_second_figure_says_what_it_is(self):
+        """A bare second percentage under the headline reads as a typo."""
+        assert "incl. Partially 78.3%" in self._html([("ICI", 5713, 4472, 318)])
+
     def test_the_header_names_the_big_number(self):
         assert "Coverage excl. Partially" in self._html([("ICI", 5713, 4472, 318)])
 
@@ -3777,6 +3781,38 @@ class TestOverviewMobileApp:
         tree = ov._bu_country_map("mobile_app")
         assert tree["Drogas"] == ["DRG LV", "DRG LT"]
         assert tree["Watsons Turkey"] == ["Watsons Turkey"]
+
+    @staticmethod
+    def _cards(monkeypatch, scope, prod_sanity):
+        """The card titles the Overview draws for *scope*."""
+        from src.ui import global_filter
+        from src.ui import overview_tab as ov
+        bu = "Drogas"
+        auto = pd.DataFrame([{"bu": bu, "case_id": 1, "country_label": bu,
+                              "device": "Desktop", "priority_label": "Highest",
+                              "is_regression": True, "is_prod_sanity": prod_sanity}])
+        monkeypatch.setattr(global_filter, "current", lambda: (scope, None))
+        monkeypatch.setattr(ov, "evaluate_rules",
+                            lambda names: SimpleNamespace(automated=auto))
+        monkeypatch.setattr(ov, "_mapp_rows", lambda df: df)
+        monkeypatch.setattr(ov, "_bu_country_map", lambda s: {bu: [bu]})
+        drawn = []
+        monkeypatch.setattr(ov, "_metric_card",
+                            lambda title, *a, **k: drawn.append(title))
+        ov.render()
+        return drawn
+
+    def test_no_production_sanity_card_where_the_suite_does_not_exist(self, monkeypatch):
+        """The Mobile App has no Production Sanity suite: a permanent "0" card
+        would read as nothing covered."""
+        assert self._cards(monkeypatch, "mobile_app", False) == [
+            "Smoke Suite", "All Automated Cases"]
+
+    def test_a_labelled_case_still_shows_its_card(self, monkeypatch):
+        assert "Production Sanity" in self._cards(monkeypatch, "mobile_app", True)
+
+    def test_the_website_keeps_its_production_sanity_card(self, monkeypatch):
+        assert "Production Sanity" in self._cards(monkeypatch, "website", False)
 
 
 class TestTrekpleisterOwnsItsAutomation:

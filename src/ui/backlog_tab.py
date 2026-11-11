@@ -2126,12 +2126,15 @@ def _summary_table_html(df: pd.DataFrame, num_cols: list[str],
         # Only where the two differ: with no partial rows the second line would
         # repeat the first to the decimal, and a duplicated number reads as a
         # broken one.
+        # The grey line says what it is: a bare second percentage under the
+        # headline read as a typo, and a tooltip is not something a manager
+        # hovers for.  The words mirror the header ("excl. Partially").
         ex_html = ""
         if abs(real - cov) >= 0.05:
             ex_html = (
                 f"<span class='cov-ex' title='Coverage over the WHOLE baseline, "
                 f"partial gaps included — the figure the Coverage "
-                f"tab and Dexter show.'>{real:.1f}%</span>"
+                f"tab and Dexter show.'>incl. Partially {real:.1f}%</span>"
             )
         cov_cell = (
             f'<td class="l"><div class="cov-wrap">'

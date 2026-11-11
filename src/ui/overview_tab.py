@@ -6,7 +6,7 @@ import streamlit as st
 from .. import metrics
 from ..bu_rules import ALL_RULES, MAPP_MARKETS, MAPP_PLATFORMS
 from ..rules_engine import evaluate_rules
-from . import global_filter
+from . import backlog_tab, global_filter
 from .styles import COLORS
 
 
@@ -208,7 +208,13 @@ def render() -> None:
     smoke  = metrics.select_smoke(automated)
     regr   = metrics.select_regression(automated)
     sanity = metrics.select_prod_sanity(automated)
-    c1, c2, c3 = st.columns(3, gap="medium")
+    # A scope with no Production Sanity suite (the Mobile App) would show a
+    # permanent "0" — read as "nothing covered" rather than "not a thing here".
+    # The card stays wherever the suite exists, and anywhere a case carries the
+    # label anyway, so a real number is never hidden.
+    show_ps = backlog_tab.RUN_PS in backlog_tab.runs_for(scope) or not sanity.empty
+    cols = st.columns(3 if show_ps else 2, gap="medium")
+    c1, c2 = cols[0], cols[1]
     with c1:
         _metric_card(
             "Smoke Suite", smoke, COLORS["warning"],
@@ -221,5 +227,8 @@ def render() -> None:
                      "NOT the regression baseline. For the baseline figures "
                      "see the Backlog tab."), scope=scope,
         )
-    with c3:
-        _metric_card("Production Sanity", sanity, COLORS["success"], scope=scope)
+    if show_ps:
+        with cols[2]:
+            _metric_card("Production Sanity", sanity, COLORS["success"],
+                         tooltip="Automated cases carrying the prod_sanity label.",
+                         scope=scope)
