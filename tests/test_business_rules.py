@@ -2824,11 +2824,11 @@ class TestRateLimitPolicy:
     it reopened."""
 
     def test_the_pacer_stays_under_the_cap(self):
-        """The invariant, at any pool size: one account never exceeds its own
-        allowance, whatever that allowance currently is."""
+        """The invariant: the pace never exceeds the allowance, whatever that
+        allowance currently is."""
         from src import testrail_client as trc
         trc._repace()
-        assert (60 / trc._PACE_INTERVAL) / trc._pool_size <= trc._effective_limit()
+        assert 60 / trc._PACE_INTERVAL <= trc._effective_limit()
 
     def test_the_ceiling_is_testrails_historical_level(self):
         """The pacer may learn upwards now, so what bounds it is a CEILING —
@@ -3013,10 +3013,8 @@ class TestRateLimitPolicy:
                 return {"ok": True}
 
         seq = [_Resp(429), _Resp(429), _Resp(200)]
-        import itertools
         client = trc.TestRailClient.__new__(trc.TestRailClient)
-        client._sessions = [SimpleNamespace(get=lambda *a, **k: seq.pop(0))]
-        client._rr = itertools.count()
+        client._session = SimpleNamespace(get=lambda *a, **k: seq.pop(0))
         client.timeout = 5
         client._url = lambda e: e
         client.creds = SimpleNamespace(base_url="https://x")
@@ -3041,10 +3039,8 @@ class TestRateLimitPolicy:
                 return {}
 
         seq = [_Resp(429), _Resp(200)]
-        import itertools
         client = trc.TestRailClient.__new__(trc.TestRailClient)
-        client._sessions = [SimpleNamespace(get=lambda *a, **k: seq.pop(0))]
-        client._rr = itertools.count()
+        client._session = SimpleNamespace(get=lambda *a, **k: seq.pop(0))
         client.timeout = 5
         client._url = lambda e: e
         client._get("get_cases/1")
@@ -3224,8 +3220,6 @@ class TestPrewarmSurvivesABadWindow:
 
     def test_successful_requests_are_counted(self, monkeypatch):
         """The counter the loader uses as its heartbeat."""
-        import itertools
-
         from src import testrail_client as trc
         monkeypatch.setattr(trc, "_pace", lambda: None)
 
@@ -3236,8 +3230,7 @@ class TestPrewarmSurvivesABadWindow:
                 return {"ok": 1}
 
         client = trc.TestRailClient.__new__(trc.TestRailClient)
-        client._sessions = [SimpleNamespace(get=lambda *a, **k: _Resp())]
-        client._rr = itertools.count()
+        client._session = SimpleNamespace(get=lambda *a, **k: _Resp())
         client.timeout = 5
         client._url = lambda e: e
         before = trc.requests_served()
@@ -3294,183 +3287,6 @@ class TestDexterKnowsTheRuns:
         src = inspect.getsource(ca)
         assert "Never sum two runs" in src
         assert "already counted in it" in src
-
-
-class TestMultiAccountPool:
-    """TestRail rate-limits per USER, so each working account raises the ceiling
-    by 50/min.  The pool is DISCOVERED from secrets, never configured: adding
-    the next account has to be a secrets edit and nothing else."""
-
-    @staticmethod
-    def _secrets(monkeypatch, mapping):
-        from src import testrail_client as trc
-        monkeypatch.setattr(trc.st, "secrets", mapping)
-
-    def test_finds_every_account_present(self, monkeypatch):
-        from src import testrail_client as trc
-        self._secrets(monkeypatch, {
-            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
-            "TESTRAIL_USER_1": "b@x", "TESTRAIL_API_KEY_1": "k1",
-            "TESTRAIL_USER_2": "c@x", "TESTRAIL_API_KEY_2": "k2",
-        })
-        assert [c.user for c in trc._credential_sets()] == ["a@x", "b@x", "c@x"]
-
-    def test_a_gap_does_not_hide_a_later_account(self, monkeypatch):
-        """The accounts arrive one at a time; a half-filled _2 must not stop the
-        search before _3."""
-        from src import testrail_client as trc
-        self._secrets(monkeypatch, {
-            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
-            "TESTRAIL_USER_1": "b@x", "TESTRAIL_API_KEY_1": "k1",
-            "TESTRAIL_USER_3": "d@x", "TESTRAIL_API_KEY_3": "k3",
-        })
-        assert [c.user for c in trc._credential_sets()] == ["a@x", "b@x", "d@x"]
-
-    def test_blank_credentials_are_ignored(self, monkeypatch):
-        from src import testrail_client as trc
-        self._secrets(monkeypatch, {
-            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
-            "TESTRAIL_USER_1": "  ", "TESTRAIL_API_KEY_1": "",
-        })
-        assert [c.user for c in trc._credential_sets()] == ["a@x"]
-
-    def test_a_duplicated_user_is_dropped(self, monkeypatch):
-        """Two entries for one user share ONE rate-limit budget while we would
-        pace as if there were two — faster on paper, 429s in practice."""
-        from src import testrail_client as trc
-        self._secrets(monkeypatch, {
-            "TESTRAIL_URL": "https://x", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
-            "TESTRAIL_USER_1": "A@X", "TESTRAIL_API_KEY_1": "k1",
-        })
-        assert [c.user for c in trc._credential_sets()] == ["a@x"]
-
-    def test_requests_alternate_across_the_accounts(self):
-        import itertools
-
-        from src import testrail_client as trc
-        client = trc.TestRailClient.__new__(trc.TestRailClient)
-        client._sessions = ["s0", "s1", "s2"]
-        client._rr = itertools.count()
-        assert [client._next_session() for _ in range(6)] == \
-            ["s0", "s1", "s2", "s0", "s1", "s2"]
-
-    def test_the_pacer_keeps_each_account_under_its_own_cap(self):
-        """Whatever the pool size, one account must never exceed its own cap.
-
-        Round-robin is what makes this hold: consecutive slots land on
-        consecutive accounts, so the aggregate rate divides cleanly by the
-        pool size instead of piling onto one user.
-
-        Asks the real pacer rather than a copy of its formula: the copy went
-        stale the moment the headroom stopped being a flat percentage."""
-        from src import testrail_client as trc
-        cap = trc._effective_limit()
-        for n in (1, 2, 3, 5, 8):
-            interval = 60.0 / (trc._paced_per_account(cap) * n)
-            per_account = (60 / interval) / n
-            assert per_account <= cap, n
-
-
-class TestWorkerPoolIsBuiltOnce:
-    """The warm-up submits up to 8 suite workers at once and they all reach the
-    pool builder before it exists.  Unguarded, each probed EVERY account — on a
-    pool of three that is 24 wasted requests, paced at the single-account rate
-    because the pacer had not widened yet, which is most of the speed-up spent
-    before any real work starts."""
-
-    def test_concurrent_callers_build_one_pool(self, monkeypatch):
-        import threading
-
-        from src import testrail_client as trc
-
-        builds: list[int] = []
-        trc._SESSION_CACHE.clear()
-        creds = [trc.TestRailCredentials("https://x", f"u{i}@x", "k")
-                 for i in range(3)]
-        monkeypatch.setattr(trc, "_credential_sets",
-                            lambda: builds.append(1) or creds)
-        monkeypatch.setattr(trc, "_account_works", lambda c: True)
-        monkeypatch.setattr(trc.TestRailClient, "_make_session",
-                            lambda self, c: object())
-
-        threads = [threading.Thread(target=trc._get_client) for _ in range(8)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        assert builds == [1]
-        assert trc._SESSION_CACHE["pool"].n_accounts == 3
-        trc._SESSION_CACHE.clear()
-
-    def test_n_workers_is_zero_before_the_pool_exists(self):
-        from src import testrail_client as trc
-        trc._SESSION_CACHE.clear()
-        assert trc.n_workers() == 0
-
-
-class TestRejectedAccountsAreVisible:
-    """"3 workers" when four are configured is the difference between a slow day
-    and a silently rejected account.  The counts must survive the pool build so
-    the UI can say "3 of 4" instead of just "3"."""
-
-    def test_both_counts_are_recorded(self, monkeypatch):
-        from src import testrail_client as trc
-        trc._SESSION_CACHE.clear()
-        creds = [trc.TestRailCredentials("https://x", f"u{i}@x", "k")
-                 for i in range(4)]
-        monkeypatch.setattr(trc, "_credential_sets", lambda: creds)
-        monkeypatch.setattr(trc, "_account_works",
-                            lambda c: c.user != "u2@x")     # one rejected
-        monkeypatch.setattr(trc.TestRailClient, "_make_session",
-                            lambda self, c: object())
-        trc._get_client()
-        assert trc.n_workers() == 3
-        assert trc.n_accounts_configured() == 4
-        trc._SESSION_CACHE.clear()
-
-    def test_a_throttled_account_still_counts_as_working(self, monkeypatch):
-        """The cap is PER USER, so a 429 proves TestRail authenticated the
-        account before throttling it.  Rejecting it dropped healthy accounts
-        whenever the startup window happened to be closed — halving the pool
-        exactly when it was needed most."""
-        from src import testrail_client as trc
-
-        class _Resp:
-            status_code, ok, text = 429, False, (
-                '{"error":"API Rate Limit Exceeded - 5 per minute maximum allowed."}')
-
-        monkeypatch.setattr(trc.TestRailClient, "_make_session",
-                            lambda self, c: SimpleNamespace(
-                                get=lambda *a, **k: _Resp()))
-        assert trc._account_works(
-            trc.TestRailCredentials("https://x", "u@x", "k")) is True
-
-    def test_a_rejected_credential_is_still_dropped(self, monkeypatch):
-        """The tolerance above must not swallow a genuinely bad secret."""
-        from src import testrail_client as trc
-
-        class _Resp:
-            status_code, ok, text = 401, False, "Authentication failed"
-
-        monkeypatch.setattr(trc.TestRailClient, "_make_session",
-                            lambda self, c: SimpleNamespace(
-                                get=lambda *a, **k: _Resp()))
-        assert trc._account_works(
-            trc.TestRailCredentials("https://x", "u@x", "k")) is False
-
-    def test_the_pacer_follows_the_WORKING_count(self, monkeypatch):
-        """Pacing for four while three answer would push each over its own cap."""
-        from src import testrail_client as trc
-        trc._SESSION_CACHE.clear()
-        creds = [trc.TestRailCredentials("https://x", f"u{i}@x", "k")
-                 for i in range(4)]
-        monkeypatch.setattr(trc, "_credential_sets", lambda: creds)
-        monkeypatch.setattr(trc, "_account_works", lambda c: c.user != "u2@x")
-        monkeypatch.setattr(trc.TestRailClient, "_make_session",
-                            lambda self, c: object())
-        trc._get_client()
-        assert (60 / trc._PACE_INTERVAL) / trc.n_workers() <= trc._effective_limit()
-        trc._SESSION_CACHE.clear()
 
 
 class TestNoImportCanRotInsideATry:
@@ -4011,3 +3827,62 @@ class TestTrekpleisterOwnsItsAutomation:
         raw = pd.DataFrame([_case(suite_id=30122, multi_countries=["IPXL NL"],
                                   **{"status_Automation Status": "Automated"})])
         assert bool(bl._expand_baseline(raw, [rule])["_tool_automated"].all())
+
+
+class TestOneTestRailAccount:
+    """The pool of accounts is gone: measured on 2026-09-26 (four accounts)
+    and 2026-11-11 (three), the download moved ~20 requests/minute IN TOTAL —
+    one account's cap — so TestRail limits the instance, not the user, and the
+    extra accounts bought nothing but 429s."""
+
+    @staticmethod
+    def _secrets(monkeypatch, values):
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc.st, "secrets", values)
+
+    def test_the_main_account_is_all_it_reads(self, monkeypatch):
+        from src import testrail_client as trc
+        self._secrets(monkeypatch, {
+            "TESTRAIL_URL": "https://x/", "TESTRAIL_USER": "a@x", "TESTRAIL_API_KEY": "k",
+            "TESTRAIL_USER_1": "b@x", "TESTRAIL_API_KEY_1": "k1"})
+        creds = trc.TestRailCredentials.from_secrets()
+        assert (creds.base_url, creds.user, creds.api_key) == ("https://x", "a@x", "k")
+
+    def test_missing_or_blank_credentials_say_so(self, monkeypatch):
+        import pytest
+
+        from src import testrail_client as trc
+        self._secrets(monkeypatch, {"TESTRAIL_URL": "https://x"})
+        with pytest.raises(trc.TestRailError):
+            trc.TestRailCredentials.from_secrets()
+        self._secrets(monkeypatch, {"TESTRAIL_URL": "https://x", "TESTRAIL_USER": " ",
+                                    "TESTRAIL_API_KEY": "k"})
+        with pytest.raises(trc.TestRailError):
+            trc.TestRailCredentials.from_secrets()
+
+    def test_concurrent_callers_share_one_client(self, monkeypatch):
+        """The warm-up's suite workers all reach the client at once."""
+        import threading
+
+        from src import testrail_client as trc
+        built: list[int] = []
+        monkeypatch.setattr(trc, "_CLIENT", None)
+        monkeypatch.setattr(trc.TestRailCredentials, "from_secrets",
+                            classmethod(lambda cls: built.append(1)
+                                        or trc.TestRailCredentials("https://x", "a", "k")))
+        monkeypatch.setattr(trc.TestRailClient, "_make_session", lambda self, c: object())
+        seen: list = []
+        threads = [threading.Thread(target=lambda: seen.append(trc._get_client()))
+                   for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert built == [1] and len({id(c) for c in seen}) == 1
+
+    def test_the_pace_is_one_accounts(self):
+        """No multiplier left anywhere in the pacer."""
+        from src import testrail_client as trc
+        trc._repace()
+        assert abs(60 / trc._PACE_INTERVAL
+                   - trc._paced_per_account(trc._effective_limit())) < 1e-9

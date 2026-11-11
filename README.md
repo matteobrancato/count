@@ -243,13 +243,14 @@ fetches every suite in parallel and pre-computes the expansion per scope, so
 switching tabs is instant. The Mobile App scope is deferred — it loads the first
 time someone selects it.
 
-**The reload is bounded by TestRail's API limit, not by the app.** The limit is
-per user and has moved a lot (about 180 requests/minute until August 2026, 5
-from mid-August, rising again since late September). The client learns the
-current figure from TestRail's own 429 responses, pools several accounts
-(`TESTRAIL_USER_1` … `_8`) to multiply it, and paces every request so a reload
-never turns into a storm of rejections. `TESTRAIL_RATE_LIMIT` in the secrets is
-a **ceiling**, not the rate.
+**The reload is bounded by TestRail's API limit, not by the app.** The limit has
+moved a lot (about 180 requests/minute until August 2026, 5 from mid-August, 20
+since late September), and it applies to the instance, not to each user: a
+second account adds nothing (measured in September and November 2026), so the
+app reads one, `TESTRAIL_USER`. The client learns the current figure from
+TestRail's own 429 responses and paces every request so a reload never turns
+into a storm of rejections. `TESTRAIL_RATE_LIMIT` in the secrets is a
+**ceiling**, not the rate.
 
 **Methodology as a single source**
 `src/methodology.py` holds the canonical explanation of every number. It feeds

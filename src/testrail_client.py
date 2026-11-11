@@ -6,7 +6,6 @@ When "next" is null we are done. We follow the next link (relative) until exhaus
 """
 from __future__ import annotations
 
-import itertools
 import logging
 import re
 import threading
@@ -88,9 +87,14 @@ class TestRailError(RuntimeError):
 # starts a second wave over the first, and nothing reaches the cache so the
 # next session pays it all again.  Every request from every thread and session
 # (same process) instead reserves a time slot, so the cold download is
-# deterministic and produces essentially zero 429s.  Round-robin across the
-# pool means consecutive slots land on consecutive accounts, which is what
-# keeps each individual user under its own per-user cap.
+# deterministic and produces essentially zero 429s.
+#
+# ONE account.  Up to 2026-11 the client pooled several (TESTRAIL_USER_1.._8)
+# on the belief that the cap is per user, so N accounts would give N times the
+# budget.  Measured, it is not: four accounts on 2026-09-26 and three on
+# 2026-11-11 both moved ~20 requests/minute IN TOTAL — one account's cap — and
+# the pool, pacing for three times that, spent the download in 429 pauses.  The
+# limit is the instance's (or the IP's), so a second account buys nothing.
 _PACE_LOCK = threading.Lock()
 _PACE_NEXT = 0.0
 _PACE_EPOCH = 0     # bumped by every cooldown; see `_pace`
@@ -132,7 +136,6 @@ _LIMIT_LOCK = threading.Lock()
 _limit_declared = _CEILING_DEFAULT    # the ceiling: secrets, or the default
 _limit_observed: int | None = None    # what a 429 told us in this window
 _probe_target = _SEED_LIMIT           # what we pace at until a 429 speaks
-_pool_size = 1                        # working accounts; set by `_get_client`
 _PACE_INTERVAL = 60.0 / _paced_per_account(_SEED_LIMIT)
 
 # "API Rate Limit Exceeded - 5 per minute maximum allowed. Retry after 57s."
@@ -164,15 +167,14 @@ def _start_probe_window() -> None:
         _limit_observed = None
         _repace()
     logger.warning(
-        "TestRail pacing: probing %d requests/minute per account this download "
+        "TestRail pacing: probing %d requests/minute this download "
         "(last known %d, ceiling %d)", _probe_target, base, _limit_declared)
 
 
 def _repace() -> None:
-    """Recompute the slot interval from (per-account limit × working accounts)."""
+    """Recompute the slot interval from the limit."""
     global _PACE_INTERVAL
-    _PACE_INTERVAL = 60.0 / max(
-        0.1, _paced_per_account(_effective_limit()) * _pool_size)
+    _PACE_INTERVAL = 60.0 / max(0.1, _paced_per_account(_effective_limit()))
 
 
 def _learn_limit(body: str) -> None:
@@ -194,10 +196,10 @@ def _learn_limit(body: str) -> None:
         _limit_observed = told
         _repace()
     logger.warning(
-        "TestRail says the cap is %d requests/minute per account%s — re-pacing "
-        "to %.0f/min across %d worker(s) (slot every %.1fs)",
+        "TestRail says the cap is %d requests/minute%s — re-pacing to %.0f/min "
+        "(slot every %.1fs)",
         told, "" if match else " (unreadable 429: halved)",
-        60 / _PACE_INTERVAL, _pool_size, _PACE_INTERVAL)
+        60 / _PACE_INTERVAL, _PACE_INTERVAL)
 
 
 def _configured_limit() -> int:
@@ -223,15 +225,14 @@ def requests_served() -> int:
 
 
 def rate_summary() -> dict[str, float | int | bool]:
-    """What the pacer is actually doing — for the log and the worker tooltip.
+    """What the pacer is actually doing, for the log.
 
     `learned` says whether `limit_per_account` is a figure TestRail stated in
     a 429 during this window, or only the rate being tried because TestRail
-    has not refused it (yet): the tooltip words the two differently.
+    has not refused it (yet).
     """
     return {
         "limit_per_account": _effective_limit(),
-        "workers": _pool_size,
         "per_minute": 60.0 / _PACE_INTERVAL,
         "slot_seconds": _PACE_INTERVAL,
         "learned": _limit_observed is not None,
@@ -302,7 +303,7 @@ _COOLDOWN_UNTIL = 0.0
 
 
 def cooldown_remaining() -> float:
-    """Seconds until TestRail's rate limit lets the pool send again, else 0."""
+    """Seconds until TestRail's rate limit lets us send again, else 0."""
     return max(0.0, _COOLDOWN_UNTIL - time.time())
 
 
@@ -313,80 +314,29 @@ class TestRailCredentials:
     api_key: str
 
     @classmethod
-    def from_secrets(cls, suffix: str = "") -> "TestRailCredentials":
-        """Read one credential set.  *suffix* selects an extra account:
-        "" is TESTRAIL_USER, "_1" is TESTRAIL_USER_1, and so on."""
+    def from_secrets(cls) -> "TestRailCredentials":
+        """TESTRAIL_URL, TESTRAIL_USER and TESTRAIL_API_KEY from the secrets."""
         try:
             url = st.secrets["TESTRAIL_URL"].rstrip("/")
-            user = st.secrets[f"TESTRAIL_USER{suffix}"]
-            key = st.secrets[f"TESTRAIL_API_KEY{suffix}"]
+            user = st.secrets["TESTRAIL_USER"]
+            key = st.secrets["TESTRAIL_API_KEY"]
         except Exception as exc:
             raise TestRailError(
                 "Missing TestRail secrets. Add TESTRAIL_URL, TESTRAIL_USER, "
                 "TESTRAIL_API_KEY to .streamlit/secrets.toml or the Streamlit Cloud secrets panel."
             ) from exc
         if not str(user).strip() or not str(key).strip():
-            raise TestRailError(f"Empty TestRail credentials for suffix {suffix!r}")
+            raise TestRailError("Empty TestRail credentials: TESTRAIL_USER / TESTRAIL_API_KEY")
         return cls(base_url=url, user=user, api_key=key)
-
-
-# How many extra accounts to look for.  The cap is PER USER, so each working
-# account raises the ceiling by one whole allowance and the cold download
-# divides by the number of them — with the cap now at 5/min that is the only
-# lever left that actually scales.  Discovered, never configured: whatever is
-# filled in on the day is what gets used, so adding an account is a secrets
-# edit and nothing else.
-_MAX_EXTRA_ACCOUNTS = 8
-
-
-def _credential_sets() -> list[TestRailCredentials]:
-    """Every credential set present in secrets: the base one, then _1, _2, …
-
-    Gaps are skipped rather than treated as the end — the accounts arrive one
-    at a time, and a half-filled _3 should not hide a working _4.
-    """
-    out: list[TestRailCredentials] = [TestRailCredentials.from_secrets()]
-    seen = {(out[0].user or "").strip().lower()}
-    for i in range(1, _MAX_EXTRA_ACCOUNTS + 1):
-        try:
-            creds = TestRailCredentials.from_secrets(f"_{i}")
-        except TestRailError:
-            continue
-        # A duplicated user would share one rate-limit budget while we paced as
-        # if it were two — the worst possible outcome, since it looks faster and
-        # 429s instead.
-        if (creds.user or "").strip().lower() in seen:
-            continue
-        seen.add(creds.user.strip().lower())
-        out.append(creds)
-    return out
 
 
 class TestRailClient:
     """Lightweight TestRail client. Instances are cheap — reuse the underlying Session."""
 
-    def __init__(self, creds: TestRailCredentials, timeout: int = 60,
-                 extra: list[TestRailCredentials] | None = None) -> None:
+    def __init__(self, creds: TestRailCredentials, timeout: int = 60) -> None:
         self.creds = creds
         self.timeout = timeout
-        # One authenticated session per ACCOUNT, alternated request by request.
-        # The rate limit is per user, so N accounts give N × the budget — and
-        # round-robin per request (not per suite) is what keeps them level: the
-        # suites differ in size by an order of magnitude, so splitting by suite
-        # would leave one account idle while another queued.
-        self._all_creds = [creds] + list(extra or [])
-        self._sessions: list[requests.Session] = []
-        self._rr = itertools.count()
-        for c in self._all_creds:
-            self._sessions.append(self._make_session(c))
-        self._session = self._sessions[0]      # kept: single-session callers
-
-    @property
-    def n_accounts(self) -> int:
-        return len(self._sessions)
-
-    def _next_session(self) -> requests.Session:
-        return self._sessions[next(self._rr) % len(self._sessions)]
+        self._session = self._make_session(creds)
 
     def _make_session(self, creds: TestRailCredentials) -> requests.Session:
         session = requests.Session()
@@ -422,7 +372,7 @@ class TestRailClient:
     )
     def _get(self, endpoint: str) -> Any:
         _pace()
-        resp = self._next_session().get(self._url(endpoint), timeout=self.timeout)
+        resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         # Rate limit — honour Retry-After (seconds form; RFC 7231 also allows an
         # HTTP-date, which int() can't parse).  THREE attempts, not one: TestRail
         # asks for 41-57s when the window is full and the old 30s cap gave up
@@ -442,7 +392,7 @@ class TestRailClient:
             _pace_cooldown(wait)
             time.sleep(wait)
             _pace()
-            resp = self._next_session().get(self._url(endpoint), timeout=self.timeout)
+            resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         if not resp.ok:
             raise TestRailError(f"GET {endpoint} → {resp.status_code}: {resp.text[:300]}")
         global _REQUESTS_SERVED
@@ -521,129 +471,31 @@ class TestRailClient:
 
 
 # --------------------------------------------------------------------- caching
-# We cache at the *function* level so Streamlit's cache key includes arguments.
-# The actual TestRailClient is rebuilt per call but reuses a module-level Session.
-_SESSION_CACHE: dict[str, TestRailClient] = {}
-_POOL_LOCK = threading.Lock()
-
-
-# (working, configured) from the last pool build.  The UI shows both when they
-# differ: "3 workers" when four are configured means one is being rejected, and
-# without the second number that silence looks like a slow day.
-_POOL_SUMMARY: dict[str, int] = {"working": 0, "configured": 0}
-
-
-def n_workers() -> int:
-    """How many accounts are actually serving requests, 0 before the pool exists.
-
-    Read by the UI: the whole point of the pool is invisible otherwise, and a
-    speed-up nobody can see is a speed-up nobody trusts.
-    """
-    pool = _SESSION_CACHE.get("pool")
-    return pool.n_accounts if pool is not None else 0
-
-
-def n_accounts_configured() -> int:
-    """How many credential sets were FOUND, working or not."""
-    return _POOL_SUMMARY["configured"]
-
-
-def ensure_pool() -> None:
-    """Build the account pool now, so callers can report the real pacing.
-
-    The warm-up's "🔌 Connecting to TestRail…" step used to connect to nothing
-    — the pool was built lazily by the first fetch, several lines later, which
-    meant anything printed before it described a pool of one.
-    """
-    _get_client()
-
-
-def _account_works(creds: TestRailCredentials) -> bool:
-    """One cheap authenticated call.  A credential set that cannot answer would
-    otherwise fail 1/N of every request for the rest of the session, which reads
-    as an intermittent TestRail fault rather than as a bad secret.
-
-    Two deliberate choices here, both learned the hard way:
-
-    * UNPACED.  This is exactly one request on one account, so no per-user cap
-      can be breached — while paying the global slot (now ~14s) for each probe
-      would spend most of a minute before the download even starts.
-    * A 429 counts as WORKING.  The cap is per user, so TestRail had to
-      authenticate the account before it could throttle it: a 429 proves the
-      credentials are good.  Rejecting it dropped healthy accounts whenever the
-      window happened to be closed at startup — which is the likeliest reason a
-      fourth configured account once showed up as "3 of 4 workers".
-    """
-    try:
-        probe = TestRailClient(creds)
-        resp = probe._sessions[0].get(probe._url("get_priorities"), timeout=30)
-        if resp.status_code == 429:
-            _learn_limit(resp.text)
-            return True
-        if resp.ok:
-            return True
-        reason = f"{resp.status_code}: {resp.text[:120]}"
-    except Exception as exc:                                            # noqa: BLE001
-        reason = str(exc)[:120]
-    logger.warning(
-        "TestRail account %s unusable, skipping: %s", creds.user, reason)
-    return False
+# We cache at the *function* level so Streamlit's cache key includes arguments;
+# every cached fetch below goes through the one shared client.
+_CLIENT: TestRailClient | None = None
+_CLIENT_LOCK = threading.Lock()
 
 
 def _get_client() -> TestRailClient:
-    """The shared client, holding one session per WORKING account.
+    """The shared client, built once per process.
 
-    Built once per process: the probe costs one request per account, and the
-    pool size decides the pacing for everything that follows.
+    Double-checked: the warm-up submits up to eight suite workers at once, and
+    they all arrive here before the client exists.
     """
-    global _pool_size, _limit_declared
-    key = "pool"
-    cached = _SESSION_CACHE.get(key)
-    if cached is not None:
-        return cached
-    # Double-checked: the warm-up submits up to 8 suite workers at once and they
-    # all arrive here before the pool exists.  Unguarded, each one probed EVERY
-    # account — 24 wasted requests on a pool of three, paced at the
-    # single-account rate because the pacer had not been widened yet, which is
-    # roughly half a minute of the speed-up spent before any real work started.
-    with _POOL_LOCK:
-        cached = _SESSION_CACHE.get(key)
-        if cached is not None:
-            return cached
-        candidates = _credential_sets()
-        # Probed in parallel: one request each, on distinct accounts, so the
-        # whole pool costs a single round trip instead of one per account.
-        with ThreadPoolExecutor(max_workers=max(1, len(candidates))) as pool:
-            verdicts = list(pool.map(_account_works, candidates))
-        working = [c for c, ok in zip(candidates, verdicts) if ok]
-        if not working:
-            # Same failure as before multi-account: no usable credentials at all.
-            raise TestRailError(
-                "No usable TestRail credentials — check TESTRAIL_USER / "
-                "TESTRAIL_API_KEY (and any _1.._N variants) in the secrets."
-            )
-        _POOL_SUMMARY.update(working=len(working), configured=len(candidates))
-        _pool_size = len(working)
-        _limit_declared = _configured_limit()
-        _repace()
-        # The probe above spent ONE request on EVERY account, deliberately
-        # outside the pacer.  That was free at 180/min; at 5/min it is a fifth
-        # of an account's whole minute, and the download then started into the
-        # very same window — the account saw its probe plus a full minute of
-        # paced traffic and 429'd immediately.  Holding the first paced slot
-        # back by one account-interval pays for the probe out of the window it
-        # actually used.  15s at a cap of 5; under half a second at 180.
-        _pace_cooldown(60.0 / _paced_per_account(_effective_limit()))
-        logger.warning(
-            "TestRail: %d/%d account(s) usable, cap %d req/min each%s, "
-            "ceiling %d%s → %.0f requests/min total (slot every %.1fs)",
-            len(working), len(candidates), _effective_limit(),
-            " (observed from a 429)" if _limit_observed is not None else "",
-            _limit_declared,
-            " (TESTRAIL_RATE_LIMIT)" if _limit_declared != _CEILING_DEFAULT else "",
-            60 / _PACE_INTERVAL, _PACE_INTERVAL)
-        _SESSION_CACHE[key] = TestRailClient(working[0], extra=working[1:])
-        return _SESSION_CACHE[key]
+    global _CLIENT, _limit_declared
+    if _CLIENT is not None:
+        return _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _limit_declared = _configured_limit()
+            _repace()
+            logger.warning(
+                "TestRail: pacing at %.0f requests/minute (cap %d, ceiling %d%s)",
+                60 / _PACE_INTERVAL, _effective_limit(), _limit_declared,
+                " from TESTRAIL_RATE_LIMIT" if _limit_declared != _CEILING_DEFAULT else "")
+            _CLIENT = TestRailClient(TestRailCredentials.from_secrets())
+    return _CLIENT
 
 
 @st.cache_data(show_spinner=False, persist="disk")
@@ -885,14 +737,10 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
         else:
             _warm_failures = 0
         _PREFETCH_IDLE.set()            # release every session following it
-        # What the pool actually achieved, in one line.  Seen live on
-        # 2026-09-26: four accounts, yet ~20 requests a minute IN TOTAL, in
-        # one-minute bursts and stalls — which a per-user cap cannot explain.
-        # This line is how the next log tells whether the accounts still
-        # multiply anything, or whether TestRail now caps the instance.
+        # What the download actually achieved, in one line: the measurement
+        # that showed a second account bought nothing (see the pacer notes).
         secs = max(1.0, time.time() - started)
         sent = _REQUESTS_SERVED - served_at_start
         logger.warning(
-            "prefetch: %d requests in %.0fs = %.1f/min across %d account(s); "
-            "pacer believes %s req/min per account",
-            sent, secs, sent * 60 / secs, _pool_size, _effective_limit())
+            "prefetch: %d requests in %.0fs = %.1f/min; pacer believes %s req/min",
+            sent, secs, sent * 60 / secs, _effective_limit())

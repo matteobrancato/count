@@ -878,18 +878,14 @@ def warmup_cache(on_step=None, on_label=None) -> None:
     # Phase 1 – parallelised API fetch.  These two messages bracket the single
     # (longest) blocking call, so the accurate "Downloading…" line is what shows
     # while it runs.  The ceiling here is TestRail's, not ours: ~44k cases
-    # paginate into ~200 requests, and TestRail's per-user cap decides how long
-    # that takes.  The cap is no longer quoted here: it moves (the pacer learns
-    # it during the download), a figure printed before the download starts
-    # would be a guess, and the live counter in the label is what tells a queue
-    # from a frozen page.  The real pacing is in the server log.
-    step("🔌 Connecting to TestRail…")
-    try:
-        tr.ensure_pool()
-    except Exception:                                                   # noqa: BLE001
-        # Credential failures surface through the fetches themselves, with the
-        # error the user can act on; this step must not become a second one.
-        logger.exception("warmup: could not build the TestRail account pool")
+    # paginate into ~200 requests, and TestRail's cap decides how long that
+    # takes.  The cap is not quoted here: it moves (the pacer learns it during
+    # the download), a figure printed before the download starts would be a
+    # guess, and the live counter in the label is what tells a queue from a
+    # frozen page.  The real pacing is in the server log.  (A "Connecting to
+    # TestRail" step stood here; with one account there is nothing to connect
+    # before the first request, so it only ever claimed a step that did not
+    # happen.)
     step(f"📥 Downloading {len(suite_ids)} test suites across {n_bu} "
          f"Business Units…")
     # Live counter in the status LABEL while the (rate-limit-bound) download
