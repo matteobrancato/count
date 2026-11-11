@@ -504,6 +504,13 @@ def build_rules() -> list[Rule]:
             status_field_label="Automation Status",
             automated_values=list(AUTOMATED_FULL),
             countries_filter=[],
+            # Every Type, like the baseline.  The Mobile App baseline admits a
+            # case by its priority and reads its status whatever its Type, but
+            # these rules kept the Rule default (Regression only): the Overview,
+            # which reads them, showed Marionnaud 0 automated where the Backlog
+            # showed 90, and Watsons Turkey 4 where it showed 6 (2026-11-10).
+            # The same fix ICI, TPS and Trekpleister's website rules already had.
+            type_filter=[],
         ))
 
     # ================================================================ Playwright

@@ -969,6 +969,33 @@ _RUN_MEANING = {
                "production incidents, automated for production.",
 }
 
+# The runs each scope defines.  The Mobile App baseline is priority-based and
+# its sanity runs were never built (`_prod_sanity_data` covers the website and
+# Microservices only), so picking Production Sanity there showed the WEBSITE
+# BUs' rows under a Mobile App heading — seen live on 2026-11-10.  A run that
+# can only show another scope's numbers is not offered.
+_RUNS_BY_SCOPE = {"mobile_app": [RUN_BIG, RUN_SMALL, RUN_SMOKE]}
+
+# The Mobile App's baseline is not the big_regr labels, so the sentence under
+# the picker must not say it is.
+_RUN_MEANING_MAPP = {
+    RUN_BIG:   "Every case with priority High or Highest, on iOS and Android in "
+               "each market of the BU.",
+    RUN_SMOKE: "The subset with priority Highest.",
+}
+
+
+def runs_for(scope: str) -> list[str]:
+    """The runs offered under *scope*."""
+    return _RUNS_BY_SCOPE.get(scope, RUNS)
+
+
+def _run_meaning(run: str, scope: str) -> str:
+    """What *run* is, said in *scope*'s terms."""
+    if scope == "mobile_app" and run in _RUN_MEANING_MAPP:
+        return _RUN_MEANING_MAPP[run]
+    return _RUN_MEANING.get(run, "")
+
 
 # The subset runs' members are cached for the day like the data they come
 # from (cleared with it by ↻ and the daily rollover).  Uncached, every render
@@ -2152,13 +2179,17 @@ def _run_picker(scope: str, popup: bool = False) -> str:
     The window starts on the run the table is on (`_open_bu`) and then goes its
     own way."""
     key = f"bl_run_{scope}" + ("_bu" if popup else "")
+    runs = runs_for(scope)
     # Seeded rather than given as `default`: the window's key is set before the
-    # widget exists, and a widget with both is a warning on every run.
-    st.session_state.setdefault(key, RUN_BIG)
+    # widget exists, and a widget with both is a warning on every run.  A run
+    # this scope does not offer (left from before it was withdrawn) goes back
+    # to the baseline instead of reaching the radio.
+    if st.session_state.get(key) not in runs:
+        st.session_state[key] = RUN_BIG
     with st.container(gap="xxsmall"):
-        run = choice.pick("Run", RUNS, key=key,
+        run = choice.pick("Run", runs, key=key,
                           format_func=lambda r: f"{_RUN_ICONS[r]} {r}")
-        st.caption(_RUN_MEANING.get(run, ""))
+        st.caption(_run_meaning(run, scope))
     return run
 
 
@@ -2238,7 +2269,13 @@ def render(*, pick_bu: bool = True) -> None:
     scope_display = _SCOPE_DISPLAY.get(scope, "Website")
     display = summary[summary["Scope"] == scope_display].copy()
     if display.empty:
-        display = summary.copy()   # safety net: never show a blank table
+        # Never another scope's rows.  This used to fall back to the whole
+        # summary "so the table is never blank": Microservices on Production
+        # Sanity then listed the Website BUs, under the Microservices heading
+        # (seen live, 2026-11-10).  An empty table is honest; a full wrong one
+        # is a number that gets forwarded.
+        st.info(f"No {run} rows for {global_filter.scope_label(scope)} yet.")
+        return
     # "Unknown" (the case is automated nowhere and no status explains the row)
     # is shown only when it occurs, so Total always equals the sum of the
     # columns.

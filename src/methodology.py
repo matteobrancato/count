@@ -51,6 +51,10 @@ with the 80% target. Martech is not in the Overview.
 | 🧩 Microservices | the same labels, on API-type cases | `API` (an API test has no desktop/mobile) |
 | 📱 Mobile App | cases with **Priority High** (No Regression) **or Highest** (Smoke) | **both** platforms, iOS and Android, in **every market** of the BU: one row per case × platform × market |
 
+The Mobile App baseline reads a case's status whatever its TestRail Type, and has
+no Production Sanity or Extended Production Sanity population: those runs are
+offered on the Website and Microservices only.
+
 **How each baseline row is classified**
 
 | Category | Meaning |

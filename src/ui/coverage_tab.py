@@ -608,6 +608,11 @@ def _baseline_like_backlog(
     # baseline (High/Highest × iOS/Android).  Dispatch to the right expansion so
     # the Coverage "baseline" view matches the Backlog tab for every scope.
     is_mapp = bool(rules_bu) and rules_bu[0].scope == "mobile_app"
+    if is_mapp and member_label is not None:
+        # The MAPP expansion has no notion of a sanity label: asked for one, it
+        # returned the whole baseline under the sanity's name.  No population
+        # is the honest answer.
+        return empty
     rows = (bl._expand_mapp_baseline(non_dep, rules_bu) if is_mapp
             else bl._expand_baseline(non_dep, rules_bu,
                                      member_label=member_label))
@@ -816,7 +821,11 @@ _VIEW_PS    = "🚀 Production Sanity"
 _VIEW_EXT   = "🧩 Extended Production Sanity"
 _VIEW_BOTH  = "🔗 Production + Extended Sanity"
 _VIEW_OPTIONS = [_VIEW_REGR, _VIEW_SMOKE, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
-_VIEW_OPTIONS_MAPP = [_VIEW_REGR_MAPP, _VIEW_SMOKE, _VIEW_PS, _VIEW_EXT, _VIEW_BOTH]
+# No sanity views on the Mobile App: its baseline is priority-based and has no
+# sanity population, and those three views showed the WHOLE baseline under a
+# sanity name (Marionnaud: 570 rows, 15.8%, on every one of them — 2026-11-10).
+# The Backlog offers the same runs (`backlog_tab.runs_for`).
+_VIEW_OPTIONS_MAPP = [_VIEW_REGR_MAPP, _VIEW_SMOKE]
 _VIEW_DEFAULT_INDEX = 0                                  # the baseline view
 
 # The sanity views: the label(s) that put a case in each (either of two, for
@@ -852,9 +861,14 @@ def _view_controls(scope: str, bu_choice: str) -> tuple[str, int]:
     exclusion note rides along the per-view description caption below.
     """
     options = _VIEW_OPTIONS_MAPP if scope == "mobile_app" else _VIEW_OPTIONS
+    view_key = f"cov_view_{scope}_{bu_choice}"
+    # A view this scope no longer offers (kept from before it was withdrawn)
+    # must not reach the radio.
+    if view_key in st.session_state and st.session_state[view_key] not in options:
+        del st.session_state[view_key]
     with st.container(gap="xxsmall"):
         view = choice.pick("Coverage view", options, index=_VIEW_DEFAULT_INDEX,
-                           key=f"cov_view_{scope}_{bu_choice}")
+                           key=view_key)
         with st.container(key="cov_gran_row", horizontal=True,
                           vertical_alignment="center", gap="small"):
             st.markdown(
