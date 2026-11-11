@@ -26,7 +26,6 @@ using the same cached data the dashboard renders.
 |---|---|
 | **📋 Backlog** | Every Business Unit side by side on the chosen run (Big No-Regression, Small No-Regression, Smoke — the regression cases with priority Highest —, Production Sanity, Extended Production Sanity — the last with each BU's cases and the Jira bugs they cite): totals, frameworks, outstanding work, Automation save and coverage, with a CSV export. **A click on a Business Unit opens its window** (below) |
 | **🌍 Leakage · All BUs** | Every BU's latest release and trend, and the leaks no automated test covers — the candidates for an extended production suite. Jira and Gemini only — no TestRail request |
-| **🕰️ Previous layout** | The dashboard as it was before the Business Unit window — a BU dropdown and tabs for Detail, Coverage, Leakage, Trend and All BUs — kept to check the new one against. It will be removed (delete `src/ui/classic_view.py` and its line in `app.py`) |
 
 **The Business Unit window** (`ui/bu_popup.py`) holds everything specific to one BU, in four tabs:
 
@@ -132,7 +131,6 @@ app.py                      Streamlit entry point: credential gate, top bar
 │       ├── global_filter.py  Scope switch + the BU last opened, shareable via URL
 │       ├── choice.py         The one pick-one control: a row of radio buttons
 │       ├── bu_popup.py       The Business Unit window and the click that opens it
-│       ├── classic_view.py   The previous layout, kept for comparison
 │       ├── martech_tab.py    Martech's table and BU window
 │       ├── isolation.py      Keeps one failing section from blanking the rest
 │       ├── backlog_tab.py    Backlog tab

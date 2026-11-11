@@ -2172,8 +2172,6 @@ def _run_picker(scope: str, popup: bool = False) -> str:
     share a page.  Under the radios, one line says what the chosen run actually
     is — the same place Coverage describes its view.
 
-    The page's table and the previous layout's Detail tab share one key, so the
-    choice follows you from one to the other (only one of them runs at a time).
     The BU window has a key of its own: it is drawn in the very run that opens
     it, beside the table's picker, and a widget key cannot be on screen twice.
     The window starts on the run the table is on (`_open_bu`) and then goes its
@@ -2240,21 +2238,18 @@ def render_page() -> None:
 
 
 @st.fragment
-def render(*, pick_bu: bool = True) -> None:
+def render() -> None:
     """The Backlog tab: every Business Unit side by side.  A click on a BU opens
-    its window — Detail, Coverage, Leakage, Trend (`bu_popup`).
-
-    *pick_bu* False draws the table as it was before the window existed: rows
-    inert, and the BU taken from the previous layout's own dropdown.  Drawn by
+    its window — Detail, Coverage, Leakage, Trend (`bu_popup`).  Drawn by
     `render_page`, which owns the click."""
     # Taken first, whatever happens below: a BU handed over and not opened (an
     # error before the table) must not open a window on some later run.
-    picked = bu_popup.take_handed_over() if pick_bu else None
+    picked = bu_popup.take_handed_over()
     # Scope drives which baseline we show: Mobile App uses a priority-based
     # baseline (separate pipeline), everything else the big_regr label baseline.
-    scope, bu = global_filter.current()
+    scope, _bu = global_filter.current()
     if scope == "martech":
-        martech_tab.render(picked=picked, pick_bu=pick_bu)
+        martech_tab.render(picked=picked)
         return
     run = _run_picker(scope)
     loaded = _load_run(run, scope)
@@ -2320,8 +2315,7 @@ def render(*, pick_bu: bool = True) -> None:
         # below: a block element collapses against Streamlit's -1rem markdown
         # margin and lands 8px below the legend it should be level with.
         section_title("All Business Units", top=0)
-        if pick_bu:
-            st.caption("Click a Business Unit to open its Detail, Coverage and Leakage.")
+        st.caption("Click a Business Unit to open its Detail, Coverage and Leakage.")
     # Native horizontal flex row: legend and CSV share one optically centred
     # line, right-aligned against the table's right edge.
     with c_meta, st.container(
@@ -2347,8 +2341,8 @@ def render(*, pick_bu: bool = True) -> None:
         )
     st.markdown(_summary_table_html(
         display, num_cols,
-        selected_bu=global_filter.opened(scope) if pick_bu else bu,
-        saves=saves, save_unit=save_unit, clickable=pick_bu),
+        selected_bu=global_filter.opened(scope),
+        saves=saves, save_unit=save_unit, clickable=True),
         unsafe_allow_html=True)
     if picked:
         _open_bu(scope, picked, run)

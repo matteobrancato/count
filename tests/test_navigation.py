@@ -18,7 +18,7 @@ import streamlit as st
 
 from src import freshness, martech
 from src.ui import backlog_tab as bl
-from src.ui import bu_popup, classic_view, isolation, martech_tab
+from src.ui import bu_popup, isolation, martech_tab
 from src.ui import global_filter as gf
 
 NUM = ["Total", "Automated", "Backlog"]
@@ -191,42 +191,25 @@ class TestTableAndWindowAgree:
         fn = app._SECTIONS[0][1]
         assert (fn.__module__, fn.__name__) == ("src.ui.backlog_tab", "render_page")
 
-    def test_the_inert_table_takes_its_bu_from_the_dropdown(self):
-        src = inspect.getsource(bl.render)
-        assert "global_filter.opened(scope) if pick_bu else bu" in src
-        assert inspect.signature(bl.render).parameters["pick_bu"].default is True
+    def test_the_table_is_always_clickable(self):
+        """Only the previous layout drew it inert, and that layout is gone."""
+        assert "pick_bu" not in inspect.signature(bl.render).parameters
+        assert "clickable=True" in inspect.getsource(bl.render)
 
     def test_martech_is_drawn_by_its_own_module(self):
-        assert "martech_tab.render(picked=picked, pick_bu=pick_bu)" in inspect.getsource(bl.render)
+        assert "martech_tab.render(picked=picked)" in inspect.getsource(bl.render)
 
 
 # ── the page ─────────────────────────────────────────────────────────────────
 class TestPage:
-    def test_the_tabs_are_the_table_the_cross_bu_view_and_the_old_layout(self):
+    def test_the_tabs_are_the_table_and_the_cross_bu_view(self):
         import app
         labels = [label for label, _fn, _anim in app._SECTIONS]
         assert labels[0] == "📋 Backlog"
-        assert labels[-1].startswith("🕰️")
-        assert any("All BUs" in label for label in labels)
+        assert len(labels) == 2 and "All BUs" in labels[1]
+        assert not any("Previous" in label for label in labels)
         for gone in ("Detail", "Coverage", "Trend"):
             assert not any(gone in label for label in labels), gone    # in the window now
-
-    def test_the_old_layout_keeps_all_six_of_its_tabs(self):
-        assert [label for label, _fn, _anim in classic_view._SECTIONS] == [
-            "📋 Backlog", "🔎 Detail", "📐 Coverage", "🐞 Leakage", "📈 Trend", "🌍 All BUs"]
-        assert all(callable(fn) for _l, fn, _a in classic_view._SECTIONS)
-
-    def test_the_old_layout_follows_its_dropdown(self, monkeypatch):
-        st.session_state.clear()
-        monkeypatch.setattr(st, "query_params", {}, raising=False)
-        st.session_state["classic_bu_website"] = "Drogas"
-        classic_view._follow("website", "classic_bu_website")
-        assert gf.opened("website") == "Drogas"
-        assert gf.current() == ("website", "Drogas")
-        st.session_state.clear()
-
-    def test_the_old_layout_draws_the_inert_table(self):
-        assert "backlog_tab.render(pick_bu=False)" in inspect.getsource(classic_view)
 
     def test_there_is_no_scope_specific_dropdown_any_more(self):
         assert "selectbox" not in inspect.getsource(gf.render)

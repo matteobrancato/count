@@ -102,7 +102,7 @@ def _table_html(summary: pd.DataFrame, selected_bu: str, clickable: bool) -> str
             f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
-def render(*, picked: str | None = None, pick_bu: bool = True) -> None:
+def render(*, picked: str | None = None) -> None:
     """The Backlog tab under the Martech scope.  *picked* is the BU whose row was
     clicked on this run (already recorded as the opened one by the page)."""
     scope, _bu = global_filter.current()
@@ -116,8 +116,7 @@ def render(*, picked: str | None = None, pick_bu: bool = True) -> None:
     c_title, c_meta = st.columns([3, 4], vertical_alignment="center")
     with c_title, st.container(gap="xxsmall"):
         section_title("All Business Units", top=0)
-        if pick_bu:
-            st.caption("Click a Business Unit to see its runs, statuses and tests.")
+        st.caption("Click a Business Unit to see its runs, statuses and tests.")
     with c_meta, st.container(key="summary_export", horizontal=True,
                               vertical_alignment="center",
                               horizontal_alignment="right", gap="small"):
@@ -130,8 +129,8 @@ def render(*, picked: str | None = None, pick_bu: bool = True) -> None:
             "⬇ CSV", summary.to_csv(index=False).encode("utf-8"),
             file_name="martech_backlog.csv", mime="text/csv",
             help="Download the table above, as a CSV.")
-    st.markdown(_table_html(summary, global_filter.opened(scope) if pick_bu
-                            else "", pick_bu), unsafe_allow_html=True)
+    st.markdown(_table_html(summary, global_filter.opened(scope), True),
+                unsafe_allow_html=True)
     plan = data["plan"]
     st.markdown(
         f'<span style="font-size:12px;color:{COLORS["muted"]}">Read from the plan '

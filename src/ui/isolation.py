@@ -1,6 +1,6 @@
 """Run one section's renderer so that its failure stays in its own place.
 
-Shared by the main tab, the Business Unit window and the previous layout: each
+Shared by the main tabs and the Business Unit window: each
 used to need its own try/except, or a single failing section blanked everything
 drawn after it.  Here the section catches its own failure, logs it with the
 traceback and shows it where it happened — the rest of the page stays usable.

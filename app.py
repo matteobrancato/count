@@ -21,7 +21,6 @@ from src.methodology import METHODOLOGY_MD  # noqa: E402
 from src.ui import (  # noqa: E402
     backlog_tab,
     chat_assistant,
-    classic_view,
     data_quality,
     global_filter,
     isolation,
@@ -269,7 +268,6 @@ def _render_isolated(render_fn, label: str, anim_key: str = "") -> None:
 _SECTIONS = [
     ("📋 Backlog",              backlog_tab.render_page,    "backlog_anim"),
     ("🌍 Leakage · All BUs",    leakage_tab.render_all_bus, ""),
-    ("🕰️ Previous layout",      classic_view.render,        ""),
 ]
 _LABELS = [label for label, _fn, _anim in _SECTIONS]
 
