@@ -650,7 +650,7 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 }}
 .bl-summary th {{
     text-align: right;
-    padding: 9px 10px;
+    padding: 9px 8px;
     font-size: 10.5px;
     font-weight: 700;
     color: {c['muted']};
@@ -670,7 +670,9 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
 }}
 .bl-summary td {{
     text-align: right;
-    padding: 11px 10px;
+    /* 8px a side, not 10: at a 1280px window the twelve columns overflowed by
+       ~30px and the scrollbar hid the Coverage column — the one read first. */
+    padding: 11px 8px;
     color: {c['text']};
     border-bottom: 1px solid {c['grid']};
     white-space: nowrap;   /* numbers must never wrap */
@@ -761,7 +763,7 @@ a:hover {{ color: {c['brand_strong']}; text-decoration: underline; }}
     display: flex;
     align-items: center;
     gap: 8px;
-    min-width: 118px;
+    min-width: 104px;   /* still wider than "incl. Partially 100.0%" below it */
 }}
 .bl-summary .cov-track {{
     flex: 1;
