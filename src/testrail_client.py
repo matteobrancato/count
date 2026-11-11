@@ -224,22 +224,6 @@ def requests_served() -> int:
     return _REQUESTS_SERVED
 
 
-def rate_summary() -> dict[str, float | int | bool]:
-    """What the pacer is actually doing, for the log.
-
-    `learned` says whether `limit_per_account` is a figure TestRail stated in
-    a 429 during this window, or only the rate being tried because TestRail
-    has not refused it (yet).
-    """
-    return {
-        "limit_per_account": _effective_limit(),
-        "per_minute": 60.0 / _PACE_INTERVAL,
-        "slot_seconds": _PACE_INTERVAL,
-        "learned": _limit_observed is not None,
-        "ceiling": _limit_declared,
-    }
-
-
 # ── single-flight ─────────────────────────────────────────────────────────────
 # st.cache_data does NOT deduplicate concurrent MISSES: when several sessions
 # hit the same cold key together (e.g. the user refreshes during the first

@@ -88,8 +88,15 @@ class TestReleases:
         assert lk.group_for_bu("Trekpleister") is None
 
     def test_latest_released_is_the_default(self):
+        """The picker's first entry — and the picker reads this very list."""
+        import inspect
+
+        from src.ui import leakage_tab
         rels = lk.releases_from_versions(EE_VERSIONS, EE.release_pattern)
-        assert lk.latest_released(rels).name == "EE_SAP_Release_2026Q3.Sept"
+        released = lk.released_newest_first(rels)
+        assert released[0].name == "EE_SAP_Release_2026Q3.Sept"
+        assert all(r.released and r.date for r in released)
+        assert "lk.released_newest_first(rels)" in inspect.getsource(leakage_tab._pick_release)
 
 
 class TestWindows:

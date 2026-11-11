@@ -2877,7 +2877,7 @@ class TestRateLimitPolicy:
         trc._learn_limit('{"error":"API Rate Limit Exceeded - 20 per minute '
                          'maximum allowed. Retry after 34 seconds."}')
         assert trc._effective_limit() == 20
-        assert trc.rate_summary()["learned"] is True
+        assert trc._limit_observed == 20
 
     def test_an_unreadable_429_halves_the_pace_instead_of_repeating_it(
             self, monkeypatch):

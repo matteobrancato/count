@@ -364,7 +364,7 @@ def _models_panel() -> None:
 def _pick_release(group: lk.Group, rels: list[lk.Release]):
     """(release or None, the column where the export button goes)."""
     by_name = {r.name: r for r in rels}
-    released = [r for r in reversed(rels) if r.released and r.date]   # newest first
+    released = lk.released_newest_first(rels)
     planned = [r for r in rels if not r.released]                     # soonest first
     c_kind, c_rel, c_export = st.columns([1.8, 3.0, 0.9], vertical_alignment="center")
     with c_kind:

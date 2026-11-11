@@ -147,9 +147,10 @@ def releases(group: Group) -> list[Release]:
                                   group.release_pattern)
 
 
-def latest_released(rels: list[Release]) -> Release | None:
-    done = [r for r in rels if r.released and r.date]
-    return done[-1] if done else None
+def released_newest_first(rels: list[Release]) -> list[Release]:
+    """The releases already out, newest first: the release picker's list, and
+    its first entry is the default."""
+    return [r for r in reversed(rels) if r.released and r.date]
 
 
 @dataclass(frozen=True)
