@@ -201,8 +201,9 @@ class TestAgainstAPlainRestatement:
             cat = "not_applicable"
         own = td if device == "Desktop" else tm
         other = tm if device == "Desktop" else td
-        not_taken = lambda v: (not blank(v) and v not in cls.AUTO | {"Automation not applicable"}
-                               and not tbu(v) and not ip(v))
+        def not_taken(v):
+            return (not blank(v) and v not in cls.AUTO | {"Automation not applicable"}
+                    and not tbu(v) and not ip(v))
         if not blank(own):
             if own == "Automation not applicable":
                 cat = "not_applicable"

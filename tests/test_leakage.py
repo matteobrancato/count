@@ -184,7 +184,8 @@ class TestRatios:
         13.5% and 6.7%.  Jira holds 13 Defects: one predates the previous
         release and is left out, exactly as the report left it out."""
         since = date(2026, 3, 16)
-        at = lambda d: datetime.combine(d, datetime.min.time(), timezone.utc)
+        def at(d):
+            return datetime.combine(d, datetime.min.time(), timezone.utc)
         rows = ([{"type": "Bug", "status": "Done", "created": at(date(2026, 3, 20))}] * 60
                 + [{"type": "Bug", "status": "Cancelled", "created": at(date(2026, 1, 5))}] * 17
                 + [{"type": "Defect", "status": "Done", "created": at(date(2026, 4, 2))}] * 12

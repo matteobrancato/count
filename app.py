@@ -13,10 +13,12 @@ import deploy_guard
 # previous code, or the new app.py runs against them (see deploy_guard).
 deploy_guard.reload_after_deploy()
 
-from src import freshness
-from src import testrail_client as tr
-from src.methodology import METHODOLOGY_MD
-from src.ui import (
+# E402 on purpose: these imports MUST follow the guard, or a deploy runs the new
+# app.py against the old src/ modules (see deploy_guard).
+from src import freshness  # noqa: E402
+from src import testrail_client as tr  # noqa: E402
+from src.methodology import METHODOLOGY_MD  # noqa: E402
+from src.ui import (  # noqa: E402
     backlog_tab,
     chat_assistant,
     classic_view,
@@ -27,7 +29,7 @@ from src.ui import (
     overview_tab,
     styles,
 )
-from src.ui.styles import COLORS
+from src.ui.styles import COLORS  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
