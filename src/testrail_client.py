@@ -304,6 +304,25 @@ def _pace_cooldown(seconds: float) -> None:
         _S.cooldown_until = max(_S.cooldown_until, time.time() + seconds)
 
 
+# How long ONE request sits out TestRail's refusals before it gives up.  Long
+# on purpose: giving up loses the suite's pages fetched so far, while waiting
+# loses nothing — the loader shows the pause, so it never reads as a hang.
+_RATE_LIMIT_PATIENCE = 30 * 60
+_RETRY_BODY_RE = re.compile(r"retry after\s+(\d+)\s*s", re.I)
+
+
+def _retry_after(resp) -> float:
+    """Seconds TestRail asks us to wait: the Retry-After header (seconds form;
+    RFC 7231 also allows an HTTP-date, which int() can't parse), else the
+    "Retry after 49 seconds" in the body, else 10.  Capped at 60 so a hostile
+    or buggy header cannot stall a worker thread on a single wait."""
+    try:
+        return float(min(int(resp.headers.get("Retry-After")), 60))
+    except (TypeError, ValueError):
+        match = _RETRY_BODY_RE.search(getattr(resp, "text", "") or "")
+        return float(min(int(match.group(1)), 60)) if match else 10.0
+
+
 def cooldown_remaining() -> float:
     """Seconds until TestRail's rate limit lets us send again, else 0.
 
@@ -379,24 +398,25 @@ class TestRailClient:
     def _get(self, endpoint: str) -> Any:
         _pace()
         resp = self._session.get(self._url(endpoint), timeout=self.timeout)
-        # Rate limit — honour Retry-After (seconds form; RFC 7231 also allows an
-        # HTTP-date, which int() can't parse).  THREE attempts, not one: TestRail
-        # asks for 41-57s when the window is full and the old 30s cap gave up
-        # before it reopened, turning a wait into a failed load.  Capped so a
-        # hostile or buggy header cannot stall a worker thread indefinitely.
-        for _ in range(3):
-            if resp.status_code != 429:
-                break
+        # A 429 means "wait", never "fail".  It used to be retried three times
+        # and then raised — which threw away the WHOLE suite download, every
+        # page already fetched included, to be started again from page one.
+        # When something else on the instance uses the shared quota (2026-11-18:
+        # the first request after a reboot was already refused) three refusals
+        # in a row are the norm, so the cold load made no progress at all: 0 of
+        # 25 downloads after an hour.  Now each request waits as long as TestRail
+        # asks, up to `_RATE_LIMIT_PATIENCE` of waiting in total, so every
+        # successful request is progress kept.
+        waited = 0.0
+        while resp.status_code == 429 and waited < _RATE_LIMIT_PATIENCE:
             # The body names the real cap.  Reading it here is what stops the
             # next outage: whatever TestRail moves the number to, the pacer
             # follows within one request instead of within one commit.
             _learn_limit(resp.text)
-            try:
-                wait = min(int(resp.headers.get("Retry-After", "10")), 60)
-            except ValueError:
-                wait = 10
+            wait = _retry_after(resp)
             _pace_cooldown(wait)
             time.sleep(wait)
+            waited += max(wait, 1.0)
             _pace()
             resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         if not resp.ok:

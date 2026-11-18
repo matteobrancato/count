@@ -3087,6 +3087,58 @@ class TestRateLimitPolicy:
         assert sleeps == [60]
 
 
+class TestA429IsAWaitNeverAFailure:
+    """2026-11-18: with the instance's quota used by something else, three 429s
+    in a row were the norm, the request raised, and the suite's pages fetched
+    so far were thrown away — 0 of 25 downloads after an hour."""
+
+    @staticmethod
+    def _client(monkeypatch, seq, sleeps):
+        from src import testrail_client as trc
+        monkeypatch.setattr(trc.time, "sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr(trc, "_pace", lambda: None)
+        monkeypatch.setattr(trc, "_pace_cooldown", lambda s: None)
+        monkeypatch.setattr(trc, "_learn_limit", lambda body: None)
+        client = trc.TestRailClient.__new__(trc.TestRailClient)
+        client._session = SimpleNamespace(get=lambda *a, **k: seq.pop(0))
+        client.timeout = 5
+        client._url = lambda e: e
+        return trc, client
+
+    class _Resp:
+        def __init__(self, code, retry="50", text="{}"):
+            self.status_code, self.ok = code, code == 200
+            self.headers = {"Retry-After": retry} if retry else {}
+            self.text = text
+
+        def json(self):
+            return {"ok": True}
+
+    def test_ten_refusals_in_a_row_are_waited_out(self, monkeypatch):
+        sleeps: list[float] = []
+        seq = [self._Resp(429)] * 10 + [self._Resp(200)]
+        _trc, client = self._client(monkeypatch, seq, sleeps)
+        assert client._get("get_cases/1") == {"ok": True}
+        assert sleeps == [50] * 10
+
+    def test_patience_still_ends(self, monkeypatch):
+        sleeps: list[float] = []
+        seq = [self._Resp(429)] * 1000
+        trc, client = self._client(monkeypatch, seq, sleeps)
+        with pytest.raises(trc.TestRailError):
+            client._get("get_cases/1")
+        assert sum(sleeps) >= trc._RATE_LIMIT_PATIENCE
+        assert len(sleeps) <= trc._RATE_LIMIT_PATIENCE / 50 + 1
+
+    def test_the_wait_comes_from_the_body_without_a_header(self, monkeypatch):
+        sleeps: list[float] = []
+        body = '{"error":"API Rate Limit Exceeded - 20 per minute maximum allowed. Retry after 49 seconds."}'
+        seq = [self._Resp(429, retry=None, text=body), self._Resp(200)]
+        _trc, client = self._client(monkeypatch, seq, sleeps)
+        client._get("get_cases/1")
+        assert sleeps == [49]
+
+
 class TestCasePaginationAsksOnlyForWhatExists:
     """`get_cases` is the hot path — every number on the dashboard comes out of
     it — and it used to speculate five pages ahead, awaiting the whole batch
