@@ -1305,6 +1305,42 @@ class TestDeferredTileDownloads:
         assert writer()                          # must still produce the file
 
 
+class TestAutomatedProdIsAutomated:
+    """"Automated Prod" is an automated case that also runs in production sanity
+    (Matteo, 2026-11-11).  The Java rules of seven BUs left it out while the
+    Backlog baseline kept it in, so such a case read Partially Automated."""
+
+    JAVA = ("KV JAVA", "TKP JAVA", "IPXL JAVA", "SD JAVA", "SV JAVA",
+            "TPS JAVA", "DRG ALL")
+
+    def test_one_list_for_every_rule_and_the_baseline(self):
+        for rule in br.ALL_RULES:
+            assert set(rule.automated_values) == set(bl._STATUS_AUTO), rule.name
+        assert "Automated Prod" in bl._STATUS_AUTO
+
+    @staticmethod
+    def _registry(field_label):
+        from src.field_resolver import FieldMeta, FieldRegistry
+        values = {1: "Automated", 2: "Automated Prod", 3: "Not automated"}
+        meta = FieldMeta(system_name="custom_status", label=field_label, type_id=6,
+                         values_by_id=values,
+                         ids_by_label={v.lower(): k for k, v in values.items()})
+        return FieldRegistry(fields_by_label={field_label.lower(): meta},
+                             fields_by_system={"custom_status": meta})
+
+    @pytest.mark.parametrize("name", JAVA)
+    def test_each_java_rule_admits_an_automated_prod_case(self, name, monkeypatch):
+        rule = next(r for r in br.ALL_RULES if r.name == name)
+        assert rule.framework == "java" and not rule.labels_filter
+        monkeypatch.setattr(eng, "_is_deprecated", lambda case, reg: False)
+        monkeypatch.setattr(eng, "_get_country_tokens",
+                            lambda case, reg, fld, pid=None: list(rule.countries_filter))
+        reg = self._registry(rule.status_field_label)
+        prod, _ = eng._rule_matches({"custom_status": 2}, rule, reg, project_id=1)
+        manual, _ = eng._rule_matches({"custom_status": 3}, rule, reg, project_id=1)
+        assert prod and not manual
+
+
 class TestWtrTestimCountryFallback:
     """Reconciling Watsons Turkey against a TestRail export (2026-09): eight
     cases read Automated UAT on Testim with "Testim Country Coverage" left

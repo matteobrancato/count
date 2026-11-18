@@ -11,9 +11,12 @@ Framework = Literal["java", "testim_desktop", "testim_mobile", "mobile_app",
 Scope = Literal["website", "mobile_app", "next_gen"]
 
 # --------------------------------------------------------------------- constants
-AUTOMATED_JAVA       = ["Automated", "Automated DEV", "Automated UAT"]
-AUTOMATED_TESTIM     = ["Automated", "Automated DEV", "Automated UAT", "Automated Prod"]
-AUTOMATED_FULL       = ["Automated", "Automated DEV", "Automated UAT", "Automated Prod"]
+# The status values that mean "a script exists" — ONE list, read by every rule
+# and by the Backlog baseline (`backlog_tab._STATUS_AUTO`).  "Automated Prod" is
+# an automated case that also runs in production sanity (Matteo, 2026-11-11).
+# The Java rules used to leave it out while the baseline kept it in, so such a
+# case read Partially Automated on seven BUs; two lists could drift, one cannot.
+AUTOMATED_VALUES = ("Automated", "Automated DEV", "Automated UAT", "Automated Prod")
 
 # Canonical field labels (copy-paste from TestRail Customizations screenshot)
 # The TestRail label that marks a Playwright test.  Defined here, next to the
@@ -147,7 +150,7 @@ class Rule:
     framework: Framework
     suite_id: int
     status_field_label: str
-    automated_values:    list[str]    = field(default_factory=lambda: list(AUTOMATED_TESTIM))
+    automated_values:    list[str]    = field(default_factory=lambda: list(AUTOMATED_VALUES))
     countries_filter:    list[str]    = field(default_factory=list)
     country_labels:      dict[str,str]= field(default_factory=dict)
     implicit_country:    str | None   = None
@@ -185,7 +188,7 @@ def _testim_pair(
         type_filter = []  # No type restriction — big_regr labels define the baseline
     shared = dict(
         bu=bu, scope=scope, suite_id=suite_id,
-        automated_values=list(AUTOMATED_TESTIM),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=list(countries),
         country_labels=dict(country_labels or {}),
         implicit_country=implicit_country,
@@ -217,7 +220,7 @@ def build_rules() -> list[Rule]:
         name="KV JAVA", bu="Kruidvat", scope="website", framework="java",
         suite_id=KV_SUITE,
         status_field_label="Automation Status KV SPR",
-        automated_values=list(AUTOMATED_JAVA),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=KV_TOKENS,
         country_labels=KV_LABELS,
         # multi_countries is the correct field for Java (default — no override needed)
@@ -235,7 +238,7 @@ def build_rules() -> list[Rule]:
         name="TKP JAVA", bu="Trekpleister", scope="website", framework="java",
         suite_id=KV_SUITE,
         status_field_label="Automation Status TP",
-        automated_values=list(AUTOMATED_JAVA),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=TKP_TOKENS,
         country_labels=TKP_LABELS,
         implicit_country="NL",
@@ -271,7 +274,7 @@ def build_rules() -> list[Rule]:
         name="IPXL JAVA", bu="ICI Paris XL", scope="website", framework="java",
         suite_id=IPXL_SUITE,
         status_field_label="Automation Status",   # generic field — ICI cases don't use "Automation Status ICI"
-        automated_values=list(AUTOMATED_JAVA),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=IPXL_TOKENS,
         country_labels=IPXL_LABELS,
         type_filter=[],   # no type restriction — cases are not typed as Regression in TestRail
@@ -324,10 +327,7 @@ def build_rules() -> list[Rule]:
         name="MRN JAVA", bu="Marionnaud", scope="website", framework="java",
         suite_id=MRN_SUITE,
         status_field_label="Automation Status",
-        # AUTOMATED_FULL, not AUTOMATED_JAVA: it is now the SAME field as
-        # Playwright's, and one value on one field cannot mean automated for
-        # one framework and backlog for the other.
-        automated_values=list(AUTOMATED_FULL),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=MRN_TOKENS,
         country_labels=dict(MRN_ALL_LABELS),
         labels_filter=[JAVA_LABEL],
@@ -339,7 +339,7 @@ def build_rules() -> list[Rule]:
         name="MRN PLAYWRIGHT", bu="Marionnaud", scope="website", framework="playwright",
         suite_id=MRN_SUITE,
         status_field_label="Automation Status",
-        automated_values=list(AUTOMATED_FULL),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=MRN_TOKENS,
         country_labels=dict(MRN_ALL_LABELS),
         labels_filter=[PLAYWRIGHT_LABEL],
@@ -354,7 +354,7 @@ def build_rules() -> list[Rule]:
         name="SD JAVA", bu="Superdrug", scope="website", framework="java",
         suite_id=SD_SUITE,
         status_field_label="Automation Status",
-        automated_values=list(AUTOMATED_JAVA),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=["SD"],
         country_labels={"SD": "GB"},
         implicit_country="GB",
@@ -370,7 +370,7 @@ def build_rules() -> list[Rule]:
         name="SV JAVA", bu="Savers", scope="website", framework="java",
         suite_id=SV_SUITE,
         status_field_label="Automation Status",
-        automated_values=list(AUTOMATED_JAVA),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=["SV"],
         country_labels={"SV": "GB"},
         implicit_country="GB",
@@ -389,7 +389,7 @@ def build_rules() -> list[Rule]:
         name="TPS JAVA", bu="The Perfume Shop", scope="website", framework="java",
         suite_id=TPS_SUITE,
         status_field_label="Automation Status",   # generic field — TPS cases use the standard status
-        automated_values=list(AUTOMATED_JAVA),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=TPS_TOKENS,
         country_labels=TPS_LABELS,
         # No type restriction, like ICI.  The Rule default is Regression-only,
@@ -459,7 +459,7 @@ def build_rules() -> list[Rule]:
         name="DRG ALL", bu="Drogas", scope="website", framework="java",
         suite_id=DRG_SUITE,
         status_field_label="Automation Status",   # generic field — DRG cases use the standard status
-        automated_values=list(AUTOMATED_JAVA),
+        automated_values=list(AUTOMATED_VALUES),
         countries_filter=DRG_TOKENS,
         country_labels=DRG_LABELS,
     ))
@@ -477,7 +477,7 @@ def build_rules() -> list[Rule]:
         name="NEXTGEN ALL", bu="Microservices", scope="next_gen", framework="java",
         suite_id=NEXTGEN_SUITE,
         status_field_label="Automation Status",
-        automated_values=list(AUTOMATED_FULL),
+        automated_values=list(AUTOMATED_VALUES),
         type_filter=["API"],
         countries_filter=list(ALL_COUNTRY_TOKENS.keys()),
         country_labels=dict(ALL_COUNTRY_TOKENS),
@@ -502,7 +502,7 @@ def build_rules() -> list[Rule]:
             name=f"{bu} MOBILE APP", bu=bu, scope="mobile_app", framework="mobile_app",
             suite_id=suite_id,
             status_field_label="Automation Status",
-            automated_values=list(AUTOMATED_FULL),
+            automated_values=list(AUTOMATED_VALUES),
             countries_filter=[],
             # Every Type, like the baseline.  The Mobile App baseline admits a
             # case by its priority and reads its status whatever its Type, but
@@ -546,7 +546,7 @@ def build_rules() -> list[Rule]:
             name=f"{bu} PLAYWRIGHT", bu=bu, scope="website", framework="playwright",
             suite_id=suite_id,
             status_field_label="Automation Status",
-            automated_values=list(AUTOMATED_FULL),
+            automated_values=list(AUTOMATED_VALUES),
             countries_filter=list(tokens),
             country_labels=dict(labels_map),
             labels_filter=[PLAYWRIGHT_LABEL],

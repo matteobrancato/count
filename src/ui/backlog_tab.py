@@ -61,6 +61,7 @@ from .. import automation_save, jira_client
 from .. import testrail_client as tr
 from ..bu_rules import (
     ALL_RULES,
+    AUTOMATED_VALUES,
     EXT_PROD_SANITY_LABEL,
     MAPP_MARKETS,
     MAPP_PLATFORMS,
@@ -103,9 +104,9 @@ _LABEL_PROD_SANITY = PROD_SANITY_LABEL
 # Extended Production Sanity: one more independent baseline, built the same way.
 _LABEL_EXT_PROD_SANITY = EXT_PROD_SANITY_LABEL
 
-_STATUS_AUTO: set[str] = {
-    "Automated", "Automated DEV", "Automated UAT", "Automated Prod",
-}
+# The rules' own list, not a copy: a second list is how "Automated Prod" came to
+# mean automated here and not in the Java rules.
+_STATUS_AUTO: frozenset[str] = frozenset(AUTOMATED_VALUES)
 _STATUS_NA: set[str] = {
     "Automation not applicable",
 }
@@ -600,7 +601,7 @@ def _expand_mapp_baseline(raw: pd.DataFrame, rules: list) -> pd.DataFrame:
         backlog_mask |= (s.notna() & ~s.isin(_STATUS_AUTO | _STATUS_NA) & (s != "")
                          & ~is_tbu & ~is_ip)
 
-    # The automated statuses are the rule's own (`AUTOMATED_FULL`), so this is
+    # The automated statuses are the rule's own (`AUTOMATED_VALUES`), so this is
     # exactly what the automated set decides for these cases.
     auto_mask = pd.Series(False, index=raw.index)
     for col in status_cols:
