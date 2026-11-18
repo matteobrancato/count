@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urljoin
 
@@ -95,9 +97,45 @@ class TestRailError(RuntimeError):
 # 2026-11-11 both moved ~20 requests/minute IN TOTAL — one account's cap — and
 # the pool, pacing for three times that, spent the download in 429 pauses.  The
 # limit is the instance's (or the IP's), so a second account buys nothing.
-_PACE_LOCK = threading.Lock()
-_PACE_NEXT = 0.0
-_PACE_EPOCH = 0     # bumped by every cooldown; see `_pace`
+#
+# ONE pacer per PROCESS, not per module.  A deploy drops every src module and
+# imports it again (deploy_guard.py), but a download already running keeps the
+# module it started with — so with the pacer in module globals a deploy during
+# the morning's cold load left TWO pacers on one TestRail quota: the old
+# download at 17/min, the new one probing at 34/min, each blind to the other's
+# 429s.  On 2026-11-18 that held the load at ~1 request a minute for a quarter
+# of an hour.  Everything that says how fast this process may talk to TestRail
+# — slots, cooldown, the learned cap, the request count, the single-flight
+# locks — therefore lives on `sys`, which is never unloaded, and every version
+# of this module shares it.  (The client and its HTTP session stay per module:
+# a new deploy's code must not run on an old deploy's objects.)
+_STATE_ATTR = "_count_testrail_state"
+
+
+def _shared_state() -> SimpleNamespace:
+    """The process-wide pacer state, created once and extended, never reset.
+
+    A field a later deploy adds is filled in with its default, so new code
+    never trips over a state object an older version created.
+    """
+    state = sys.__dict__.setdefault(_STATE_ATTR, SimpleNamespace())
+    defaults = {
+        "pace_lock": threading.Lock, "pace_next": lambda: 0.0,
+        "pace_epoch": lambda: 0,             # bumped by every cooldown; see `_pace`
+        "cooldown_until": lambda: 0.0,
+        "limit_lock": threading.Lock,
+        "limit_declared": lambda: _CEILING_DEFAULT,   # the ceiling: secrets, or default
+        "limit_observed": lambda: None,      # what a 429 told us in this window
+        "probe_target": lambda: _SEED_LIMIT,  # what we pace at until a 429 speaks
+        "pace_interval": lambda: 60.0 / _paced_per_account(_SEED_LIMIT),
+        "stats_lock": threading.Lock, "requests_served": lambda: 0,
+        "sf_guard": threading.Lock, "sf_locks": dict,
+    }
+    for name, make in defaults.items():
+        if not hasattr(state, name):
+            setattr(state, name, make())
+    return state
+
 
 # The CEILING: the pacer never asks for more than this, whatever it learns.
 # 180 is the level TestRail enforced before August 2026, and the one Support
@@ -132,11 +170,7 @@ def _paced_per_account(limit: int) -> float:
     return max(limit * 0.5, min(limit * _HEADROOM, limit - 1.0))
 
 
-_LIMIT_LOCK = threading.Lock()
-_limit_declared = _CEILING_DEFAULT    # the ceiling: secrets, or the default
-_limit_observed: int | None = None    # what a 429 told us in this window
-_probe_target = _SEED_LIMIT           # what we pace at until a 429 speaks
-_PACE_INTERVAL = 60.0 / _paced_per_account(_SEED_LIMIT)
+_S = _shared_state()
 
 # "API Rate Limit Exceeded - 5 per minute maximum allowed. Retry after 57s."
 _LIMIT_RE = re.compile(r"(\d+)\s+per\s+minute\s+maximum\s+allowed", re.I)
@@ -148,8 +182,8 @@ def _effective_limit() -> int:
     What TestRail stated in this window when it has spoken, otherwise the
     current probe target.
     """
-    current = _limit_observed if _limit_observed is not None else _probe_target
-    return max(1, min(_limit_declared, current))
+    current = _S.limit_observed if _S.limit_observed is not None else _S.probe_target
+    return max(1, min(_S.limit_declared, current))
 
 
 def _start_probe_window() -> None:
@@ -160,21 +194,19 @@ def _start_probe_window() -> None:
     cap that has not moved costs only the few requests in flight when TestRail
     says so.  Between downloads the pace stays where the last one left it.
     """
-    global _limit_observed, _probe_target
-    with _LIMIT_LOCK:
-        base = _limit_observed if _limit_observed is not None else _probe_target
-        _probe_target = min(_limit_declared, max(base * 2, base + 5))
-        _limit_observed = None
+    with _S.limit_lock:
+        base = _S.limit_observed if _S.limit_observed is not None else _S.probe_target
+        _S.probe_target = min(_S.limit_declared, max(base * 2, base + 5))
+        _S.limit_observed = None
         _repace()
     logger.warning(
         "TestRail pacing: probing %d requests/minute this download "
-        "(last known %d, ceiling %d)", _probe_target, base, _limit_declared)
+        "(last known %d, ceiling %d)", _S.probe_target, base, _S.limit_declared)
 
 
 def _repace() -> None:
     """Recompute the slot interval from the limit."""
-    global _PACE_INTERVAL
-    _PACE_INTERVAL = 60.0 / max(0.1, _paced_per_account(_effective_limit()))
+    _S.pace_interval = 60.0 / max(0.1, _paced_per_account(_effective_limit()))
 
 
 def _learn_limit(body: str) -> None:
@@ -184,22 +216,21 @@ def _learn_limit(body: str) -> None:
     is halved, so a change of wording on TestRail's side converges instead of
     leaving the pacer asking for the same refused rate over and over.
     """
-    global _limit_observed
     match = _LIMIT_RE.search(body or "")
-    with _LIMIT_LOCK:
+    with _S.limit_lock:
         if match:
             told = max(1, int(match.group(1)))
-            if _limit_observed is not None and told >= _limit_observed:
+            if _S.limit_observed is not None and told >= _S.limit_observed:
                 return
         else:
             told = max(1, _effective_limit() // 2)
-        _limit_observed = told
+        _S.limit_observed = told
         _repace()
     logger.warning(
         "TestRail says the cap is %d requests/minute%s — re-pacing to %.0f/min "
         "(slot every %.1fs)",
         told, "" if match else " (unreadable 429: halved)",
-        60 / _PACE_INTERVAL, _PACE_INTERVAL)
+        60 / _S.pace_interval, _S.pace_interval)
 
 
 def _configured_limit() -> int:
@@ -210,9 +241,6 @@ def _configured_limit() -> int:
         return _CEILING_DEFAULT
 
 
-_STATS_LOCK = threading.Lock()
-_REQUESTS_SERVED = 0
-
 
 def requests_served() -> int:
     """Successful API calls this process has made.
@@ -221,7 +249,7 @@ def requests_served() -> int:
     current cap, which on a twelve-minute download is indistinguishable from a
     hang; this moves with every single request.
     """
-    return _REQUESTS_SERVED
+    return _S.requests_served
 
 
 # ── single-flight ─────────────────────────────────────────────────────────────
@@ -231,13 +259,11 @@ def requests_served() -> int:
 # queueing on the pacer (338s instead of ~70s).  These per-key locks make
 # every concurrent caller WAIT for the first computation and then hit the
 # fresh cache entry instead of re-downloading.
-_SF_GUARD = threading.Lock()
-_SF_LOCKS: dict[tuple, threading.Lock] = {}
 
 
 def _sf_lock(key: tuple) -> threading.Lock:
-    with _SF_GUARD:
-        return _SF_LOCKS.setdefault(key, threading.Lock())
+    with _S.sf_guard:
+        return _S.sf_locks.setdefault(key, threading.Lock())
 
 
 def _pace() -> None:
@@ -245,22 +271,21 @@ def _pace() -> None:
 
     A slot reserved BEFORE a cooldown is not honoured after it: the cooldown
     means TestRail has just closed the window that slot fell in.  Pushing
-    `_PACE_NEXT` only moved the slots handed out afterwards, so every thread
+    `_S.pace_next` only moved the slots handed out afterwards, so every thread
     already asleep on an earlier one still fired into the closed window — in a
     simulated cold download at a 20/min cap that was 16 refusals out of the 16
     worker threads.  Such a thread now takes a fresh slot instead.
     """
-    global _PACE_NEXT
     while True:
-        with _PACE_LOCK:
+        with _S.pace_lock:
             now = time.time()
-            wait = _PACE_NEXT - now
-            _PACE_NEXT = max(now, _PACE_NEXT) + _PACE_INTERVAL
-            epoch = _PACE_EPOCH
+            wait = _S.pace_next - now
+            _S.pace_next = max(now, _S.pace_next) + _S.pace_interval
+            epoch = _S.pace_epoch
         if wait > 0:
             time.sleep(wait)
-        with _PACE_LOCK:
-            if _PACE_EPOCH == epoch:
+        with _S.pace_lock:
+            if _S.pace_epoch == epoch:
                 return
 
 
@@ -273,22 +298,19 @@ def _pace_cooldown(seconds: float) -> None:
     pacer off together is what turns an avalanche into a pause.  The epoch
     tells the threads already asleep on a slot that it no longer counts.
     """
-    global _PACE_NEXT, _PACE_EPOCH, _COOLDOWN_UNTIL
-    with _PACE_LOCK:
-        _PACE_NEXT = max(_PACE_NEXT, time.time() + seconds)
-        _PACE_EPOCH += 1
-        _COOLDOWN_UNTIL = max(_COOLDOWN_UNTIL, time.time() + seconds)
-
-
-# When the pool may send again after TestRail refused a request.  Read by the
-# loader: a request counter that stops for a minute reads as a hang, the same
-# minute labelled "TestRail asked us to wait" reads as what it is.
-_COOLDOWN_UNTIL = 0.0
+    with _S.pace_lock:
+        _S.pace_next = max(_S.pace_next, time.time() + seconds)
+        _S.pace_epoch += 1
+        _S.cooldown_until = max(_S.cooldown_until, time.time() + seconds)
 
 
 def cooldown_remaining() -> float:
-    """Seconds until TestRail's rate limit lets us send again, else 0."""
-    return max(0.0, _COOLDOWN_UNTIL - time.time())
+    """Seconds until TestRail's rate limit lets us send again, else 0.
+
+    Read by the loader: a request counter that stops for a minute reads as a
+    hang, the same minute labelled "TestRail asked us to wait" reads as what
+    it is."""
+    return max(0.0, _S.cooldown_until - time.time())
 
 
 @dataclass(frozen=True)
@@ -379,9 +401,8 @@ class TestRailClient:
             resp = self._session.get(self._url(endpoint), timeout=self.timeout)
         if not resp.ok:
             raise TestRailError(f"GET {endpoint} → {resp.status_code}: {resp.text[:300]}")
-        global _REQUESTS_SERVED
-        with _STATS_LOCK:
-            _REQUESTS_SERVED += 1
+        with _S.stats_lock:
+            _S.requests_served += 1
         try:
             return resp.json()
         except ValueError as exc:
@@ -467,17 +488,17 @@ def _get_client() -> TestRailClient:
     Double-checked: the warm-up submits up to eight suite workers at once, and
     they all arrive here before the client exists.
     """
-    global _CLIENT, _limit_declared
+    global _CLIENT
     if _CLIENT is not None:
         return _CLIENT
     with _CLIENT_LOCK:
         if _CLIENT is None:
-            _limit_declared = _configured_limit()
+            _S.limit_declared = _configured_limit()
             _repace()
             logger.warning(
                 "TestRail: pacing at %.0f requests/minute (cap %d, ceiling %d%s)",
-                60 / _PACE_INTERVAL, _effective_limit(), _limit_declared,
-                " from TESTRAIL_RATE_LIMIT" if _limit_declared != _CEILING_DEFAULT else "")
+                60 / _S.pace_interval, _effective_limit(), _S.limit_declared,
+                " from TESTRAIL_RATE_LIMIT" if _S.limit_declared != _CEILING_DEFAULT else "")
             _CLIENT = TestRailClient(TestRailCredentials.from_secrets())
     return _CLIENT
 
@@ -625,7 +646,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
         if not on_progress:
             return
         try:
-            on_progress(done, total, _REQUESTS_SERVED)
+            on_progress(done, total, _S.requests_served)
         except BaseException:                                           # noqa: BLE001
             # See evaluate_rules' progress hook: a killed session's UI callback
             # must not abort a download the other sessions are waiting on.
@@ -647,7 +668,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
         return
 
     failures = 0
-    started, served_at_start = time.time(), _REQUESTS_SERVED
+    started, served_at_start = time.time(), _S.requests_served
     # The one place a lot of requests go out together: find out whether
     # TestRail has raised the cap since the last download (see the pacer notes).
     _start_probe_window()
@@ -724,7 +745,7 @@ def prefetch_all_suites(suite_ids: list[int], on_progress=None) -> None:
         # What the download actually achieved, in one line: the measurement
         # that showed a second account bought nothing (see the pacer notes).
         secs = max(1.0, time.time() - started)
-        sent = _REQUESTS_SERVED - served_at_start
+        sent = _S.requests_served - served_at_start
         logger.warning(
             "prefetch: %d requests in %.0fs = %.1f/min; pacer believes %s req/min",
             sent, secs, sent * 60 / secs, _effective_limit())

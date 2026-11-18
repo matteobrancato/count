@@ -16,8 +16,10 @@ numbers computed from it do not: before dropping the modules, the guard asks
 the outgoing code to clear its computed caches (`src.freshness.clear_computed`),
 because Streamlit keys a cache on its own function's source and new logic in a
 function it calls would otherwise be served the old results until the next
-full reload.  Module-level state (the TestRail account pool, the pacer) starts
-afresh, as after a reboot.
+full reload.  Module-level state starts afresh, as after a reboot — except the
+TestRail pacer, which lives on `sys` (see `src/testrail_client.py`): a download
+already running keeps its old module, and two pacers on one quota held the
+2026-11-18 cold load at ~1 request a minute.
 
 app.py calls `reload_after_deploy()` on every run, before its own imports from
 src/.  This module stays outside src/ so that it is never among the modules it

@@ -109,3 +109,50 @@ def test_clear_computed_clears_what_was_registered(monkeypatch):
     fake = types.SimpleNamespace(clear=lambda: cleared.append(1))
     monkeypatch.setattr(freshness, "_COMPUTED", [fake, fake])
     assert freshness.clear_computed() == 2 and cleared == [1, 1]
+
+
+class TestOnePacerAcrossADeploy:
+    """A deploy re-imports src/, but a download already running keeps the module
+    it started with.  On 2026-11-18 that left two pacers on one TestRail quota,
+    each blind to the other's 429s, and the cold load crawled at ~1 request a
+    minute.  Both versions of the client must pace on the SAME state."""
+
+    @staticmethod
+    def _second_copy(monkeypatch):
+        """The client as a deploy re-imports it: a fresh module object."""
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        import src
+        name = "src._testrail_client_after_deploy"
+        path = Path(src.__file__).parent / "testrail_client.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, module)   # dataclasses look it up
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_new_module_sees_the_old_one_s_cooldown_and_cap(self, monkeypatch):
+        from src import testrail_client as old
+        monkeypatch.setattr(old._S, "cooldown_until", 0.0)
+        monkeypatch.setattr(old._S, "limit_observed", None)
+        monkeypatch.setattr(old._S, "requests_served", old._S.requests_served)
+        new = self._second_copy(monkeypatch)
+        assert new._S is old._S
+        old._learn_limit("API Rate Limit Exceeded - 20 per minute maximum allowed.")
+        old._pace_cooldown(30)
+        assert new._effective_limit() == 20          # one cap, learned once
+        assert new.cooldown_remaining() > 25          # one pause for everybody
+        assert new._sf_lock(("cases", 1, 2)) is old._sf_lock(("cases", 1, 2))
+
+    def test_a_state_left_by_an_older_version_gains_the_new_fields(self, monkeypatch):
+        import sys
+        from types import SimpleNamespace
+
+        from src import testrail_client as trc
+        monkeypatch.setitem(sys.__dict__, trc._STATE_ATTR,
+                            SimpleNamespace(pace_next=123.0))
+        state = trc._shared_state()
+        assert state.pace_next == 123.0               # kept, never reset
+        assert state.limit_observed is None and state.sf_locks == {}
